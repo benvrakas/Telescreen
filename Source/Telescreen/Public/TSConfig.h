@@ -37,6 +37,7 @@ public:
 	static const FString VolumeKey;
 	static const FString AudioRangeKey;
 	static const FString MuteInBackgroundKey;
+	static const FString WwiseAudioKey;
 	static const FString AutoLoadKey;
 	static const FString QueuePolicyKey;
 	static const FString AllowedSitesKey;
@@ -53,6 +54,8 @@ public:
 	static const FString AllowBrowserKey;
 	static const FString BrowserRoleKey;
 	static const FString WindowRoleKey;
+	static const FString RemoteDesktopRoleKey;
+	static const FString RemoteDisclaimerKey;
 	static const FString TrustedPlayersKey;
 	static const FString AllowTakeOverKey;
 	static const FString MaxControlledScreensKey;

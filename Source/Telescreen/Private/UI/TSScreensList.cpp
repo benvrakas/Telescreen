@@ -155,6 +155,10 @@ void UTSScreensList::Rebuild()
 		{
 			What = FText::Format(LOCTEXT("ListBrowser", "Browser: {0}"), FText::FromString(Screen->GetControllerName()));
 		}
+		else if (Screen->GetMode() == ETSScreenMode::RemoteDesktop)
+		{
+			What = FText::Format(LOCTEXT("ListRemote", "Remote desktop shown by {0}"), FText::FromString(Screen->GetControllerName()));
+		}
 		else if (Screen->GetMode() == ETSScreenMode::Window)
 		{
 			What = FText::Format(LOCTEXT("ListWindow", "Window shared by {0}"), FText::FromString(Screen->GetControllerName()));

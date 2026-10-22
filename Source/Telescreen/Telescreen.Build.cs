@@ -67,9 +67,13 @@ public class Telescreen : ModuleRules
 			"AudioExtensions",
 		});
 
+		// Headers only, for the types of the game's sound engine; its functions are reached through their exports.
+		PrivateIncludePathModuleNames.Add("WwiseSoundEngine");
+
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			PublicSystemLibraries.Add("bcrypt.lib");
+			PublicSystemLibraries.Add("crypt32.lib");
 		}
 	}
 }

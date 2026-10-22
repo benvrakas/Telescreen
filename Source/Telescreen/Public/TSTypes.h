@@ -24,6 +24,8 @@ enum class ETSScreenMode : uint8
 	Browser,
 	// A window on the controller's PC.
 	Window,
+	// A remote desktop the controller's PC connects to (VNC; RDP later).
+	RemoteDesktop,
 };
 
 // Lowest role that may use a mode (host setting).

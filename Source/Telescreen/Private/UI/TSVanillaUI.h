@@ -41,6 +41,8 @@ namespace TSVanillaUI
 	FText GetInputText(UWidget* InputBox);
 	void SetInputText(UWidget* InputBox, const FText& Text);
 	bool InputHasFocus(UWidget* InputBox);
+	// Shows dots instead of the typed text.
+	void SetInputPassword(UWidget* InputBox, bool bPassword);
 
 	// Content in a vanilla scroll box.
 	UWidget* MakeScrollBox(UWidgetTree* Tree, UWidget* Content);

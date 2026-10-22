@@ -15,7 +15,9 @@
 #include "EngineUtils.h"
 #include "FGHUD.h"
 #include "GameFramework/PlayerController.h"
+#include "Screen/TSRemoteConnections.h"
 #include "Screen/TSScreenPlayer.h"
+#include "Components/EditableTextBox.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
 #include "TSRemoteCallObject.h"
@@ -194,7 +196,7 @@ void UTSScreenPanel::BuildTree()
 	// Tabs.
 	UHorizontalBox* TabRow = MakeHBox();
 	const FText TabNames[] = {LOCTEXT("TabVideos", "Videos"), LOCTEXT("TabBrowser", "Browser"), LOCTEXT("TabWindow", "Share a window"),
-		LOCTEXT("TabScreen", "Screen")};
+		LOCTEXT("TabRemote", "Remote desktop"), LOCTEXT("TabScreen", "Screen")};
 	for (int32 I = 0; I < UE_ARRAY_COUNT(TabNames); ++I)
 	{
 		UWidget* Tab = TSVanillaUI::MakeTab(WidgetTree, TabNames[I], MakeHandler(ETSPanelAction::Tab, I), GET_FUNCTION_NAME_CHECKED(UTSPanelAction, HandleClicked));
@@ -280,6 +282,30 @@ void UTSScreenPanel::BuildTree()
 		Pages->AddChild(Page);
 	}
 
+	// Remote desktop.
+	{
+		UVerticalBox* Page = MakeVBox();
+		RemoteNote = MakeText(FText::GetEmpty(), 13, Muted);
+		AddRow(Page, RemoteNote, 0.f);
+		UHorizontalBox* ConnectRow = MakeHBox();
+		RemoteAddressBox = MakeInput(LOCTEXT("RemoteAddressHint", "VNC address, e.g. 192.168.1.20:5901 or myvm:1"), ETSPanelAction::RemoteConnect);
+		AddToHBox(ConnectRow, RemoteAddressBox, true);
+		RemotePasswordBox = WidgetTree->ConstructWidget<UEditableTextBox>();
+		RemotePasswordBox->SetHintText(LOCTEXT("RemotePasswordHint", "Password (if any)"));
+		RemotePasswordBox->SetIsPassword(true);
+		USizeBox* PasswordSize = WidgetTree->ConstructWidget<USizeBox>();
+		PasswordSize->SetWidthOverride(200.f);
+		PasswordSize->AddChild(RemotePasswordBox);
+		AddToHBox(ConnectRow, PasswordSize);
+		AddToHBox(ConnectRow, MakeButton(LOCTEXT("RemoteConnect", "Connect"), ETSPanelAction::RemoteConnect, INDEX_NONE, true));
+		AddToHBox(ConnectRow, MakeButton(LOCTEXT("RemoteSave", "Save"), ETSPanelAction::RemoteSave));
+		AddRow(Page, ConnectRow, 8.f);
+		AddRow(Page, MakeText(LOCTEXT("RemoteSavedHeader", "Saved connections (this PC only)"), 14, Accent, true), 14.f);
+		RemoteListBox = MakeVBox();
+		AddRow(Page, RemoteListBox, 4.f);
+		Pages->AddChild(Page);
+	}
+
 	// Screen.
 	{
 		UVerticalBox* Page = MakeVBox();
@@ -342,7 +368,10 @@ void UTSScreenPanel::NativeConstruct()
 	NoticeHandle = UTSRemoteCallObject::OnNotice.AddWeakLambda(this, [this](const FText& Text) { SetNotice(Text, true); });
 	// Open on the tab for what the screen does now.
 	const ETSScreenMode Mode = Screen ? Screen->GetMode() : ETSScreenMode::SyncedMedia;
-	SelectTab(Mode == ETSScreenMode::Browser ? ETab::Browser : Mode == ETSScreenMode::Window ? ETab::Window : ETab::Videos);
+	SelectTab(Mode == ETSScreenMode::Browser		 ? ETab::Browser
+			  : Mode == ETSScreenMode::Window		 ? ETab::Window
+			  : Mode == ETSScreenMode::RemoteDesktop ? ETab::RemoteDesktop
+													 : ETab::Videos);
 	Refresh();
 	UE_LOG(LogTelescreen, Log, TEXT("Screen panel opened for %s"), *GetNameSafe(Screen));
 }
@@ -408,6 +437,12 @@ void UTSScreenPanel::SelectTab(ETab Tab)
 	{
 		RequestWindowList();
 	}
+	if (Tab == ETab::RemoteDesktop && !bRemoteListLoaded)
+	{
+		bRemoteListLoaded = true;
+		SavedRemotes = TSRemoteConnections::LoadSaved();
+		ShowSavedRemotes();
+	}
 	RefreshSharing();
 }
 
@@ -469,6 +504,9 @@ void UTSScreenPanel::RefreshTimes()
 	case ETSScreenMode::Window:
 		Status = bMine ? LOCTEXT("StatusMyWindow", "Showing your window") : FText::Format(LOCTEXT("StatusWindow", "Showing a window from {0}"), Controller);
 		break;
+	case ETSScreenMode::RemoteDesktop:
+		Status = bMine ? LOCTEXT("StatusMyRemote", "Showing your remote desktop") : FText::Format(LOCTEXT("StatusRemote", "Showing a remote desktop from {0}"), Controller);
+		break;
 	default:
 		Status = Item ? FText::Format(LOCTEXT("NowPlaying", "Now playing: {0}"), FText::FromString(Item->GetDisplayTitle()))
 					  : LOCTEXT("NothingPlaying", "Nothing playing. Add a video, open the browser or share a window.");
@@ -515,7 +553,8 @@ void UTSScreenPanel::RefreshSharing()
 	}
 	const bool bBrowserMode = Screen->GetMode() == ETSScreenMode::Browser;
 	const bool bWindowMode = Screen->GetMode() == ETSScreenMode::Window;
-	const bool bShared = bBrowserMode || bWindowMode;
+	const bool bRemoteMode = Screen->GetMode() == ETSScreenMode::RemoteDesktop;
+	const bool bShared = bBrowserMode || bWindowMode || bRemoteMode;
 	const bool bMine = bShared && Screen->IsLocallyControlled();
 	const bool bMyBrowser = bBrowserMode && bMine;
 	const bool bHostTools = UTSRemoteCallObject::IsLocalHostOrAdmin(this);
@@ -549,7 +588,9 @@ void UTSScreenPanel::RefreshSharing()
 		TSVanillaUI::SetButtonText(OpenWindowButton, FText::Format(LOCTEXT("OpenWindowKey", "Use it in a window ({0})"), FText::FromString(FocusKey)));
 		TSVanillaUI::SetButtonText(CurtainButton, Screen->IsCurtainOn() ? LOCTEXT("CurtainOff", "Show it again")
 																		 : FText::Format(LOCTEXT("CurtainOnKey", "Blank for everyone ({0})"), FText::FromString(CurtainKey)));
-		TSVanillaUI::SetButtonText(StopSharingButton, bWindowMode ? LOCTEXT("WindowStop", "Stop sharing") : LOCTEXT("BrowserStop", "Close the browser"));
+		TSVanillaUI::SetButtonText(StopSharingButton, bWindowMode ? LOCTEXT("WindowStop", "Stop sharing")
+														: bRemoteMode ? LOCTEXT("RemoteStop", "Disconnect")
+																	  : LOCTEXT("BrowserStop", "Close the browser"));
 	}
 	Show(OpenWindowButton, bMine);
 	Show(CurtainButton, bMine);
@@ -564,9 +605,22 @@ void UTSScreenPanel::RefreshSharing()
 #else
 	const bool bWindowsAvailable = false;
 #endif
-	if (TabButtons.Num() == 4)
+	if (TabButtons.Num() == 5)
 	{
 		Show(TabButtons[int32(ETab::Window)], bWindowsAvailable);
+		Show(TabButtons[int32(ETab::RemoteDesktop)], bWindowsAvailable);
+	}
+	if (bRemoteMode && bMine)
+	{
+		RemoteNote->SetText(FText::Format(LOCTEXT("RemoteMine",
+			"Everyone near this screen sees this computer. Use it in its window ({0}): mouse and keyboard go to it over VNC. Connect to another "
+			"address below to switch."), FText::FromString(FocusKey)));
+	}
+	else
+	{
+		RemoteNote->SetText(LOCTEXT("RemoteIdle",
+			"Show a computer's desktop on this screen over VNC: a VM console (QEMU/KVM, Proxmox), TigerVNC, x11vnc, a Raspberry Pi... "
+			"The address and password stay on your PC. Plain VNC isn't encrypted: use it on your own network."));
 	}
 
 	// Browser page.
@@ -698,7 +752,8 @@ void UTSScreenPanel::ShowWindowList()
 void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
 {
 	const bool bWindow = Kind == EConfirm::ShareWindow;
-	if (UTSConfig::GetBool(this, bWindow ? UTSConfig::WindowDisclaimerKey : UTSConfig::StreamDisclaimerKey, false))
+	const FString& NoticeKey = bWindow ? UTSConfig::WindowDisclaimerKey : Kind == EConfirm::ConnectRemote ? UTSConfig::RemoteDisclaimerKey : UTSConfig::StreamDisclaimerKey;
+	if (UTSConfig::GetBool(this, NoticeKey, false))
 	{
 		RunConfirmed(Kind, Index);
 		return;
@@ -706,7 +761,14 @@ void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
 	PendingConfirm = Kind;
 	PendingIndex = Index;
 	const FText CurtainKey = FText::FromString(UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")));
-	if (bWindow)
+	if (Kind == EConfirm::ConnectRemote)
+	{
+		ConfirmTitle->SetText(LOCTEXT("ConfirmRemoteTitle", "Show a whole computer to everyone?"));
+		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmRemote",
+			"You are sharing a whole computer: every player near this screen sees its desktop and hears its sound. Only you can control it.\n\n"
+			"{0} blanks it for everyone at any time. This question appears only once."), CurtainKey));
+	}
+	else if (bWindow)
 	{
 		ConfirmTitle->SetText(LOCTEXT("ConfirmWindowTitle", "Share a window with everyone?"));
 		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmWindow",
@@ -741,6 +803,21 @@ void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
 		OpenWindowWhenMineUntil = FPlatformTime::Seconds() + OpenWindowTimeout;
 		SetNotice(LOCTEXT("OpeningBrowser", "Opening the browser..."));
 		break;
+	case EConfirm::ConnectRemote:
+	{
+		FTSRemoteConnection Connection;
+		if (Index != INDEX_NONE && SavedRemotes.IsValidIndex(Index))
+		{
+			Connection = SavedRemotes[Index];
+		}
+		else if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), RemotePasswordBox->GetText().ToString(), Connection))
+		{
+			SetNotice(LOCTEXT("RemoteNoAddress", "Type the VNC address first, e.g. 192.168.1.20:5901."), true);
+			break;
+		}
+		ConnectRemote(Connection);
+		break;
+	}
 	case EConfirm::ShareWindow:
 		if (Windows.IsValidIndex(Index))
 		{
@@ -751,6 +828,42 @@ void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
 		break;
 	default:
 		break;
+	}
+}
+
+void UTSScreenPanel::ConnectRemote(const FTSRemoteConnection& Connection)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this);
+	if (!Screen || !RCO)
+	{
+		return;
+	}
+	const FString Token = TSRemoteConnections::MakePending(Connection);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: connecting to VNC %s"), *Screen->GetName(), *Connection.GetAddress());
+	RCO->Server_TakeControl(Screen, ETSScreenMode::RemoteDesktop, Token);
+	SetNotice(FText::Format(LOCTEXT("RemoteStarting", "Connecting to {0}..."), FText::FromString(Connection.GetAddress())));
+}
+
+void UTSScreenPanel::ShowSavedRemotes()
+{
+	RemoteListBox->ClearChildren();
+	if (SavedRemotes.Num() == 0)
+	{
+		RemoteListBox->AddChildToVerticalBox(MakeText(LOCTEXT("RemoteNoneSaved", "None yet: type an address and press Save."), 13, Muted));
+		return;
+	}
+	for (int32 I = 0; I < SavedRemotes.Num(); ++I)
+	{
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		const FText Label = FText::Format(LOCTEXT("RemoteRow", "{0}{1}"), FText::FromString(SavedRemotes[I].GetAddress()),
+			SavedRemotes[I].Password.IsEmpty() ? FText::GetEmpty() : LOCTEXT("RemoteRowPassword", "   (password saved)"));
+		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(MakeText(Label, 14));
+		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		TextSlot->SetVerticalAlignment(VAlign_Center);
+		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("RemoteRowConnect", "Connect"), ETSPanelAction::RemoteSavedConnect, I, true))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("RemoteRowRemove", "Remove"), ETSPanelAction::RemoteSavedRemove, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		RemoteListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 3.f));
 	}
 }
 
@@ -866,7 +979,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		Refresh();
 		return;
 	case ETSPanelAction::Tab:
-		SelectTab(ETab(FMath::Clamp(Index, 0, 3)));
+		SelectTab(ETab(FMath::Clamp(Index, 0, 4)));
 		return;
 	case ETSPanelAction::ConfirmAccept:
 	{
@@ -874,7 +987,9 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		const int32 ConfirmIndex = PendingIndex;
 		PendingConfirm = EConfirm::None;
 		Show(ConfirmLayer, false);
-		UTSConfig::SetBool(this, Kind == EConfirm::ShareWindow ? UTSConfig::WindowDisclaimerKey : UTSConfig::StreamDisclaimerKey, true);
+		UTSConfig::SetBool(this, Kind == EConfirm::ShareWindow	   ? UTSConfig::WindowDisclaimerKey
+								 : Kind == EConfirm::ConnectRemote ? UTSConfig::RemoteDisclaimerKey
+																   : UTSConfig::StreamDisclaimerKey, true);
 		UE_LOG(LogTelescreen, Log, TEXT("Sharing notice %d accepted"), int32(Kind));
 		RunConfirmed(Kind, ConfirmIndex);
 		return;
@@ -932,6 +1047,31 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::BrowserOpen: AskConfirm(EConfirm::OpenBrowser, INDEX_NONE); break;
 	case ETSPanelAction::BrowserTakeOver: AskConfirm(EConfirm::TakeOver, INDEX_NONE); break;
 	case ETSPanelAction::WindowShare: AskConfirm(EConfirm::ShareWindow, Index); break;
+	case ETSPanelAction::RemoteConnect: AskConfirm(EConfirm::ConnectRemote, INDEX_NONE); break;
+	case ETSPanelAction::RemoteSavedConnect: AskConfirm(EConfirm::ConnectRemote, Index); break;
+	case ETSPanelAction::RemoteSave:
+	{
+		FTSRemoteConnection Connection;
+		if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), RemotePasswordBox->GetText().ToString(), Connection))
+		{
+			SetNotice(LOCTEXT("RemoteNoAddressSave", "Type the VNC address first."), true);
+			break;
+		}
+		SavedRemotes.RemoveAll([&Connection](const FTSRemoteConnection& Each) { return Each.Host == Connection.Host && Each.Port == Connection.Port; });
+		SavedRemotes.Add(Connection);
+		TSRemoteConnections::Save(SavedRemotes);
+		ShowSavedRemotes();
+		SetNotice(FText::Format(LOCTEXT("RemoteSaved", "Saved {0}."), FText::FromString(Connection.GetAddress())));
+		break;
+	}
+	case ETSPanelAction::RemoteSavedRemove:
+		if (SavedRemotes.IsValidIndex(Index))
+		{
+			SavedRemotes.RemoveAt(Index);
+			TSRemoteConnections::Save(SavedRemotes);
+			ShowSavedRemotes();
+		}
+		break;
 	case ETSPanelAction::CurtainToggle: RCO->Server_SetCurtain(Screen, !Screen->IsCurtainOn()); break;
 	case ETSPanelAction::StopSharing:
 	case ETSPanelAction::HostStop:

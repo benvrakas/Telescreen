@@ -9,6 +9,7 @@
 
 class ATSBuildableScreen;
 class UAudioComponent;
+class USceneComponent;
 class UCanvas;
 class UCanvasRenderTarget2D;
 class UTexture2D;
@@ -61,8 +62,12 @@ public:
 	// True while this client shares one of its windows on the screen.
 	bool HasWindow() const { return bWindowSession && Session != 0; }
 
-	// True if the window's mouse and keyboard can go to this screen's source (the local player's browser or window).
-	bool AcceptsInput() const { return HasBrowser() || HasWindow(); }
+	// True while this client shows a remote desktop (VNC) on the screen.
+	bool HasRemoteDesktop() const { return bRemoteSession && Session != 0; }
+
+	// True if the window's mouse and keyboard can go to this screen's source (the local player's browser, window or
+	// remote desktop).
+	bool AcceptsInput() const { return HasBrowser() || HasWindow() || HasRemoteDesktop(); }
 	const FTSBrowserState& GetBrowserState() const { return BrowserState; }
 	FTSOnBrowserStateChanged OnBrowserStateChanged;
 
@@ -101,6 +106,7 @@ private:
 	void OpenSession(const struct FTSMediaItem& Item);
 	void OpenBrowserSession();
 	void OpenWindowSession();
+	void OpenRemoteSession();
 	FIntPoint ComputeBrowserSize() const;
 	FIntPoint ToSourcePixels(const FVector2D& Position) const;
 	FText GetControllerTitle() const;
@@ -130,6 +136,18 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> Audio;
+
+	// Sound through the game's Wwise (TSWwiseScreens): the screen's AkComponent and the current playing id.
+	UPROPERTY(Transient)
+	TObjectPtr<USceneComponent> WwiseEmitter;
+	uint32 WwisePlayingId = 0;
+	TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe> WwiseReader;
+	double WwiseStartedAt = 0.0;
+	int32 WwiseQuickEnds = 0;
+	// Plays Reader through Wwise; false if Wwise is off or wouldn't play it (the Unreal path is used instead).
+	bool PlayThroughWwise(const TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe>& Reader);
+	void StopWwise();
+	void PlaceWwiseEmitter();
 	UPROPERTY(Transient)
 	TObjectPtr<UTSStreamingSoundWave> Wave;
 
@@ -142,6 +160,7 @@ private:
 	bool bPinned = false;
 	bool bBrowserSession = false;
 	bool bWindowSession = false;
+	bool bRemoteSession = false;
 	// Where the source's picture sits in the shown texture (for mapping window positions back to source pixels).
 	int32 ShownTexWidth = 0, ShownTexHeight = 0, ShownSrcX = 0, ShownSrcY = 0, ShownDstX = 0, ShownDstY = 0, ShownWidth = 0, ShownHeight = 0;
 

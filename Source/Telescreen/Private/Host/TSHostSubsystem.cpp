@@ -726,6 +726,28 @@ uint32 UTSHostSubsystem::OpenWindow(uint64 Window, bool bCursor, bool bAudio, ui
 	return Session;
 }
 
+uint32 UTSHostSubsystem::OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio,
+	ITSHostSessionListener* Listener)
+{
+	if (!EnsureConnected())
+	{
+		return 0;
+	}
+	const uint32 Session = NextSessionId++;
+	Listeners.Add(Session, Listener);
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.Str(Host);
+	W.U32(Port);
+	W.Str(Password);
+	W.U32(MaxWidth);
+	W.U32(MaxHeight);
+	W.U8(bAudio ? 1 : 0);
+	Send(EMsg::OpenVnc, W.Bytes);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u connects to VNC %s:%u (%s password)"), Session, *Host, Port, Password.IsEmpty() ? TEXT("no") : TEXT("with"));
+	return Session;
+}
+
 void UTSHostSubsystem::ListWindows(TFunction<void(const TArray<FTSWindowInfo>&)> OnDone)
 {
 	if (!EnsureConnected())

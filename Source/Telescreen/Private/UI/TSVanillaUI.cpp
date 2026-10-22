@@ -363,6 +363,18 @@ bool TSVanillaUI::InputHasFocus(UWidget* InputBox)
 	return Inner && Inner->HasKeyboardFocus();
 }
 
+void TSVanillaUI::SetInputPassword(UWidget* InputBox, bool bPassword)
+{
+	if (UEditableTextBox* Plain = Cast<UEditableTextBox>(InputBox))
+	{
+		Plain->SetIsPassword(bPassword);
+	}
+	else if (UEditableText* Inner = InnerEditable(InputBox))
+	{
+		Inner->SetIsPassword(bPassword);
+	}
+}
+
 UWidget* TSVanillaUI::MakeScrollBox(UWidgetTree* Tree, UWidget* Content)
 {
 	if (UUserWidget* Scroll = MakeVanilla(Tree, ScrollBoxClass))

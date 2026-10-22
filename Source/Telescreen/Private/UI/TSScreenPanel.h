@@ -7,6 +7,7 @@
 #include "TSScreenPanel.generated.h"
 
 class ATSBuildableScreen;
+class UEditableTextBox;
 class UTextBlock;
 class UVerticalBox;
 class UWidgetSwitcher;
@@ -45,6 +46,10 @@ enum class ETSPanelAction : uint8
 	HostStop,
 	WindowRefresh,
 	WindowShare,
+	RemoteConnect,
+	RemoteSave,
+	RemoteSavedConnect,
+	RemoteSavedRemove,
 	Tab,
 	ConfirmAccept,
 	ConfirmCancel,
@@ -100,6 +105,7 @@ private:
 		Videos,
 		Browser,
 		Window,
+		RemoteDesktop,
 		Screen,
 	};
 
@@ -109,6 +115,7 @@ private:
 		OpenBrowser,
 		TakeOver,
 		ShareWindow,
+		ConnectRemote,
 	};
 
 	void BuildTree();
@@ -198,6 +205,22 @@ private:
 	TObjectPtr<UVerticalBox> WindowListBox;
 	TArray<FTSWindowInfo> Windows;
 	bool bWindowListPending = false;
+
+	// Remote desktop page.
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> RemoteAddressBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> RemotePasswordBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> RemoteNote;
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> RemoteListBox;
+	TArray<struct FTSRemoteConnection> SavedRemotes;
+	bool bRemoteListLoaded = false;
+	void ShowSavedRemotes();
+	// Starts showing Connection on this screen (after the first-use notice).
+	void ConnectRemote(const struct FTSRemoteConnection& Connection);
+	int32 PendingRemoteIndex = INDEX_NONE;
 
 	// Screen page.
 	UPROPERTY(Transient)

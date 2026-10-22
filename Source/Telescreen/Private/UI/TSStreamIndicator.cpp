@@ -40,7 +40,9 @@ void UTSStreamIndicator::Update(const UObject* WorldContext, const ATSBuildableS
 		Indicator->AddToViewport(5);
 		GIndicator = Indicator;
 	}
-	const FText What = Screen->GetMode() == ETSScreenMode::Window ? LOCTEXT("IndicatorWindow", "a window") : LOCTEXT("IndicatorBrowser", "your browser");
+	const FText What = Screen->GetMode() == ETSScreenMode::Window			? LOCTEXT("IndicatorWindow", "a window")
+					 : Screen->GetMode() == ETSScreenMode::RemoteDesktop ? LOCTEXT("IndicatorRemote", "a remote desktop")
+																		 : LOCTEXT("IndicatorBrowser", "your browser");
 	const FText Key = FText::FromString(UTSConfig::GetString(Screen, UTSConfig::CurtainKeyKey, TEXT("F10")));
 	FText Text;
 	if (Screen->IsCurtainOn())

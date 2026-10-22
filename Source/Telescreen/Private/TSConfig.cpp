@@ -20,6 +20,7 @@ const FString UTSConfig::MaxVideoHeightKey = TEXT("MaxVideoHeight");
 const FString UTSConfig::VolumeKey = TEXT("Volume");
 const FString UTSConfig::AudioRangeKey = TEXT("AudioRange");
 const FString UTSConfig::MuteInBackgroundKey = TEXT("MuteInBackground");
+const FString UTSConfig::WwiseAudioKey = TEXT("WwiseAudio");
 const FString UTSConfig::AutoLoadKey = TEXT("AutoLoad");
 const FString UTSConfig::QueuePolicyKey = TEXT("QueuePolicy");
 const FString UTSConfig::AllowedSitesKey = TEXT("AllowedSites");
@@ -36,6 +37,8 @@ const FString UTSConfig::StreamDisclaimerKey = TEXT("StreamDisclaimerAccepted");
 const FString UTSConfig::AllowBrowserKey = TEXT("AllowBrowser");
 const FString UTSConfig::BrowserRoleKey = TEXT("BrowserRole");
 const FString UTSConfig::WindowRoleKey = TEXT("WindowRole");
+const FString UTSConfig::RemoteDesktopRoleKey = TEXT("RemoteDesktopRole");
+const FString UTSConfig::RemoteDisclaimerKey = TEXT("RemoteDisclaimerAccepted");
 const FString UTSConfig::TrustedPlayersKey = TEXT("TrustedPlayers");
 const FString UTSConfig::AllowTakeOverKey = TEXT("AllowTakeOver");
 const FString UTSConfig::MaxControlledScreensKey = TEXT("MaxControlledScreens");
@@ -155,6 +158,8 @@ UTSConfig::UTSConfig()
 		LOCTEXT("AudioRangeTip", "Multiplies how far screens can be heard; bigger screens already carry further."), 1.f);
 	AddBool(Sound, MuteInBackgroundKey, LOCTEXT("MuteInBackground", "Mute when the game is in the background"),
 		LOCTEXT("MuteInBackgroundTip", "Silence screens while you're in another window. Videos keep playing in sync."), true);
+	AddBool(Sound, WwiseAudioKey, LOCTEXT("WwiseAudio", "Play through the game's audio engine"),
+		LOCTEXT("WwiseAudioTip", "Screen sound goes through the game's own audio (rooms, reverb, walls, the game's volume sliders for the Boom Box). Off: Unreal plays it directly. Applies to sounds that start after the change."), true);
 
 	UConfigPropertySection* BrowserSection = AddSection(TEXT("Browser"), LOCTEXT("BrowserSection", "Browser and window"));
 	AddString(BrowserSection, BrowserHomeKey, LOCTEXT("BrowserHome", "Browser start page"),
@@ -175,6 +180,8 @@ UTSConfig::UTSConfig()
 		LOCTEXT("WindowAudioTip", "Send the shared window's own sound to the screen (needs Windows 11 or Windows 10 21H2 and later). You keep hearing it from the window itself."), true);
 	AddBool(BrowserSection, WindowCursorKey, LOCTEXT("WindowCursor", "Show the mouse in a shared window"),
 		LOCTEXT("WindowCursorTip", "Include your mouse pointer in the picture of a shared window."), true);
+	AddBool(BrowserSection, RemoteDisclaimerKey, LOCTEXT("RemoteDisclaimer", "I understand that shared remote desktops are visible to everyone"),
+		LOCTEXT("RemoteDisclaimerTip", "Set when you accept the notice the first time you connect a screen to a remote desktop. Turn it off to see it again."), false);
 	AddBool(BrowserSection, WindowDisclaimerKey, LOCTEXT("WindowDisclaimer", "I understand that shared windows are visible to everyone"),
 		LOCTEXT("WindowDisclaimerTip", "Set when you accept the notice the first time you share a window. Turn it off to see it again."), false);
 	AddString(BrowserSection, FocusKeyKey, LOCTEXT("FocusKey", "Window focus key"),
@@ -214,6 +221,9 @@ UTSConfig::UTSConfig()
 	AddInt(Hosting, WindowRoleKey, LOCTEXT("WindowRole", "Who can share a window"),
 		LOCTEXT("WindowRoleTip", "Sharing a window shows something from that player's desktop to everyone. 0: everyone; 1: trusted players and the host; 2: only the host or admins."),
 		int32(ETSRole::Trusted));
+	AddInt(Hosting, RemoteDesktopRoleKey, LOCTEXT("RemoteDesktopRole", "Who can show a remote desktop"),
+		LOCTEXT("RemoteDesktopRoleTip", "A remote desktop (VNC) shows a whole computer to everyone. 0: everyone; 1: trusted players and the host; 2: only the host or admins."),
+		int32(ETSRole::HostAndAdmins));
 	AddString(Hosting, TrustedPlayersKey, LOCTEXT("TrustedPlayers", "Trusted players"),
 		LOCTEXT("TrustedPlayersTip", "Comma-separated player names for the \"trusted players\" choices above."), FString());
 	AddBool(Hosting, AllowTakeOverKey, LOCTEXT("AllowTakeOver", "Players can take over a screen in use"),
@@ -277,6 +287,7 @@ namespace
 			{UTSConfig::QueuePolicyKey, {0.f, 1.f}},
 			{UTSConfig::BrowserRoleKey, {0.f, 2.f}},
 			{UTSConfig::WindowRoleKey, {0.f, 2.f}},
+			{UTSConfig::RemoteDesktopRoleKey, {0.f, 2.f}},
 			{UTSConfig::MaxControlledScreensKey, {1.f, 64.f}},
 			{UTSConfig::MaxVideoMinutesKey, {0.f, 100000.f}},
 			{UTSConfig::QueueAddsPerMinuteKey, {1.f, 1000.f}},

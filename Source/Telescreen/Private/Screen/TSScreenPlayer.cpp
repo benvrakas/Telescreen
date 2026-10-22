@@ -15,6 +15,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Rendering/Texture2DResource.h"
 #include "Screen/TSStreamingSoundWave.h"
+#include "Audio/TSWwiseScreens.h"
+#include "Screen/TSRemoteConnections.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
 #include "FGPlayerController.h"
@@ -225,6 +227,12 @@ void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Audio->DestroyComponent();
 		Audio = nullptr;
 	}
+	StopWwise();
+	if (WwiseEmitter)
+	{
+		WwiseEmitter->DestroyComponent();
+		WwiseEmitter = nullptr;
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -304,17 +312,22 @@ void UTSScreenPlayer::Reconcile()
 			ReconcileViewer(Screen);
 			return;
 		}
-		const bool bWindow = Screen->GetMode() == ETSScreenMode::Window;
-		const FString Key = (bWindow ? TEXT("window|") : TEXT("browser|")) + Screen->GetSourceUrl();
+		const ETSScreenMode Mode = Screen->GetMode();
+		const FString Key = (Mode == ETSScreenMode::Window ? TEXT("window|") : Mode == ETSScreenMode::RemoteDesktop ? TEXT("remote|") : TEXT("browser|")) +
+			Screen->GetSourceUrl();
 		WantedKey = Key;
 		if (Session != 0 && Key == SessionKey)
 		{
 			return;
 		}
 		CloseSession();
-		if (bWindow)
+		if (Mode == ETSScreenMode::Window)
 		{
 			OpenWindowSession();
+		}
+		else if (Mode == ETSScreenMode::RemoteDesktop)
+		{
+			OpenRemoteSession();
 		}
 		else
 		{
@@ -450,8 +463,47 @@ FText UTSScreenPlayer::GetControllerTitle() const
 {
 	const ATSBuildableScreen* Screen = GetScreen();
 	const FText Name = FText::FromString(Screen ? Screen->GetControllerName() : FString());
-	return Screen && Screen->GetMode() == ETSScreenMode::Window ? FText::Format(LOCTEXT("OtherWindow", "{0} is sharing a window"), Name)
-															   : FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), Name);
+	if (Screen && Screen->GetMode() == ETSScreenMode::Window)
+	{
+		return FText::Format(LOCTEXT("OtherWindow", "{0} is sharing a window"), Name);
+	}
+	if (Screen && Screen->GetMode() == ETSScreenMode::RemoteDesktop)
+	{
+		return FText::Format(LOCTEXT("OtherRemote", "{0} is showing a remote desktop"), Name);
+	}
+	return FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), Name);
+}
+
+void UTSScreenPlayer::OpenRemoteSession()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	const FText Title = LOCTEXT("YourRemote", "Your remote desktop");
+	if (!Host || !Host->EnsureConnected())
+	{
+		SetStatus(Title, Host ? Host->GetUnavailableReason() : LOCTEXT("NoHostRemote", "Telescreen's player isn't available."));
+		return;
+	}
+	// The address and password stay on this PC; the screen only carries the token the panel made.
+	const FTSRemoteConnection* Connection = TSRemoteConnections::FindPending(Screen->GetSourceUrl());
+	if (!Connection)
+	{
+		SetStatus(Title, LOCTEXT("RemoteGone", "Connect again from the screen's panel."));
+		if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+		{
+			RCO->Server_ReleaseControl(Screen);
+		}
+		return;
+	}
+	Session = Host->OpenVnc(Connection->Host, Connection->Port, Connection->Password, 1920, 1080, true, this);
+	if (Session == 0)
+	{
+		SetStatus(Title, Host->GetUnavailableReason());
+		return;
+	}
+	bRemoteSession = true;
+	SessionKey = WantedKey;
+	SetStatus(Title, FText::Format(LOCTEXT("RemoteConnecting", "Connecting to {0}..."), FText::FromString(Connection->GetAddress())));
 }
 
 void UTSScreenPlayer::OpenWindowSession()
@@ -622,7 +674,7 @@ UTSRemoteCallObject* UTSScreenPlayer::FindRemoteCallObject() const
 void UTSScreenPlayer::UpdateStreamSender()
 {
 	ATSBuildableScreen* Screen = GetScreen();
-	const bool bWant = Screen && (bBrowserSession || bWindowSession) && Session != 0 && Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled() &&
+	const bool bWant = Screen && (bBrowserSession || bWindowSession || bRemoteSession) && Session != 0 && Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled() &&
 		Screen->GetViewerCount() > 0 && !Screen->IsCurtainOn();
 	if (SenderSession != 0 && (!bWant || SenderSource != Session))
 	{
@@ -1051,9 +1103,11 @@ void UTSScreenPlayer::CloseSession()
 	{
 		Audio->Stop();
 	}
+	StopWwise();
 	bShowingVideo = false;
 	bBrowserSession = false;
 	bWindowSession = false;
+	bRemoteSession = false;
 	ShownTexWidth = ShownWidth = 0;
 }
 
@@ -1135,6 +1189,11 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 	{
 		NextAudioUpdate = Now + AudioInterval;
 		UpdateAudio();
+	}
+	// A HUD picture's sound follows the camera; a screen's emitter stays where it was placed when the sound started.
+	if (WwisePlayingId != 0 && bPinned)
+	{
+		PlaceWwiseEmitter();
 	}
 }
 
@@ -1271,6 +1330,7 @@ void UTSScreenPlayer::SetPinned(bool bInPinned)
 	}
 	bPinned = bInPinned;
 	ApplyAudioMode();
+	PlaceWwiseEmitter();
 	RankActivity();
 	Reconcile();
 	if (!bShowingVideo)
@@ -1298,16 +1358,110 @@ void UTSScreenPlayer::ApplyAudioMode()
 
 void UTSScreenPlayer::UpdateAudio()
 {
+	const bool bMuted = UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true) && !FPlatformApplicationMisc::IsThisApplicationForeground();
+	const float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f);
+	if (WwisePlayingId != 0)
+	{
+		// The game's Master and Boom Box sliders apply on the Wwise bus.
+		TSWwiseScreens::SetGain(WwisePlayingId, bMuted ? 0.f : Volume);
+		if (TSWwiseScreens::HasEnded(WwisePlayingId))
+		{
+			// Wwise ended it (e.g. the game stopped every sound on the emitter): start again, or give up on Wwise for this
+			// sound if it keeps ending at once.
+			const bool bQuick = FPlatformTime::Seconds() - WwiseStartedAt < 1.0;
+			WwiseQuickEnds = bQuick ? WwiseQuickEnds + 1 : 0;
+			TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe> Reader = WwiseReader;
+			UE_LOG(LogTelescreen, Log, TEXT("%s: Wwise ended the screen sound%s"), *GetNameSafe(GetOwner()), WwiseQuickEnds >= 2 ? TEXT("; using Unreal") : TEXT("; restarting"));
+			StopWwise();
+			if (Reader && WwiseQuickEnds < 2 && PlayThroughWwise(Reader))
+			{
+				return;
+			}
+			if (Reader && Wave == nullptr)
+			{
+				Wave = NewObject<UTSStreamingSoundWave>(this);
+			}
+			if (Reader && Wave)
+			{
+				Wave->SetReader(Reader);
+				if (Audio)
+				{
+					Audio->SetSound(Wave);
+					Audio->Play();
+				}
+			}
+		}
+		return;
+	}
 	if (!Audio)
 	{
 		return;
 	}
-	float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f) * ReadMasterVolume();
-	if (UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true) && !FPlatformApplicationMisc::IsThisApplicationForeground())
+	Audio->SetVolumeMultiplier(FMath::Max(bMuted ? 0.f : Volume * ReadMasterVolume(), 0.0001f));
+}
+
+bool UTSScreenPlayer::PlayThroughWwise(const TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe>& Reader)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen || !UTSConfig::GetBool(this, UTSConfig::WwiseAudioKey, true) || !TSWwiseScreens::EnsureReady())
 	{
-		Volume = 0.f;
+		return false;
 	}
-	Audio->SetVolumeMultiplier(FMath::Max(Volume, 0.0001f));
+	if (!WwiseEmitter)
+	{
+		WwiseEmitter = TSWwiseScreens::CreateEmitter(Screen->GetRootComponent());
+		if (!WwiseEmitter)
+		{
+			return false;
+		}
+	}
+	// Bigger screens carry further: the Boom Box falloff the bank came with, scaled by the screen's width (8 m = 1).
+	const float Range = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::AudioRangeKey, 1.f), 0.1f, 10.f);
+	const float Scale = FMath::Max(0.25f, float(Screen->GetScreenWorldSize().X) / 800.f) * Range;
+	TSWwiseScreens::SetAttenuationScale(WwiseEmitter, Scale);
+	StopWwise();
+	PlaceWwiseEmitter();
+	WwisePlayingId = TSWwiseScreens::Play(Reader, WwiseEmitter);
+	if (WwisePlayingId == 0)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("%s: Wwise wouldn't play the screen sound; using Unreal"), *Screen->GetName());
+		return false;
+	}
+	WwiseReader = Reader;
+	WwiseStartedAt = FPlatformTime::Seconds();
+	UpdateAudio();
+	UE_LOG(LogTelescreen, Log, TEXT("%s: sound plays through Wwise (playing id %u, attenuation x%.2f)"), *Screen->GetName(), WwisePlayingId, Scale);
+	return true;
+}
+
+void UTSScreenPlayer::StopWwise()
+{
+	if (WwisePlayingId != 0)
+	{
+		TSWwiseScreens::Stop(WwisePlayingId);
+		WwisePlayingId = 0;
+	}
+	WwiseReader.Reset();
+}
+
+void UTSScreenPlayer::PlaceWwiseEmitter()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!WwiseEmitter || !Screen)
+	{
+		return;
+	}
+	// A HUD picture with "hear it everywhere": the sound follows the camera, so it is heard at full volume.
+	FVector Where = Screen->GetScreenCenter();
+	if (bPinned && UTSConfig::GetBool(this, UTSConfig::PipAudio2DKey, true))
+	{
+		if (const APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0); Controller && Controller->PlayerCameraManager)
+		{
+			Where = Controller->PlayerCameraManager->GetCameraLocation();
+		}
+	}
+	WwiseEmitter->SetWorldLocation(Where);
+	TSWwiseScreens::UpdatePosition(WwiseEmitter);
 }
 
 void UTSScreenPlayer::OnHostVideo(uint32 Generation, uint32 Width, uint32 Height, const FString& MappingName)
@@ -1327,6 +1481,18 @@ void UTSScreenPlayer::OnHostAudio(uint32 SampleRate, uint32 Channels, uint32 Cap
 	if (!Screen || !Reader.IsValid())
 	{
 		UE_LOG(LogTelescreen, Error, TEXT("Could not open audio %s"), *MappingName);
+		return;
+	}
+	if (PlayThroughWwise(Reader))
+	{
+		if (Audio)
+		{
+			Audio->Stop();
+		}
+		if (Wave)
+		{
+			Wave->SetReader(nullptr);
+		}
 		return;
 	}
 	if (!Wave)
@@ -1374,6 +1540,10 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	{
 		Title = LOCTEXT("YourWindow", "Your shared window");
 	}
+	else if (bRemoteSession)
+	{
+		Title = LOCTEXT("YourRemote", "Your remote desktop");
+	}
 	if (State != HostState)
 	{
 		UE_LOG(LogTelescreen, Log, TEXT("%s: session %u state %d at %.1f / %.0f s %s"), *GetNameSafe(GetOwner()), Session, int32(State), Position, Duration,
@@ -1388,7 +1558,7 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	{
 		StreamStats = FText::FromString(Message);
 	}
-	if (bWindowSession && !Message.IsEmpty() && (State == ESessionState::Error || State == ESessionState::Buffering))
+	if ((bWindowSession || bRemoteSession) && !Message.IsEmpty() && (State == ESessionState::Error || State == ESessionState::Buffering || State == ESessionState::Resolving))
 	{
 		SetStatus(Title, FText::FromString(Message));
 		// Minimised: the controller sees why the picture stopped (viewers keep the last frame) until frames return.
@@ -1396,7 +1566,7 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 		ShowStatus();
 		if (State == ESessionState::Error)
 		{
-			// The window closed or can't be captured: give the screen back.
+			// The window closed or can't be captured, or the remote desktop disconnected: give the screen back.
 			bShowingVideo = false;
 			ShowStatus();
 			UTSRemoteCallObject::OnNotice.Broadcast(FText::FromString(Message));
@@ -1444,6 +1614,7 @@ void UTSScreenPlayer::OnHostLost()
 	{
 		Wave->SetReader(nullptr);
 	}
+	StopWwise();
 	bShowingVideo = false;
 	SetStatus(StatusLine1, LOCTEXT("HostLost", "Player restarting..."));
 	ShowStatus();

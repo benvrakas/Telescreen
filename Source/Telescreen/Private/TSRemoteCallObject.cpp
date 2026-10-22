@@ -98,14 +98,15 @@ bool UTSRemoteCallObject::MayUseMode(const ATSBuildableScreen* Screen, ETSScreen
 		return false;
 	}
 	const bool bHost = IsHostOrAdmin(Controller);
-	const TCHAR* What = Mode == ETSScreenMode::Window ? TEXT("share a window") : TEXT("use the browser");
+	const TCHAR* What = Mode == ETSScreenMode::Window ? TEXT("share a window") : Mode == ETSScreenMode::RemoteDesktop ? TEXT("show a remote desktop") : TEXT("use the browser");
 	if (Mode == ETSScreenMode::Browser && !UTSConfig::GetBool(Screen, UTSConfig::AllowBrowserKey, true))
 	{
 		Client_Notice(TEXT("The built-in browser is turned off on this world."));
 		return false;
 	}
-	const ETSRole Role = ETSRole(FMath::Clamp(UTSConfig::GetInt(Screen, Mode == ETSScreenMode::Window ? UTSConfig::WindowRoleKey : UTSConfig::BrowserRoleKey,
-		Mode == ETSScreenMode::Window ? int32(ETSRole::Trusted) : int32(ETSRole::Everyone)), 0, 2));
+	const FString& RoleKey = Mode == ETSScreenMode::Window ? UTSConfig::WindowRoleKey : Mode == ETSScreenMode::RemoteDesktop ? UTSConfig::RemoteDesktopRoleKey : UTSConfig::BrowserRoleKey;
+	const int32 DefaultRole = Mode == ETSScreenMode::Window ? int32(ETSRole::Trusted) : Mode == ETSScreenMode::RemoteDesktop ? int32(ETSRole::HostAndAdmins) : int32(ETSRole::Everyone);
+	const ETSRole Role = ETSRole(FMath::Clamp(UTSConfig::GetInt(Screen, RoleKey, DefaultRole), 0, 2));
 	const bool bTrusted = bHost || UTSConfig::IsTrustedPlayer(Screen, GetRequesterName());
 	if ((Role == ETSRole::Trusted && !bTrusted) || (Role == ETSRole::HostAndAdmins && !bHost))
 	{
@@ -229,7 +230,7 @@ void UTSRemoteCallObject::Server_SetScreenSettings_Implementation(ATSBuildableSc
 
 bool UTSRemoteCallObject::Server_TakeControl_Validate(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)
 {
-	return uint8(Mode) <= uint8(ETSScreenMode::Window);
+	return uint8(Mode) <= uint8(ETSScreenMode::RemoteDesktop);
 }
 
 void UTSRemoteCallObject::Server_TakeControl_Implementation(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)

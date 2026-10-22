@@ -8,6 +8,7 @@
 #include "MediaSession.h"
 #include "Pipe.h"
 #include "Taps.h"
+#include "VncSession.h"
 #include "WindowSession.h"
 #include "YtDlp.h"
 
@@ -40,6 +41,8 @@ namespace
 		bool SelfTestBrowser = false;
 		bool SelfTestStream = false;
 		bool SelfTestWindow = false;
+		bool SelfTestVnc = false;
+		std::string VncPassword;
 		double LossPercent = 0.0;
 		FEncodeBenchArgs Bench;
 		bool bBench = false;
@@ -61,6 +64,8 @@ namespace
 			else if (Key == L"--selftest-browser") { Args.SelfTest = Narrow(Value); Args.SelfTestBrowser = true; }
 			else if (Key == L"--selftest-stream") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; }
 			else if (Key == L"--selftest-window") { Args.SelfTest = Narrow(Value); Args.SelfTestWindow = true; }
+			else if (Key == L"--selftest-vnc") { Args.SelfTest = Narrow(Value); Args.SelfTestVnc = true; }
+			else if (Key == L"--password") Args.VncPassword = Narrow(Value);
 			else if (Key == L"--loss") Args.LossPercent = _wtof(Value.c_str());
 			else if (Key == L"--parent") Args.Parent = wcstoul(Value.c_str(), nullptr, 10);
 			else if (Key == L"--selftest") Args.SelfTest = Narrow(Value);
@@ -341,6 +346,27 @@ namespace
 				Sessions[Params.SessionId] = std::make_unique<FWindowSession>(Params, Events);
 				break;
 			}
+			case EMsg::OpenVnc:
+			{
+				FVncParams Params;
+				Params.SessionId = R.U32();
+				Params.Host = R.Str();
+				Params.Port = uint16_t(std::clamp<uint32_t>(R.U32(), 1, 65535));
+				Params.Password = R.Str();
+				Params.MaxWidth = std::clamp<uint32_t>(R.U32(), 320, 3840);
+				Params.MaxHeight = std::clamp<uint32_t>(R.U32(), 180, 2160);
+				Params.bAudio = R.U8() != 0;
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto Existing = Sessions.find(Params.SessionId);
+				if (Existing != Sessions.end())
+				{
+					Retire(std::move(Existing->second));
+					Sessions.erase(Existing);
+				}
+				Sessions[Params.SessionId] = std::make_unique<FVncSession>(Params, Events);
+				break;
+			}
 			case EMsg::ListWindows:
 			{
 				const uint32_t Request = R.U32();
@@ -469,6 +495,82 @@ namespace
 
 	// Runs a browser on Args.SelfTest, streams it through a sender and a receiver with LossPercent of the packets dropped,
 	// and reports what arrives.
+	// Connects to the VNC server at Args.SelfTest (host:port) for Args.Seconds, reports frames, and sends a click, a key
+	// and some text so the server's log shows them.
+	int RunVncSelfTest(const FArgs& Args)
+	{
+		FVncParams Params;
+		Params.SessionId = 11;
+		const size_t Colon = Args.SelfTest.rfind(':');
+		Params.Host = Colon == std::string::npos ? Args.SelfTest : Args.SelfTest.substr(0, Colon);
+		Params.Port = Colon == std::string::npos ? 5900 : uint16_t(std::atoi(Args.SelfTest.c_str() + Colon + 1));
+		Params.Password = Args.VncPassword;
+		std::atomic<int> Frames{0};
+		std::atomic<int> Width{0}, Height{0};
+		std::mutex LastMutex;
+		std::vector<uint8_t> Last;
+		const int FrameTap = FrameTaps::Add(11, [&](const uint8_t* Bgra, int W, int H)
+		{
+			++Frames;
+			Width = W;
+			Height = H;
+			std::lock_guard<std::mutex> Lock(LastMutex);
+			Last.assign(Bgra, Bgra + size_t(W) * H * 4);
+		});
+		FSessionEvents Events;
+		Events.OnVideo = [](uint32_t, uint32_t Generation, uint32_t W, uint32_t H, const std::string&) { LOG_INFO("selftest: video %ux%u (generation %u)", W, H, Generation); };
+		Events.OnState = [](uint32_t, ESessionState State, double, double, const std::string& Message) { LOG_INFO("selftest: state %d %s", int(State), Message.c_str()); };
+		{
+			FVncSession Session(Params, Events);
+			const double Start = NowSeconds();
+			bool bInputSent = false;
+			while (NowSeconds() - Start < Args.Seconds)
+			{
+				Sleep(1000);
+				LOG_INFO("selftest: %d frames (%dx%d)", Frames.load(), Width.load(), Height.load());
+				if (!bInputSent && Frames > 0)
+				{
+					bInputSent = true;
+					auto Input = [&Session](EInput Kind, const FPayloadWriter& W)
+					{
+						FPayloadReader R(W.Bytes);
+						Session.HandleInput(Kind, R);
+					};
+					FPayloadWriter Move;
+					Move.U32(40); Move.U32(30); Move.U32(0);
+					Input(EInput::MouseMove, Move);
+					for (uint8_t Up : {0, 1})
+					{
+						FPayloadWriter Click;
+						Click.U32(40); Click.U32(30); Click.U8(0); Click.U8(Up); Click.U8(1); Click.U32(0);
+						Input(EInput::MouseButton, Click);
+					}
+					FPayloadWriter Key;
+					Key.U8(uint8_t(TSHostProtocol::EKeyType::RawKeyDown)); Key.U32(0x0D); Key.U32(0);
+					const uint16_t NoChar = 0;
+					Key.Append(&NoChar, 2); Key.U32(0);
+					Input(EInput::Key, Key);
+					FPayloadWriter Text;
+					Text.Str("hi");
+					Input(EInput::Text, Text);
+				}
+			}
+		}
+		FrameTaps::Remove(FrameTap);
+		if (!Args.Out.empty() && !Last.empty())
+		{
+			// Raw BGRA of the last frame, for comparing with what the server drew.
+			if (FILE* File = _wfopen(Args.Out.c_str(), L"wb"))
+			{
+				fwrite(Last.data(), 1, Last.size(), File);
+				fclose(File);
+				LOG_INFO("selftest: last frame (%dx%d BGRA) saved", Width.load(), Height.load());
+			}
+		}
+		LOG_INFO("selftest result: %d frames", Frames.load());
+		return Frames > 0 ? 0 : 1;
+	}
+
 	// Shares the first window whose title contains Args.SelfTest for Args.Seconds and reports frames and sound.
 	int RunWindowSelfTest(const FArgs& Args)
 	{
@@ -951,6 +1053,7 @@ int wmain(int Argc, wchar_t** Argv)
 	if (Args.bBench) return RunEncodeBench(Args.Bench);
 	if (Args.SelfTestStream) return RunStreamSelfTest(Args);
 	if (Args.SelfTestWindow) return RunWindowSelfTest(Args);
+	if (Args.SelfTestVnc) return RunVncSelfTest(Args);
 	if (!Args.SelfTest.empty()) return RunSelfTest(Args);
 	if (Args.Pipe.empty())
 	{
