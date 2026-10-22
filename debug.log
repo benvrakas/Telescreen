@@ -1,4 +1,0 @@
-[37584:41060:1022/002653.033:WARNING:chrome\browser\signin\account_consistency_mode_manager.cc:74] Desktop Identity Consistency cannot be enabled as no OAuth client ID and client secret have been configured.
-[37584:41060:1022/002653.366:WARNING:chrome\browser\media\prefs\capture_device_ranking.h:256] Can't initialize the value of media.audio_input.user_preference_ranking because media.default_audio_capture_device isn't registered or is empty
-[39296:9396:1022/002700.116:WARNING:net\extras\sqlite\sqlite_persistent_store_backend_base.cc:181] Failed to post task from FlushAndNotifyInBackground@net\extras\sqlite\sqlite_persistent_store_backend_base.cc:231 to client_task_runner_.
-[39296:9396:1022/002700.116:WARNING:net\extras\sqlite\sqlite_persistent_store_backend_base.cc:181] Failed to post task from FlushAndNotifyInBackground@net\extras\sqlite\sqlite_persistent_store_backend_base.cc:231 to client_task_runner_.

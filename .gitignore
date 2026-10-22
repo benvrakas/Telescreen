@@ -75,3 +75,4 @@ DerivedDataCache/*
 # Helper build output and staged runtime components
 Helper/out/
 Resources/Runtime/
+debug.log
