@@ -6,6 +6,7 @@
 #include "LoopbackSession.h"
 #include "StreamSession.h"
 #include "MediaSession.h"
+#include "Direct.h"
 #include "Pipe.h"
 #include "Taps.h"
 #include "VncSession.h"
@@ -42,6 +43,7 @@ namespace
 		bool SelfTestStream = false;
 		bool SelfTestWindow = false;
 		bool SelfTestVnc = false;
+		bool SelfTestDirect = false;
 		std::string VncPassword;
 		double LossPercent = 0.0;
 		int StreamHeight = 0;
@@ -71,6 +73,7 @@ namespace
 			else if (Key == L"--browserdata") Args.BrowserData = Value;
 			else if (Key == L"--selftest-browser") { Args.SelfTest = Narrow(Value); Args.SelfTestBrowser = true; }
 			else if (Key == L"--selftest-stream") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; }
+			else if (Key == L"--selftest-direct") { Args.SelfTestDirect = true; Args.Seconds = _wtof(Value.c_str()); }
 			else if (Key == L"--selftest-stream-file") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; Args.SelfTestLocal = true; }
 			else if (Key == L"--selftest-window") { Args.SelfTest = Narrow(Value); Args.SelfTestWindow = true; }
 			else if (Key == L"--selftest-vnc") { Args.SelfTest = Narrow(Value); Args.SelfTestVnc = true; }
@@ -250,8 +253,25 @@ namespace
 			Pipe.Send(uint16_t(EMsg::BrowserState), W.Bytes);
 		};
 
-		auto SendStreamPacket = [&Pipe](uint32_t Session, const FStreamPacket& Packet)
+		// Direct links: received packets go to their receiver session; link changes go to the mod.
+		FDirectHub Direct([&SessionsMutex, &Sessions](uint32_t Session, const FStreamPacket& Packet)
 		{
+			std::lock_guard<std::mutex> Lock(SessionsMutex);
+			auto It = Sessions.find(Session);
+			if (It != Sessions.end()) It->second->HandleStreamPacket(Packet);
+		}, [&Pipe](uint32_t Session, uint32_t Link, FDirectHub::EState State, const std::string& Detail)
+		{
+			FPayloadWriter W;
+			W.U32(Session);
+			W.U32(Link);
+			W.U8(uint8_t(State));
+			W.Str(Detail);
+			Pipe.Send(uint16_t(EMsg::DirectState), W.Bytes);
+		});
+
+		auto SendStreamPacket = [&Pipe, &Direct](uint32_t Session, const FStreamPacket& Packet)
+		{
+			Direct.Send(Session, Packet);
 			FPayloadWriter W;
 			W.Bytes.reserve(Packet.Data.size() + 16);
 			W.U32(Session);
@@ -317,6 +337,7 @@ namespace
 			case EMsg::CloseSession:
 			{
 				const uint32_t Session = R.U32();
+				Direct.RemoveSession(Session);
 				std::lock_guard<std::mutex> Lock(SessionsMutex);
 				auto It = Sessions.find(Session);
 				if (It != Sessions.end())
@@ -324,6 +345,48 @@ namespace
 					Retire(std::move(It->second));
 					Sessions.erase(It);
 				}
+				break;
+			}
+			case EMsg::DirectOpen:
+			{
+				const uint32_t Request = R.U32();
+				const uint16_t Port = uint16_t(R.U32());
+				const bool bUpnp = R.U8() != 0;
+				if (!R.Ok) break;
+				// STUN and UPnP take a few seconds: off the pipe thread.
+				std::thread([&Pipe, &Direct, Request, Port, bUpnp]
+				{
+					std::vector<std::string> Candidates;
+					std::string Error;
+					const bool bOk = Direct.Open(Port, bUpnp, Candidates, Error);
+					FPayloadWriter W;
+					W.U32(Request);
+					W.U8(bOk ? 1 : 0);
+					W.Str(Error);
+					W.U32(uint32_t(Candidates.size()));
+					for (const std::string& Candidate : Candidates) W.Str(Candidate);
+					Pipe.Send(uint16_t(EMsg::DirectCandidates), W.Bytes);
+				}).detach();
+				break;
+			}
+			case EMsg::DirectAddPeer:
+			{
+				const uint32_t Session = R.U32();
+				const uint32_t Link = R.U32();
+				const bool bSender = R.U8() != 0;
+				uint8_t Key[16] = {};
+				for (uint8_t& Byte : Key) Byte = R.U8();
+				const uint32_t Count = std::min<uint32_t>(R.U32(), 16);
+				std::vector<std::string> Candidates;
+				for (uint32_t I = 0; I < Count && R.Ok; ++I) Candidates.push_back(R.Str());
+				if (!R.Ok) break;
+				Direct.AddPeer(Session, Link, bSender, Key, Candidates);
+				break;
+			}
+			case EMsg::DirectRemovePeer:
+			{
+				const uint32_t Link = R.U32();
+				if (R.Ok) Direct.RemovePeer(Link);
 				break;
 			}
 			case EMsg::Probe:
@@ -1172,6 +1235,7 @@ int wmain(int Argc, wchar_t** Argv)
 	if (Args.SelfTestStream) return RunStreamSelfTest(Args);
 	if (Args.SelfTestWindow) return RunWindowSelfTest(Args);
 	if (Args.SelfTestVnc) return RunVncSelfTest(Args);
+	if (Args.SelfTestDirect) return FDirectHub::SelfTest(Args.Seconds > 0.0 ? Args.Seconds : 6.0);
 	if (!Args.SelfTest.empty()) return RunSelfTest(Args);
 	if (Args.Pipe.empty())
 	{

@@ -102,3 +102,17 @@ Verified 2026-10-22: `--stream-height 480 --prefer h264` encodes the 1280x720 br
 (166 packets, none dropped); `--prefer hevc` picks hevc_nvenc. In game: change Stream resolution / bitrate / encoder
 while sharing (the sharer's log shows "stream settings changed; restarting the stream"); the world host lowers the
 highest resolution and the sharer's stream follows within a few seconds.
+
+## Subtitles and direct connections (1.0)
+
+```
+TelescreenHost.exe --selftest <url> --ytdlp <yt-dlp.exe> --jsruntime <qjs.exe> --subtitles 1 --seconds 12 --log <file>
+TelescreenHost.exe --selftest-file <video> --subtitles 1 --seconds 11 --log <file>
+TelescreenHost.exe --selftest-direct 6 --log <file>
+```
+
+`--subtitles N` selects track N 8 s in and logs the tracks and cues; `--subtitle-language` sets the preferred language.
+Verified 2026-10-22: a YouTube video lists English (Original) and English automatic captions (json3), 1048 cues in
+0.3 s; a .srt next to an MKV (tags removed); an SRT track inside an MKV, read from the whole file. `--selftest-direct`
+runs two direct-link hubs against each other (see Docs/Architecture.md, Direct connections). Not tested yet: UPnP
+port mapping on a real router, direct links between two PCs on different networks.

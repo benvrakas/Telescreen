@@ -60,6 +60,7 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mGrants);
 	DOREPLIFETIME(ATSBuildableScreen, mStreamLimits);
 	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamer);
+	DOREPLIFETIME(ATSBuildableScreen, mRelayedViewerCount);
 	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamerName);
 }
 
@@ -538,9 +539,34 @@ void ATSBuildableScreen::Server_SetCurtain(bool bOn)
 	}
 }
 
+void ATSBuildableScreen::Server_SetDirectWatcher(APlayerController* Watcher, bool bDirect)
+{
+	if (!HasAuthority() || !Watcher || !mWatchers.Contains(Watcher))
+	{
+		return;
+	}
+	const bool bChanged = bDirect ? (mDirectWatchers.AddUnique(Watcher), true) : mDirectWatchers.Remove(Watcher) > 0;
+	if (!bChanged)
+	{
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s gets the stream %s"), *GetName(), Watcher->PlayerState ? *Watcher->PlayerState->GetPlayerName() : TEXT("?"),
+		bDirect ? TEXT("directly") : TEXT("through the server"));
+	SyncViewers();
+	FlushNetDormancy();
+	ForceNetUpdate();
+}
+
+bool ATSBuildableScreen::IsDirectWatcher(const APlayerController* Watcher) const
+{
+	return mDirectWatchers.ContainsByPredicate([Watcher](const TWeakObjectPtr<APlayerController>& Each) { return Each.Get() == Watcher; });
+}
+
 void ATSBuildableScreen::SyncViewers()
 {
+	mDirectWatchers.RemoveAll([this](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid() || !mWatchers.Contains(P); });
 	mViewerCount = mWatchers.Num();
+	mRelayedViewerCount = mWatchers.Num() - mDirectWatchers.Num();
 	mViewerStates.Reset();
 	for (const TWeakObjectPtr<APlayerController>& Watcher : mWatchers)
 	{

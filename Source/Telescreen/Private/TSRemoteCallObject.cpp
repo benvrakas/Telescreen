@@ -360,7 +360,7 @@ void UTSRemoteCallObject::Server_StreamChunk_Implementation(ATSBuildableScreen* 
 	TSNetRate::Raise(Screen->GetWorld(), TSNetRate::RateFor(Screen->GetStreamLimits().MaxKbps));
 	for (const TWeakObjectPtr<APlayerController>& Watcher : Screen->GetWatchers())
 	{
-		if (!Watcher.IsValid())
+		if (!Watcher.IsValid() || Screen->IsDirectWatcher(Watcher.Get()))
 		{
 			continue;
 		}
@@ -408,6 +408,125 @@ void UTSRemoteCallObject::Server_SetWatching_Implementation(ATSBuildableScreen* 
 		TSNetRate::Raise(Screen->GetWorld(), TSNetRate::RateFor(Screen->GetStreamLimits().MaxKbps));
 	}
 	Screen->Server_SetWatcher(Viewer, bWatching);
+}
+
+namespace
+{
+	bool ValidCandidates(const TArray<FString>& Candidates)
+	{
+		return Candidates.Num() <= 16 && !Candidates.ContainsByPredicate([](const FString& Each) { return Each.Len() > 64; });
+	}
+
+	UTSRemoteCallObject* RemoteFor(APlayerController* Controller)
+	{
+		AFGPlayerController* Remote = Cast<AFGPlayerController>(Controller);
+		return Remote ? Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>() : nullptr;
+	}
+}
+
+bool UTSRemoteCallObject::Server_DirectRequest_Validate(ATSBuildableScreen* Screen, const TArray<FString>& Candidates)
+{
+	return ValidCandidates(Candidates);
+}
+
+void UTSRemoteCallObject::Server_DirectRequest_Implementation(ATSBuildableScreen* Screen, const TArray<FString>& Candidates)
+{
+	APlayerController* Viewer = GetOwnerPlayerController();
+	APlayerState* SenderState = Screen ? Screen->GetStreamSender() : nullptr;
+	APlayerController* Sender = SenderState ? Cast<APlayerController>(SenderState->GetOwner()) : nullptr;
+	if (!Viewer || !Sender || Sender == Viewer || !Screen->GetWatchers().Contains(Viewer) || !UTSConfig::GetBool(Screen, UTSConfig::AllowDirectKey, true))
+	{
+		return;
+	}
+	// Old offers that were never answered.
+	const double Now = FPlatformTime::Seconds();
+	for (auto It = Screen->mDirectLinks.CreateIterator(); It; ++It)
+	{
+		if (Now - It.Value().CreatedAt > 120.0 || It.Value().Viewer == Viewer)
+		{
+			It.RemoveCurrent();
+		}
+	}
+	uint32 Link = 0;
+	do
+	{
+		Link = FMath::Rand() * 65536u + uint32(FMath::Rand()) + 1u;
+	} while (Screen->mDirectLinks.Contains(Link));
+	ATSBuildableScreen::FDirectLink& Entry = Screen->mDirectLinks.Add(Link);
+	Entry.Viewer = Viewer;
+	Entry.Sender = SenderState;
+	Entry.CreatedAt = Now;
+	const FGuid A = FGuid::NewGuid(), B = FGuid::NewGuid();
+	for (const uint32 Word : {A.A ^ B.C, A.B ^ B.D, A.C ^ B.A, A.D ^ B.B})
+	{
+		for (int32 Shift = 0; Shift < 32; Shift += 8)
+		{
+			Entry.Key.Add(uint8(Word >> Shift));
+		}
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s asks %s for a direct link (%u)"), *Screen->GetName(), *GetRequesterName(), *SenderState->GetPlayerName(), Link);
+	if (Sender->IsLocalController())
+	{
+		Screen->OnDirectRequest.Broadcast(Link, Entry.Key, Candidates);
+	}
+	else if (UTSRemoteCallObject* RCO = RemoteFor(Sender))
+	{
+		RCO->Client_DirectRequest(Screen, Link, Entry.Key, Candidates);
+	}
+}
+
+void UTSRemoteCallObject::Client_DirectRequest_Implementation(ATSBuildableScreen* Screen, uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates)
+{
+	if (Screen)
+	{
+		Screen->OnDirectRequest.Broadcast(Link, Key, Candidates);
+	}
+}
+
+bool UTSRemoteCallObject::Server_DirectAnswer_Validate(ATSBuildableScreen* Screen, uint32 Link, const TArray<FString>& Candidates)
+{
+	return ValidCandidates(Candidates);
+}
+
+void UTSRemoteCallObject::Server_DirectAnswer_Implementation(ATSBuildableScreen* Screen, uint32 Link, const TArray<FString>& Candidates)
+{
+	const APlayerController* Sender = GetOwnerPlayerController();
+	ATSBuildableScreen::FDirectLink* Entry = Screen ? Screen->mDirectLinks.Find(Link) : nullptr;
+	if (!Entry || !Sender || Entry->Sender.Get() != Sender->PlayerState || !Entry->Viewer.IsValid())
+	{
+		return;
+	}
+	APlayerController* Viewer = Entry->Viewer.Get();
+	if (Viewer->IsLocalController())
+	{
+		Screen->OnDirectAnswer.Broadcast(Link, Entry->Key, Candidates);
+	}
+	else if (UTSRemoteCallObject* RCO = RemoteFor(Viewer))
+	{
+		RCO->Client_DirectAnswer(Screen, Link, Entry->Key, Candidates);
+	}
+	Screen->mDirectLinks.Remove(Link);
+}
+
+void UTSRemoteCallObject::Client_DirectAnswer_Implementation(ATSBuildableScreen* Screen, uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates)
+{
+	if (Screen)
+	{
+		Screen->OnDirectAnswer.Broadcast(Link, Key, Candidates);
+	}
+}
+
+bool UTSRemoteCallObject::Server_SetDirect_Validate(ATSBuildableScreen* Screen, bool bDirect)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_SetDirect_Implementation(ATSBuildableScreen* Screen, bool bDirect)
+{
+	if (Screen)
+	{
+		Screen->Server_SetDirectWatcher(GetOwnerPlayerController(), bDirect && UTSConfig::GetBool(Screen, UTSConfig::AllowDirectKey, true));
+	}
 }
 
 bool UTSRemoteCallObject::Server_SetCurtain_Validate(ATSBuildableScreen* Screen, bool bOn)

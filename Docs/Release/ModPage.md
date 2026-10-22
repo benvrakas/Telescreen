@@ -3,7 +3,6 @@ Text for the Telescreen page on ficsit.app (Satisfactory Mod Repository).
 - "Short description" field: the line under SHORT DESCRIPTION (at most 128 characters).
 - "Full description" field: everything under FULL DESCRIPTION.
 - The two transparency fields: the text under NETWORK ACTIVITY TRANSPARENCY and AI USAGE TRANSPARENCY.
-Replace the [bracketed] placeholders before publishing.
 -->
 
 # SHORT DESCRIPTION
@@ -12,7 +11,6 @@ Billboard screens for synced videos, a shared browser, shared windows and VM des
 
 # FULL DESCRIPTION
 
-
 Billboard-sized screens for Satisfactory. Put a screen up, paste a video link, and everyone near it watches the same
 video at the same moment, with sound that comes from the screen. Or open a browser on it, share a window from your
 PC, or show a virtual machine's desktop, and everyone watches that live.
@@ -20,8 +18,8 @@ PC, or show a virtual machine's desktop, and everyone watches that live.
 ![A YouTube video on a Large Telescreen, seen from the factory](https://raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/screen-video.jpg)
 
 **Multiplayer hasn't been tested yet.** Everything below is built for multiplayer (synced videos, streams to other
-players, viewer control, the world host's rules), but so far it has only been tried in single player. If you play
-it with friends, please tell me how it went, with your logs (see "Reporting problems").
+players, direct connections, viewer control, the world host's rules), but so far it has only been tried in single
+player. If you play it with friends, please tell me how it went, with your logs (see "Reporting problems").
 
 ## Features
 
@@ -32,8 +30,12 @@ it with friends, please tell me how it went, with your logs (see "Reporting prob
 - **Your own video files** (e.g. your Plex library): pick a file, and every player plays their own copy, found by
   file name in their videos folder even when it's somewhere else on their PC. Players who don't have it, or whose PC
   can't play a link, watch it streamed from a player who plays it.
+- **Subtitles** on the screen, on your HUD, both or off (your choice, on your PC): a site's subtitles and YouTube's
+  automatic captions, text tracks inside video files, or a .srt / .vtt file next to a video. Pick the track in the
+  Videos tab; your preferred language is picked first.
 - **Shared built-in browser**: use it in a window with mouse and keyboard (web games that lock the mouse work).
-  Everyone near the screen sees and hears it, streamed through the game's own connection: no ports to open.
+  Everyone near the screen sees and hears it, streamed through the game's own connection (no ports to open), or
+  over a direct connection if you turn those on.
 - **Share a window** from your PC (a video player, a music app, a game) with its own sound. Only that window is
   shared, never your desktop.
 - **Remote desktop (VNC)**: show a virtual machine's console (QEMU/KVM, Proxmox) or any VNC server on a screen, with
@@ -46,6 +48,9 @@ it with friends, please tell me how it went, with your logs (see "Reporting prob
 - **Picture-in-picture** of any screen on your HUD, with sound that follows you. **F9** lists every screen.
 - **Stream quality settings**: resolution, bitrate, frame rate and encoder (AV1, HEVC or H.264 on your graphics card,
   or AV1 in software), within the world host's limits.
+- **Direct connections** (optional): live streams go straight between the sharing player's PC and each viewer's,
+  encrypted, instead of through the world host, so the host's upload isn't the limit. Works through most home routers;
+  can open the port with UPnP, or use one you forward. Falls back to the world host's connection by itself.
 
 ## Screenshots
 
@@ -60,7 +65,8 @@ it with friends, please tell me how it went, with your logs (see "Reporting prob
 - **The world host** (the player hosting the world, or a dedicated server's admins) sets the rules for everyone in
   Mods > Telescreen > *Rules for this world*: who may change videos, which video sites are allowed, who may use the
   browser, share windows or show remote desktops (everyone / trusted players / only the host), how much control a
-  viewer may be given, how many screens may be in use, and stream limits. The host can stop any screen's sharing.
+  viewer may be given, how many screens may be in use, stream limits, and whether players may connect directly. The
+  host can stop any screen's sharing.
 - **The player sharing** (the browser, window or remote desktop runs on their PC) chooses what to share, can blank it
   for everyone at any time (**F10**), and decides who may control it, within the host's rules. Other players only get
   the picture and sound: never their other windows, their VNC addresses or passwords.
@@ -91,13 +97,17 @@ it with friends, please tell me how it went, with your logs (see "Reporting prob
 
 ## Known limitations
 
-- Streams go through the world host's connection; a slow host upload lowers quality (the stream adapts), and lost
-  packets freeze the picture until the next full frame. Lower the stream bitrate if that happens often.
+- Without direct connections, streams go through the world host's connection; a slow host upload lowers quality (the
+  stream adapts), and lost packets freeze the picture until the next full frame. Lower the stream bitrate, or turn on
+  direct connections, if that happens often. Direct connections don't adapt the bitrate yet: the sharer's upload has
+  to carry each direct viewer's copy.
 - The first video on a PC takes 5-10 seconds to start (link lookup). If YouTube links stop loading, the bundled yt-dlp
   may need an update (a mod update).
 - Clicking the 3D screen directly isn't supported: use its panel and window.
 - Not yet tested with more than one player (see above).
-- The browser's process sandbox is off. RDP isn't supported yet (VNC is). Subtitles are planned for the next update.
+- Subtitles: picture-based tracks (Blu-ray PGS, DVD) aren't supported, only text; a player watching a video streamed
+  from another player gets no subtitles.
+- The browser's process sandbox is off. RDP isn't supported yet (VNC is).
 
 ## Reporting problems
 
@@ -122,19 +132,20 @@ Each component's licence and source notes are in the mod's `Resources/Runtime/<c
 
 Telescreen connects only to the video sites, web pages and VNC servers players choose, plus the browser's search
 engine; see the network activity section for the full list. Everything between players goes through the game's own
-connection. No telemetry or analytics.
+connection, unless you turn on direct connections (off by default). No telemetry or analytics.
 
 # NETWORK ACTIVITY TRANSPARENCY
 
 Telescreen connects to these services. Everything between players (the video queue and position, live streams of
-browsers, windows and desktops, viewer input and pointers) goes through the game's own connection to the world host:
-the mod opens no ports and makes no direct connections between players.
+browsers, windows, desktops and videos, viewer input and pointers) goes through the game's own connection to the
+world host, except live streams when direct connections are on (below; off by default).
 
 - **Video sites** (YouTube, Twitch, Vimeo and others, through the bundled yt-dlp and FFmpeg): when you add a link, your
   PC looks it up (title, length); when a video plays on a screen near you, your PC fetches it from the site and its
   video servers. This includes videos other players added: by default your PC loads those only from the sites on
   your allowed list (Mods > Telescreen > Privacy; you can also choose any site, or never). The world host's list
-  decides which sites can be added at all (unless the host allows any site). QuickJS, which yt-dlp uses for YouTube, runs locally and connects nowhere.
+  decides which sites can be added at all (unless the host allows any site). Subtitles you pick are downloaded from
+  the same site. QuickJS, which yt-dlp uses for YouTube, runs locally and connects nowhere.
 - **Web pages in the built-in browser** (Chromium Embedded Framework): only on the PC of the player using the
   browser, to the pages they open, as any browser does. Words typed in its address box go to the search engine in the
   settings (default DuckDuckGo, duckduckgo.com); its start page is also DuckDuckGo by default. Players watching the
@@ -151,19 +162,25 @@ the mod opens no ports and makes no direct connections between players.
   PC may stream it to them through the game's connection (setting "Stream videos to players who can't play them").
   Your videos folder is indexed locally (file names only) and never sent anywhere; only the queued file's path or
   name goes to the other players, as part of the queue.
+- **Direct connections** (only when you turn on "Direct connections for streams"; off by default): your PC asks a
+  public STUN server (stun.l.google.com, or stun.cloudflare.com) for its public IP address and port, and with "Open the
+  port on the router" on, asks your home router over UPnP to open one UDP port while the game runs (removed when the
+  game closes, and expiring after two hours in any case). When you watch or share a stream with another player who
+  also has it on, your PCs exchange their addresses (public and local) through the world host and then send the
+  stream straight to each other over UDP,
+  encrypted with AES-GCM under a key only the two of you get. That player learns your public IP address. The world
+  host can turn direct connections off for the world.
 
 The helper program talks to the game through a local pipe and shared memory on your PC. The mod downloads no updates
 or other files, and has no telemetry or analytics.
 
 # AI USAGE TRANSPARENCY
 
-[Edit to match how you made the mod.]
-
 This mod was built with the help of an AI coding assistant (Anthropic's Claude):
 
 - **Source code:** most of the mod's C++ source code (the mod and its helper program) was written by the AI,
   directed, reviewed and tested in game by the author.
-- **Mod page text:** this description was drafted by the AI and edited by the author.
+- **Mod page text:** this description was written by the AI and reviewed by the author.
 - **Developer documentation** in the source repository was written by the AI.
 - **Art:** the mod icon is a flat drawing generated by a small script the AI wrote (no image-generation AI). The
   screenshots are from the author's game. No other AI-generated assets: the UI uses the game's own widgets, fonts and

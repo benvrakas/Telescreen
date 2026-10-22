@@ -37,6 +37,10 @@ const FString UTSConfig::BrowserHeightKey = TEXT("BrowserHeight");
 const FString UTSConfig::RemoteMatchScreenKey = TEXT("RemoteMatchScreen");
 const FString UTSConfig::VideosFolderKey = TEXT("VideosFolder");
 const FString UTSConfig::SubtitleModeKey = TEXT("SubtitleMode");
+const FString UTSConfig::DirectKey = TEXT("DirectStreams");
+const FString UTSConfig::DirectPortKey = TEXT("DirectPort");
+const FString UTSConfig::DirectUpnpKey = TEXT("DirectUpnp");
+const FString UTSConfig::AllowDirectKey = TEXT("AllowDirect");
 const FString UTSConfig::SubtitleLanguageKey = TEXT("SubtitleLanguage");
 const FString UTSConfig::StreamMyVideosKey = TEXT("StreamMyVideos");
 const FString UTSConfig::MaxStreamHeightKey = TEXT("MaxStreamHeight");
@@ -174,6 +178,16 @@ UTSConfig::UTSConfig()
 	AddBool(LocalVideos, StreamMyVideosKey, LOCTEXT("StreamMyVideos", "Stream videos to players who can't play them"),
 		LOCTEXT("StreamMyVideosTip", "When a video plays on your PC but another player can't play it (they don't have the file, or the link fails for them), your PC streams it to them like a shared window. Off: they see the title only."), true);
 
+	UConfigPropertySection* Network = AddSection(TEXT("Network"), LOCTEXT("NetworkSection", "Direct connections"));
+	Network->Tooltip = LOCTEXT("NetworkSectionTip", "Live streams normally go through the world host's connection. With direct connections on (for both the player sharing and the viewer), they go straight between your PCs instead, so the world host's upload isn't the limit.");
+	AddBool(Network, DirectKey, LOCTEXT("DirectStreams", "Direct connections for streams"),
+		LOCTEXT("DirectStreamsTip", "Send and receive live streams straight between your PC and other players' PCs (encrypted), when both of you turn this on and the world host allows it. Other players in the stream learn your public IP address, and your PC asks a public STUN server (Google, Cloudflare) for its own. Falls back to the world host's connection when a direct link fails."),
+		false);
+	AddInt(Network, DirectPortKey, LOCTEXT("DirectPort", "Direct connection port (UDP)"),
+		LOCTEXT("DirectPortTip", "0: any free port. Set a number if you forward that UDP port on your router to this PC."), 0);
+	AddBool(Network, DirectUpnpKey, LOCTEXT("DirectUpnp", "Open the port on the router (UPnP)"),
+		LOCTEXT("DirectUpnpTip", "Ask the home router to open the direct connection port while the game runs (routers with UPnP on). Helps when a direct link can't be made otherwise."), true);
+
 	UConfigPropertySection* SubtitleSection = AddSection(TEXT("Subtitles"), LOCTEXT("Subtitles", "Subtitles"));
 	AddInt(SubtitleSection, SubtitleModeKey, LOCTEXT("SubtitleMode", "Show subtitles"),
 		LOCTEXT("SubtitleModeTip", "0: off; 1: on the screen; 2: on your HUD (for the nearest screen you can hear); 3: both. Only on your PC. Also in each screen's Videos tab."), 0);
@@ -263,6 +277,8 @@ UTSConfig::UTSConfig()
 		LOCTEXT("AllowStreamingTip", "Let a player's browser be streamed to everyone through this world's connection. Off: only the player using it sees it."), true);
 	AddInt(Hosting, MaxStreamKbpsKey, LOCTEXT("MaxStreamKbps", "Highest stream bitrate (kbps)"),
 		LOCTEXT("MaxStreamKbpsTip", "Most each shared browser, window or remote desktop may send through this world's connection, sound included. Sharers' PCs keep below it; the server drops data above it."), 8000);
+	AddBool(Hosting, AllowDirectKey, LOCTEXT("AllowDirect", "Allow direct connections between players"),
+		LOCTEXT("AllowDirectTip", "Players who turn on direct connections stream to each other directly instead of through this world's connection. The server only passes their addresses and a key between them."), true);
 	AddInt(Hosting, MaxStreamHeightKey, LOCTEXT("MaxStreamHeight", "Highest stream resolution (lines)"),
 		LOCTEXT("MaxStreamHeightTip", "Sharers' streams are scaled down to at most this height, e.g. 720 or 1080."), 1080);
 	AddInt(Hosting, MaxStreamFpsKey, LOCTEXT("MaxStreamFps", "Highest stream frame rate"),
@@ -343,6 +359,7 @@ namespace
 			{UTSConfig::StreamKbpsKey, {300.f, 20000.f}},
 			{UTSConfig::StreamFpsKey, {10.f, 60.f}},
 			{UTSConfig::SubtitleModeKey, {0.f, 3.f}},
+			{UTSConfig::DirectPortKey, {0.f, 65535.f}},
 			{UTSConfig::StreamHeightKey, {240.f, 2160.f}},
 			{UTSConfig::StreamEncoderKey, {0.f, 4.f}},
 			{UTSConfig::BrowserHeightKey, {360.f, 1440.f}},

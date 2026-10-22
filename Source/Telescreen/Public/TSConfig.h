@@ -54,6 +54,10 @@ public:
 	static const FString RemoteMatchScreenKey;
 	static const FString VideosFolderKey;
 	static const FString SubtitleModeKey;
+	static const FString DirectKey;
+	static const FString DirectPortKey;
+	static const FString DirectUpnpKey;
+	static const FString AllowDirectKey;
 	static const FString SubtitleLanguageKey;
 	static const FString StreamMyVideosKey;
 	static const FString MaxStreamHeightKey;

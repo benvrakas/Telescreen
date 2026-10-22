@@ -46,6 +46,24 @@ public:
 	UFUNCTION(Client, Unreliable)
 	void Client_StreamChunk(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk);
 
+	// Direct links (see Docs/Architecture.md, Direct connections): a viewer offers its addresses; the server makes a
+	// link id and key and asks the stream sender, whose answer goes back to the viewer; the viewer reports when the
+	// link is up (the server then stops relaying to it) or down.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_DirectRequest(ATSBuildableScreen* Screen, const TArray<FString>& Candidates);
+
+	UFUNCTION(Client, Reliable)
+	void Client_DirectRequest(ATSBuildableScreen* Screen, uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_DirectAnswer(ATSBuildableScreen* Screen, uint32 Link, const TArray<FString>& Candidates);
+
+	UFUNCTION(Client, Reliable)
+	void Client_DirectAnswer(ATSBuildableScreen* Screen, uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetDirect(ATSBuildableScreen* Screen, bool bDirect);
+
 	// A viewer starts or stops watching a screen's stream.
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetWatching(ATSBuildableScreen* Screen, bool bWatching);

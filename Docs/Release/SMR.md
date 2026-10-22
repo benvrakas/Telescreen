@@ -34,12 +34,14 @@ First release. Not yet tested in multiplayer: please report how it goes with fri
 
 - Small and Large Telescreen (AWESOME Shop, Signs, Telescreen Set).
 - Synced videos (YouTube, Twitch, Vimeo, files) with a shared queue, seek bar and 3D sound through the game's audio.
-- Shared built-in browser, shared windows and remote desktops (VNC), streamed to every player through the game's connection.
+- Shared built-in browser, shared windows and remote desktops (VNC), streamed to every player through the game's connection, or over optional direct connections (encrypted, UPnP/STUN).
+- Your own video files: every player plays their copy (found by name in their videos folder); players without it watch it streamed.
+- Subtitles on the screen, on the HUD, both or off (site subtitles, YouTube captions, tracks in files, .srt/.vtt).
 - Viewer control and pointers, privacy curtain (F10), picture-in-picture on the HUD, screens list (F9).
 - Per-player and per-screen volume; stream resolution, bitrate, frame rate and encoder settings; world host rules and limits.
 ```
 
-Later versions: the next version after the newest on SMR (`1.0.1` for fixes, `1.1.0` for features such as subtitles).
+Later versions: the next version after the newest on SMR (`1.0.1` for fixes, `1.1.0` for features).
 
 ## 3. Before uploading: open points for you
 

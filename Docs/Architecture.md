@@ -217,6 +217,59 @@ a keyframe on demand.
 Verified outside the game (2026-10-22): `--selftest-stream-file` on a 10-bit HEVC 1080p MKV with AC3 5.1: hevc_nvenc
 1280x720 at 30 fps, 2.9 Mbps, no losses, audio consumed throughout.
 
+## Subtitles
+
+Per player: where they show (`SubtitleMode`: off, on the screen, on the HUD, both) and the preferred language
+(`SubtitleLanguage`). The helper finds a video's tracks when it opens it (`Helper/src/Subtitles.cpp`):
+
+- **Web videos:** yt-dlp prints `%(language)s`, `%(subtitles)j` and `%(automatic_captions)j`; site subtitles are all
+  offered, automatic captions only for the video's own language and the preferred one (YouTube lists every
+  translation). The best format is used: json3 (YouTube), then WebVTT, then SRT. YouTube's automatic captions come as
+  short overlapping events; the player shows the last two that are on.
+- **Files:** text subtitle streams inside the file (SRT, ASS/SSA, WebVTT, mov_text: FFmpeg's subtitle decoders give
+  ASS dialogue lines, styling removed), and `.srt` / `.vtt` files next to the video named like it (`Movie.srt`,
+  `Movie.en.srt`). Picking an embedded track reads that track from the whole file on a worker thread (the playing
+  demuxer is already past what has played); the demuxer's own packets cover the time until then.
+- Tracks go to the mod (`SubtitleTracks`); the player picks one in the preferred language (people-made first, then
+  automatic; three-letter codes from files are matched too) when subtitles are on, or the panel's track buttons pick
+  one (`SelectSubtitles`). Cues arrive sorted (`SubtitleCues`, replace or add; added cues are de-duplicated).
+- **On the screen:** while a line is showing, the screen's texture is a canvas render target that draws the video
+  texture and the line(s) over it (engine large font, outlined, about a sixteenth of the picture's height per line),
+  redrawn with every composed frame and whenever the line changes; otherwise the video texture itself.
+- **On the HUD:** `UTSSubtitleOverlay`, bottom centre, for the screen shown on the HUD or else the nearest screen
+  within the play distance that has a line (`UTSClientSubsystem`, 10 times a second).
+
+Not yet: picture subtitles (PGS, VobSub), subtitles for viewers of a streamed video.
+
+## Direct connections
+
+Opt-in for both ends (`DirectStreams`), allowed by the world host (`AllowDirect`). Live streams still start through
+the game connection; a direct link takes over when it comes up, and the game connection takes over again when it
+goes down.
+
+- **Helper (`Helper/src/Direct.cpp`, `Upnp.cpp`):** one UDP socket per helper (port `DirectPort`, 0 any), opened on
+  first use: a STUN binding request (stun.l.google.com, then stun.cloudflare.com) gives the public address, UPnP
+  (SSDP discovery, WANIPConnection/WANPPPConnection AddPortMapping, 2 h lease, removed at exit) opens the port when
+  `DirectUpnp` is on. Candidates: the UPnP external address, the STUN address (and the forwarded port number on it),
+  the LAN addresses, 127.0.0.1.
+- **Setup through the server:** the viewer's player sends its candidates (`Server_DirectRequest`); the server checks
+  it watches, makes a link id and a 128-bit key, and asks the stream sender (`Client_DirectRequest`, or the local
+  delegate on a listen server); the sender links its sender session to it and answers with its candidates
+  (`Server_DirectAnswer` -> `Client_DirectAnswer`); the viewer links its receiver session.
+- **Connecting:** both helpers send authenticated probes to every candidate every 0.2 s; the first authenticated
+  packet from the other side sets the address in use (another working path takes over only when it goes quiet for
+  2 s) and the link is up. Keepalives every second; down after 6 s of silence or 12 s without connecting.
+- **Data:** each encoded packet is cut into 1,100-byte chunks (kind, flags, pts, codec, packet id, index, count),
+  AES-128-GCM sealed (header as associated data), and paced at up to 4 MB/s per link; the receiving helper reassembles
+  them and feeds the receiver session directly. A lost video chunk drops packets until the next keyframe and tells
+  the mod, which asks for one through the server (as on the game path).
+- **Server relay:** a viewer whose link is up tells the server (`Server_SetDirect`); the server stops relaying to it
+  and replicates the number still relayed (`mRelayedViewerCount`); at 0 the sender doesn't queue chunks for the
+  server at all. The game path's bitrate adaptation doesn't see direct links (no feedback yet).
+
+Verified outside the game (2026-10-22, `--selftest-direct`): two hubs in one process, STUN answered, link up in
+0.01 s over the LAN address, 180 of 180 packets (2.1 MB, 3 keyframes) at 3 Mbps.
+
 ## Window mode (M5)
 
 `FWindowSession` (`Helper/src/WindowSession.cpp`) shares one top-level window the controller picks from the

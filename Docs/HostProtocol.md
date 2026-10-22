@@ -20,7 +20,7 @@ handles serialize reads and writes on one pipe.
 |---|---|---|
 | Hello | mod → host | u32 version |
 | HelloAck | host → mod | u32 version, str host version, u32 host pid |
-| OpenMedia | mod → host | u32 session, str url, u8 is local file, f64 start seconds, u8 paused, u32 max width, u32 max height |
+| OpenMedia | mod → host | u32 session, str url, u8 is local file, f64 start seconds, u8 paused, u32 max width, u32 max height, str subtitle language |
 | SyncTarget | mod → host | u32 session, f64 media seconds (where playback should be now), u8 paused |
 | CloseSession | mod → host | u32 session |
 | Probe | mod → host | u32 request, str url |
@@ -42,8 +42,19 @@ handles serialize reads and writes on one pipe.
 | ListWindows | mod → host | u32 request |
 | WindowList | host → mod | u32 request, u32 count, then per window: u32 handle low, u32 handle high, u32 process id, str title, str exe name |
 | OpenVnc | mod → host | u32 session, str host, u32 port, str password, u32 max width, u32 max height, u8 sound, u32 wanted width, u32 wanted height (asked of the server with ExtendedDesktopSize; 0: none) |
+| SubtitleTracks | host → mod | u32 session, u32 count, then per track: u32 id, str language, str label, u8 kind (0 site, 1 automatic, 2 inside the file, 3 file next to it) |
+| SubtitleCues | host → mod | u32 session, u32 track, u8 replace (these cues replace the track's earlier ones), u32 count, then per cue: u32 start ms, u32 end ms, str text (lines separated by 
+). At most 400 per message |
+| DirectOpen | mod → host | u32 request, u32 UDP port (0: any), u8 open it with UPnP |
+| DirectCandidates | host → mod | u32 request, u8 ok, str error, u32 count, then the addresses ("ip:port") |
+| DirectAddPeer | mod → host | u32 session (a stream sender or receiver), u32 link, u8 sender, 16 bytes key, u32 count, then the other side's addresses |
+| DirectRemovePeer | mod → host | u32 link |
+| DirectState | host → mod | u32 session, u32 link, u8 state (0 trying, 1 up, 2 down, 3 the receiver lost video: ask for a keyframe), str detail |
 
-Protocol version 3 added the three window messages. Version 5 added the stream sender's max height, version 6 OpenVnc's wanted size.
+BrowserCommand 6 (SelectSubtitles, media sessions) carries u32 track id (0: none).
+
+Protocol version 3 added the three window messages. Version 5 added the stream sender's max height, version 6 OpenVnc's wanted size,
+version 7 subtitles (OpenMedia's language, SubtitleTracks, SubtitleCues, SelectSubtitles), version 8 direct links.
 
 Window sessions take BrowserInput (mouse, wheel, key, text; positions in the session's frame pixels) and post it to
 the window; their sound goes only to the frame and audio taps (the stream sender), not to a SessionAudio ring,

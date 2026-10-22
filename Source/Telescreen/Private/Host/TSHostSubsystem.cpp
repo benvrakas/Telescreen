@@ -530,6 +530,43 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		}
 		break;
 	}
+	case EMsg::DirectCandidates:
+	{
+		R.U32();
+		const bool bOk = R.U8() != 0;
+		const FString Error = R.Str();
+		const uint32 Count = R.U32();
+		DirectCandidates.Reset();
+		for (uint32 I = 0; I < Count && R.bOk && I < 16; ++I)
+		{
+			DirectCandidates.Add(R.Str());
+		}
+		bDirectReady = true;
+		UE_LOG(LogTelescreen, Log, TEXT("Host: direct links %s (%d address(es))%s%s"), bOk ? TEXT("ready") : TEXT("unavailable"), DirectCandidates.Num(),
+			Error.IsEmpty() ? TEXT("") : TEXT(": "), *Error);
+		if (!bOk)
+		{
+			DirectCandidates.Reset();
+		}
+		TArray<TFunction<void(const TArray<FString>&)>> Waiting = MoveTemp(PendingDirect);
+		for (auto& Callback : Waiting)
+		{
+			Callback(DirectCandidates);
+		}
+		break;
+	}
+	case EMsg::DirectState:
+	{
+		const uint32 Session = R.U32();
+		const uint32 Link = R.U32();
+		const uint8 State = R.U8();
+		const FString Detail = R.Str();
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
+		{
+			(*Listener)->OnHostDirectState(Link, State, Detail);
+		}
+		break;
+	}
 	case EMsg::SubtitleTracks:
 	{
 		const uint32 Session = R.U32();
@@ -700,6 +737,68 @@ uint32 UTSHostSubsystem::OpenStreamSender(uint32 SourceSession, uint32 Fps, uint
 	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u streams session %u at %u fps, %u kbps, up to %u lines, encoder '%s'"), Session, SourceSession, Fps, Kbps, MaxHeight,
 		*Encoder);
 	return Session;
+}
+
+void UTSHostSubsystem::RequestDirectCandidates(TFunction<void(const TArray<FString>&)> OnDone)
+{
+	if (bDirectReady)
+	{
+		OnDone(DirectCandidates);
+		return;
+	}
+	if (!EnsureConnected())
+	{
+		OnDone(TArray<FString>());
+		return;
+	}
+	PendingDirect.Add(MoveTemp(OnDone));
+	if (bDirectRequested)
+	{
+		return;
+	}
+	bDirectRequested = true;
+	const int32 Port = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::DirectPortKey, 0), 0, 65535);
+	const bool bUpnp = UTSConfig::GetBool(this, UTSConfig::DirectUpnpKey, true);
+	TArray<uint8> Payload;
+	PutU32(Payload, 1);
+	PutU32(Payload, uint32(Port));
+	PutU8(Payload, bUpnp ? 1 : 0);
+	Send(EMsg::DirectOpen, Payload);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: opening direct links (port %d, UPnP %s)"), Port, bUpnp ? TEXT("on") : TEXT("off"));
+}
+
+void UTSHostSubsystem::AddDirectPeer(uint32 Session, uint32 Link, bool bSender, const TArray<uint8>& Key, const TArray<FString>& Candidates)
+{
+	if (!bConnected || Key.Num() != 16)
+	{
+		return;
+	}
+	TArray<uint8> Payload;
+	PutU32(Payload, Session);
+	PutU32(Payload, Link);
+	PutU8(Payload, bSender ? 1 : 0);
+	for (uint8 Byte : Key)
+	{
+		PutU8(Payload, Byte);
+	}
+	const int32 Count = FMath::Min(Candidates.Num(), 16);
+	PutU32(Payload, uint32(Count));
+	for (int32 I = 0; I < Count; ++I)
+	{
+		PutStr(Payload, Candidates[I].Left(64));
+	}
+	Send(EMsg::DirectAddPeer, Payload);
+}
+
+void UTSHostSubsystem::RemoveDirectPeer(uint32 Link)
+{
+	if (!bConnected)
+	{
+		return;
+	}
+	TArray<uint8> Payload;
+	PutU32(Payload, Link);
+	Send(EMsg::DirectRemovePeer, Payload);
 }
 
 uint32 UTSHostSubsystem::OpenStreamReceiver(ITSHostSessionListener* Listener)

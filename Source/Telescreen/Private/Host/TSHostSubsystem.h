@@ -73,6 +73,8 @@ public:
 	// Media sessions only: the subtitle tracks found, and cues of the selected track (bReplace: instead of the earlier ones).
 	virtual void OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks) {}
 	virtual void OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues) {}
+	// Stream sessions only: a direct link changed (0 trying, 1 up, 2 down, 3 the receiver lost video and needs a keyframe).
+	virtual void OnHostDirectState(uint32 Link, uint8 State, const FString& Detail) {}
 };
 
 // A window on this PC that can be shared (from the helper's list).
@@ -158,6 +160,12 @@ public:
 	uint32 OpenWindow(uint64 Window, bool bCursor, bool bAudio, uint32 MaxWidth, uint32 MaxHeight, ITSHostSessionListener* Listener);
 
 	// Connects to a VNC server; frames larger than MaxWidth x MaxHeight are scaled down.
+	// This PC's direct-link addresses (opens the helper's UDP endpoint the first time; a few seconds). OnDone gets an
+	// empty list when direct links aren't available.
+	void RequestDirectCandidates(TFunction<void(const TArray<FString>&)> OnDone);
+	void AddDirectPeer(uint32 Session, uint32 Link, bool bSender, const TArray<uint8>& Key, const TArray<FString>& Candidates);
+	void RemoveDirectPeer(uint32 Link);
+
 	// WantWidth x WantHeight: the desktop size to ask the server for (0 x 0: none).
 	uint32 OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio, uint32 WantWidth, uint32 WantHeight,
 		ITSHostSessionListener* Listener);
@@ -195,5 +203,9 @@ private:
 	TMap<uint32, TFunction<void(const TArray<FTSWindowInfo>&)>> PendingWindowLists;
 	TMap<uint32, ITSHostSessionListener*> Listeners;
 	TMap<uint32, TFunction<void(const FTSProbeResult&)>> PendingProbes;
+	TArray<TFunction<void(const TArray<FString>&)>> PendingDirect;
+	TArray<FString> DirectCandidates;
+	bool bDirectRequested = false;
+	bool bDirectReady = false;
 	FText LastProblem;
 };

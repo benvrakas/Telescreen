@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 7;
+	constexpr uint32_t Version = 8;
 
 	enum class EMsg : uint16_t
 	{
@@ -37,6 +37,11 @@ namespace TSHostProtocol
 		OpenVnc = 24,
 		SubtitleTracks = 25,
 		SubtitleCues = 26,
+		DirectOpen = 27,
+		DirectCandidates = 28,
+		DirectAddPeer = 29,
+		DirectRemovePeer = 30,
+		DirectState = 31,
 	};
 
 	// StreamControl commands.

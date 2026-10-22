@@ -40,6 +40,9 @@ public:
 	virtual void OnHostLost() override;
 	virtual void OnHostBrowserState(const FTSBrowserState& State) override;
 	virtual void OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks) override;
+	virtual void OnHostDirectState(uint32 Link, uint8 State, const FString& Detail) override;
+	// True while this viewer gets the stream over a direct link.
+	bool IsDirect() const { return bDirectUp; }
 	virtual void OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues) override;
 
 	// Subtitles, per player (see Docs/Architecture.md, Subtitles): where they show, the tracks of the playing video and
@@ -223,6 +226,17 @@ private:
 	FString SubtitleText;
 	double NextSubtitleUpdate = 0.0;
 	uint32 PickSubtitleTrack() const;
+
+	// Direct links: as a viewer, the one link to the sender; as a sender, one per viewer (the helper drops them with
+	// the sender session).
+	uint32 DirectLink = 0;
+	bool bDirectUp = false;
+	double NextDirectAttempt = 0.0;
+	FDelegateHandle DirectRequestHandle, DirectAnswerHandle;
+	void TryDirect();
+	void OnDirectRequest(uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates);
+	void OnDirectAnswer(uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates);
+	void DropDirect();
 	void ClearSubtitles();
 	void UpdateSubtitleText();
 	void ApplyScreenTexture();

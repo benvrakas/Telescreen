@@ -63,6 +63,24 @@ remote desktop. Nothing of it leaves the PC except the encoded picture and sound
 - Without control, a viewer's click in the screen window is a **ping**: a named marker everyone watching sees for a
   few seconds. With control, the screen shows their named cursor to everyone watching.
 
+## Direct connections
+
+Off by default; both the sharer and the viewer must turn them on, and the world host can forbid them
+(`AllowDirect`). See Docs/Architecture.md, Direct connections.
+
+- **What the other side learns:** the addresses each PC offers (public address from STUN or UPnP, LAN addresses,
+  127.0.0.1) go to the other player through the server. The world host's server sees them too, as it relays them.
+- **Keys:** the server makes a random 128-bit key per link (from two GUIDs) and gives it only to the two players; it
+  travels over the game connection. Every datagram is AES-128-GCM encrypted and authenticated with it (Windows CNG);
+  the nonce is the direction and a per-direction counter, so it never repeats under one key. Datagrams that fail
+  authentication are dropped, so nobody else can inject stream data or take over a link.
+- **What goes over a link:** only the encoded stream (picture and sound) and probes; viewer input, grants and the
+  curtain stay on the game connection and keep their server checks. The curtain stops the sender session, so
+  nothing is sent directly either.
+- **Ports:** the helper binds one UDP port (any, or the one set); with UPnP it asks the router to forward it for two
+  hours at most and removes the mapping when the helper exits. Only packets of links the mod added are answered.
+- **Outside services:** STUN (stun.l.google.com, stun.cloudflare.com) sees the PC's public address.
+
 ## Not done yet
 
 CEF's process sandbox; VeNCrypt (TLS) for VNC; per-grant logs in the panel (the server log has every grant and

@@ -196,6 +196,8 @@ void UTSScreenPlayer::BeginPlay()
 		return;
 	}
 	ScreenChangedHandle = Screen->OnScreenChanged.AddUObject(this, &UTSScreenPlayer::OnScreenChanged);
+	DirectRequestHandle = Screen->OnDirectRequest.AddUObject(this, &UTSScreenPlayer::OnDirectRequest);
+	DirectAnswerHandle = Screen->OnDirectAnswer.AddUObject(this, &UTSScreenPlayer::OnDirectAnswer);
 	ChunkHandle = Screen->OnStreamChunk.AddUObject(this, &UTSScreenPlayer::OnStreamChunk);
 	KeyframeHandle = Screen->OnKeyframeRequested.AddUObject(this, &UTSScreenPlayer::OnKeyframeRequested);
 	ViewerInputHandle = Screen->OnViewerInput.AddUObject(this, &UTSScreenPlayer::OnViewerInput);
@@ -226,6 +228,8 @@ void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (ATSBuildableScreen* Screen = GetScreen())
 	{
 		Screen->OnScreenChanged.Remove(ScreenChangedHandle);
+		Screen->OnDirectRequest.Remove(DirectRequestHandle);
+		Screen->OnDirectAnswer.Remove(DirectAnswerHandle);
 		Screen->OnStreamChunk.Remove(ChunkHandle);
 		Screen->OnKeyframeRequested.Remove(KeyframeHandle);
 		Screen->OnViewerInput.Remove(ViewerInputHandle);
@@ -973,7 +977,8 @@ void UTSScreenPlayer::OnKeyframeRequested()
 void UTSScreenPlayer::SendStreamChunks(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, const TArray<uint8>& Data)
 {
 	ATSBuildableScreen* Screen = GetScreen();
-	if (!Screen || SenderSession == 0 || Kind > 1)
+	// Every viewer gets it over a direct link: nothing for the server to relay.
+	if (!Screen || SenderSession == 0 || Kind > 1 || Screen->GetRelayedViewerCount() == 0)
 	{
 		return;
 	}
@@ -1158,6 +1163,133 @@ void UTSScreenPlayer::OpenReceiverSession(const FText& Title)
 	SetStatus(Title, LOCTEXT("StreamConnecting", "Connecting..."));
 	SetWatching(true);
 	RequestKeyframe(true);
+	NextDirectAttempt = 0.0;
+	TryDirect();
+}
+
+void UTSScreenPlayer::TryDirect()
+{
+	const double Now = FPlatformTime::Seconds();
+	if (!bStreamReceiver || Session == 0 || DirectLink != 0 || Now < NextDirectAttempt || !UTSConfig::GetBool(this, UTSConfig::DirectKey, false))
+	{
+		return;
+	}
+	// One offer at a time; after a failure, try again later.
+	NextDirectAttempt = Now + 60.0;
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host)
+	{
+		return;
+	}
+	TWeakObjectPtr<UTSScreenPlayer> WeakThis(this);
+	Host->RequestDirectCandidates([WeakThis](const TArray<FString>& Candidates)
+	{
+		UTSScreenPlayer* Player = WeakThis.Get();
+		UTSRemoteCallObject* RCO = Player ? Player->FindRemoteCallObject() : nullptr;
+		if (!RCO || Candidates.Num() == 0 || !Player->bStreamReceiver)
+		{
+			return;
+		}
+		UE_LOG(LogTelescreen, Log, TEXT("%s: offering a direct link to the stream (%d address(es))"), *GetNameSafe(Player->GetOwner()), Candidates.Num());
+		RCO->Server_DirectRequest(Player->GetScreen(), Candidates);
+	});
+}
+
+void UTSScreenPlayer::OnDirectRequest(uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates)
+{
+	// The viewer's offer reaches the stream sender: link the sender session to it, and answer with this PC's addresses.
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host || SenderSession == 0 || !UTSConfig::GetBool(this, UTSConfig::DirectKey, false))
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: a viewer asked for a direct link; %s"), *GetNameSafe(GetOwner()),
+			SenderSession == 0 ? TEXT("not streaming") : TEXT("direct connections are off here"));
+		return;
+	}
+	TWeakObjectPtr<UTSScreenPlayer> WeakThis(this);
+	const uint32 Sender = SenderSession;
+	Host->RequestDirectCandidates([WeakThis, Link, Key, Candidates, Sender](const TArray<FString>& Mine)
+	{
+		UTSScreenPlayer* Player = WeakThis.Get();
+		UTSHostSubsystem* Host = Player ? UTSHostSubsystem::Get(Player) : nullptr;
+		UTSRemoteCallObject* RCO = Player ? Player->FindRemoteCallObject() : nullptr;
+		if (!Host || !RCO || Mine.Num() == 0 || Player->SenderSession != Sender)
+		{
+			return;
+		}
+		Host->AddDirectPeer(Sender, Link, true, Key, Candidates);
+		RCO->Server_DirectAnswer(Player->GetScreen(), Link, Mine);
+		UE_LOG(LogTelescreen, Log, TEXT("%s: direct link %u to a viewer: connecting"), *GetNameSafe(Player->GetOwner()), Link);
+	});
+}
+
+void UTSScreenPlayer::OnDirectAnswer(uint32 Link, const TArray<uint8>& Key, const TArray<FString>& Candidates)
+{
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host || !bStreamReceiver || Session == 0 || DirectLink != 0)
+	{
+		return;
+	}
+	DirectLink = Link;
+	Host->AddDirectPeer(Session, Link, false, Key, Candidates);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: direct link %u: connecting"), *GetNameSafe(GetOwner()), Link);
+}
+
+void UTSScreenPlayer::OnHostDirectState(uint32 Link, uint8 State, const FString& Detail)
+{
+	UTSRemoteCallObject* RCO = FindRemoteCallObject();
+	if (!bStreamReceiver)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: direct link %u to a viewer: state %u %s"), *GetNameSafe(GetOwner()), Link, State, *Detail);
+		return;
+	}
+	if (Link != DirectLink)
+	{
+		return;
+	}
+	switch (State)
+	{
+	case 1:
+		UE_LOG(LogTelescreen, Log, TEXT("%s: direct link %u up (%s)"), *GetNameSafe(GetOwner()), Link, *Detail);
+		bDirectUp = true;
+		if (RCO)
+		{
+			RCO->Server_SetDirect(GetScreen(), true);
+		}
+		RequestKeyframe(true);
+		break;
+	case 2:
+		UE_LOG(LogTelescreen, Log, TEXT("%s: direct link %u down (%s); through the server again"), *GetNameSafe(GetOwner()), Link, *Detail);
+		DropDirect();
+		ResetReassembly();
+		RequestKeyframe(true);
+		break;
+	case 3:
+		RequestKeyframe(false);
+		break;
+	default:
+		break;
+	}
+}
+
+void UTSScreenPlayer::DropDirect()
+{
+	if (DirectLink == 0)
+	{
+		return;
+	}
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+	{
+		Host->RemoveDirectPeer(DirectLink);
+	}
+	if (bDirectUp)
+	{
+		if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+		{
+			RCO->Server_SetDirect(GetScreen(), false);
+		}
+	}
+	DirectLink = 0;
+	bDirectUp = false;
 }
 
 void UTSScreenPlayer::SetWatching(bool bInWatching)
@@ -1453,6 +1585,7 @@ void UTSScreenPlayer::OnHostBrowserState(const FTSBrowserState& State)
 void UTSScreenPlayer::CloseSession()
 {
 	CloseStreamSender();
+	DropDirect();
 	if (bStreamReceiver)
 	{
 		SetWatching(false);
@@ -2002,7 +2135,7 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	}
 	else if (bStreamReceiver && State == ESessionState::Playing && !Message.IsEmpty())
 	{
-		StreamStats = FText::FromString(Message);
+		StreamStats = FText::FromString(bDirectUp ? TEXT("direct, ") + Message : Message);
 	}
 	if ((bWindowSession || bRemoteSession) && !Message.IsEmpty() && (State == ESessionState::Error || State == ESessionState::Buffering || State == ESessionState::Resolving))
 	{

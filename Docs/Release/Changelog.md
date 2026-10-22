@@ -10,6 +10,13 @@ First public release (everything from the betas below). Not yet tested in multip
   folder. **Pick a file** chooses a video with the Windows file picker.
 - **A video you can't play is streamed to you** by a player who plays it (you don't have the file, or the link fails
   on your PC), like a shared window. Setting "Stream videos to players who can't play them" (on).
+- **Subtitles**: on the screen, on your HUD, both or off (Videos tab, or Mods > Telescreen > Subtitles). From the
+  video's site (with YouTube's automatic captions), text tracks inside files, or a .srt / .vtt next to the file;
+  your preferred language is picked first.
+- **Direct connections** (Mods > Telescreen > Direct connections, off by default): live streams go straight between
+  the sharer's and each viewer's PC, encrypted (AES-GCM), instead of through the world host. STUN for the public
+  address, UPnP or a forwarded port when needed, the world host's connection as the fallback. The world host can
+  turn them off ("Allow direct connections between players").
 - Fix: long links and file paths were cut short by the game's text field (about 80 characters), so long local file
   paths couldn't be found. Text fields now take up to 2048 characters.
 

@@ -29,6 +29,8 @@ enum class ETSMediaCommand : uint8
 DECLARE_MULTICAST_DELEGATE(FTSOnScreenChanged);
 DECLARE_MULTICAST_DELEGATE_OneParam(FTSOnStreamChunk, const FTSStreamChunk&);
 DECLARE_MULTICAST_DELEGATE(FTSOnKeyframeRequested);
+// Direct links: on the stream sender's client, a viewer asks for one; on the viewer's client, the sender answered.
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FTSOnDirectSignal, uint32 /*Link*/, const TArray<uint8>& /*Key*/, const TArray<FString>& /*Candidates*/);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FTSOnViewerInput, const FTSViewerInput&, const FString& /*ViewerName*/, ETSInputScope);
 DECLARE_MULTICAST_DELEGATE_FourParams(FTSOnScreenMarker, const FString& /*Name*/, float /*X*/, float /*Y*/, bool /*bPing*/);
 
@@ -115,6 +117,26 @@ public:
 
 	// Who sends this screen's live stream now: the controller of a browser, window or desktop, or the media streamer.
 	APlayerState* GetStreamSender() const;
+
+	FTSOnDirectSignal OnDirectRequest;
+	FTSOnDirectSignal OnDirectAnswer;
+
+	// Watchers receiving the stream through the server (not over a direct link); the sender skips the game path at 0.
+	int32 GetRelayedViewerCount() const { return mRelayedViewerCount; }
+
+	// Server only: Watcher now gets the stream directly (or through the server again).
+	void Server_SetDirectWatcher(APlayerController* Watcher, bool bDirect);
+	bool IsDirectWatcher(const APlayerController* Watcher) const;
+
+	// Server only: a direct link being set up between a viewer and the stream sender.
+	struct FDirectLink
+	{
+		TWeakObjectPtr<APlayerController> Viewer;
+		TWeakObjectPtr<APlayerState> Sender;
+		TArray<uint8> Key;
+		double CreatedAt = 0.0;
+	};
+	TMap<uint32, FDirectLink> mDirectLinks;
 
 	// Server only: the players watching the stream.
 	const TArray<TWeakObjectPtr<APlayerController>>& GetWatchers() const { return mWatchers; }
@@ -250,6 +272,11 @@ protected:
 
 	UPROPERTY(Replicated)
 	FTSStreamLimits mStreamLimits;
+
+	UPROPERTY(Replicated)
+	int32 mRelayedViewerCount = 0;
+
+	TArray<TWeakObjectPtr<APlayerController>> mDirectWatchers;
 
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	TObjectPtr<APlayerState> mMediaStreamer;
