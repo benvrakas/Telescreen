@@ -424,6 +424,11 @@ FBrowserSession::FBrowserSession(const FBrowserParams& InParams, FSessionEvents 
 	ClosedEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	Client = new FBrowserClient(this);
 	Client->AddRef();
+	FrameTaps::SetRefresh(Params.SessionId, [this]
+	{
+		std::lock_guard<std::mutex> Lock(PaintMutex);
+		Publish();
+	});
 
 	std::wstring CachePath;
 	if (Params.KeepLogins && !Params.ProfileName.empty())
@@ -457,6 +462,7 @@ FBrowserSession::FBrowserSession(const FBrowserParams& InParams, FSessionEvents 
 
 FBrowserSession::~FBrowserSession()
 {
+	FrameTaps::ClearRefresh(Params.SessionId);
 	CefRefPtr<CefBrowser> BrowserRef = Client->GetBrowser();
 	if (BrowserRef)
 	{

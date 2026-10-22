@@ -5,7 +5,7 @@
 	"SemVersion": "0.1.0",
 	"GameVersion": ">=513885",
 	"FriendlyName": "Telescreen",
-	"Description": "Billboard-sized screens that play synced videos, a shared built-in browser, windows and remote desktops for every player, with 3D audio.",
+	"Description": "Billboard-sized screens that play synced videos and a built-in browser every player can watch, with 3D audio.",
 	"Category": "Modding",
 	"CreatedBy": "",
 	"CreatedByURL": "",

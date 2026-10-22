@@ -41,6 +41,7 @@ enum class ETSPanelAction : uint8
 	BrowserStop,
 	BrowserTakeOver,
 	LoopbackToggle,
+	CurtainToggle,
 };
 
 // Routes one button's click to its panel with the button's action and queue index.
@@ -133,6 +134,16 @@ private:
 	TObjectPtr<UWidget> LoopbackRow;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> LoopbackText;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> StreamRow;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> StreamText;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> CurtainButtonText;
+
+	// True while the sharing notice is shown and the next press of Open accepts it.
+	bool bDisclaimerPending = false;
+	bool AcceptSharingNotice();
 
 	void RefreshBrowser();
 	FDelegateHandle BrowserStateHandle;

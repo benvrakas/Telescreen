@@ -52,6 +52,8 @@ public:
 	virtual void OnHostLost() = 0;
 	// Browser sessions only.
 	virtual void OnHostBrowserState(const FTSBrowserState& State) {}
+	// Stream sender sessions only: an encoded packet to send to the viewers.
+	virtual void OnHostStreamPacket(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, TArray<uint8>&& Data) {}
 };
 
 struct FTSProbeResult
@@ -109,6 +111,17 @@ public:
 
 	// Sends one navigation command; Body is the payload after the session id and command.
 	void SendBrowserCommand(uint32 Session, TSHostProtocol::ECommand Command, const TArray<uint8>& Body);
+
+	// Live stream, controller side: encodes SourceSession (a browser session); packets arrive as OnHostStreamPacket.
+	uint32 OpenStreamSender(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener);
+
+	// Live stream, viewer side: decodes packets passed to SendStreamPacket into this session's picture and sound.
+	uint32 OpenStreamReceiver(ITSHostSessionListener* Listener);
+
+	void SendStreamPacket(uint32 Session, uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, const TArray<uint8>& Data);
+
+	// Command 0: keyframe, 1: bitrate (Value kbps), 2: drop video until the next keyframe.
+	void SendStreamControl(uint32 Session, TSHostProtocol::EStreamControl Command, uint32 Value);
 
 	// M3 test: shows SourceSession's frames after the stream encoder and decoder; returns the new session id.
 	uint32 OpenLoopback(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener);

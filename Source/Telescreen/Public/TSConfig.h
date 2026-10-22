@@ -43,6 +43,13 @@ public:
 	static const FString AllowAnySiteKey;
 	static const FString MaxVideoMinutesKey;
 	static const FString QueueAddsPerMinuteKey;
+	static const FString AllowStreamingKey;
+	static const FString MaxStreamKbpsKey;
+	static const FString StreamKbpsKey;
+	static const FString StreamFpsKey;
+	static const FString ReceiveStreamsKey;
+	static const FString CurtainKeyKey;
+	static const FString StreamDisclaimerKey;
 	static const FString AllowBrowserKey;
 	static const FString BrowserHomeKey;
 	static const FString KeepBrowserLoginsKey;
@@ -60,6 +67,9 @@ public:
 
 	static bool GetBool(const UObject* WorldContext, const FString& Key, bool Fallback);
 	static float GetFloat(const UObject* WorldContext, const FString& Key, float Fallback);
+
+	// Writes a boolean setting and saves it to disk. No-op if the configuration isn't available.
+	static void SetBool(const UObject* WorldContext, const FString& Key, bool Value);
 	static int32 GetInt(const UObject* WorldContext, const FString& Key, int32 Fallback);
 	static FString GetString(const UObject* WorldContext, const FString& Key, const FString& Fallback);
 

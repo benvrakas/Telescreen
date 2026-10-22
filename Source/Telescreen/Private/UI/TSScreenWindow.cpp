@@ -343,7 +343,13 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		ShownTexture = Texture;
 		Picture->SetBrushResourceObject(Texture);
 	}
-	Title->SetText(bInteractive ? FText::GetEmpty() : Shown->GetDisplayName());
+	FText TitleText = Shown->GetDisplayName();
+	if (Shown->IsLocallyControlled() && Shown->GetMode() == ETSScreenMode::Browser)
+	{
+		TitleText = Shown->IsCurtainOn() ? FText::Format(LOCTEXT("WindowCurtain", "{0}: blanked for everyone"), TitleText)
+										 : FText::Format(LOCTEXT("WindowViewers", "{0}: {1} watching"), TitleText, FText::AsNumber(Shown->GetViewerCount()));
+	}
+	Title->SetText(bInteractive && !Shown->IsLocallyControlled() ? FText::GetEmpty() : TitleText);
 	if (bInteractive && EscapeDownAt > 0.0 && FPlatformTime::Seconds() - EscapeDownAt > EscapeHoldSeconds)
 	{
 		EscapeDownAt = 0.0;

@@ -211,6 +211,15 @@ void UTSScreenPanel::BuildTree()
 	OwnActions->SetVisibility(ESlateVisibility::Collapsed);
 	BrowserOwnActions = OwnActions;
 
+	UHorizontalBox* Stream = MakeHBox();
+	StreamText = MakeText(FText::GetEmpty(), 12, Muted);
+	AddToHBox(Stream, StreamText, true);
+	UButton* CurtainButton = Cast<UButton>(MakeButton(LOCTEXT("CurtainOn", "Blank for everyone"), ETSPanelAction::CurtainToggle));
+	CurtainButtonText = CurtainButton ? Cast<UTextBlock>(CurtainButton->GetChildAt(0)) : nullptr;
+	AddToHBox(Stream, CurtainButton);
+	StreamRow = Stream;
+	AddRow(Root, Stream, 4.f);
+
 	UHorizontalBox* Loopback = MakeHBox();
 	LoopbackText = MakeText(FText::GetEmpty(), 12, Muted);
 	AddToHBox(Loopback, LoopbackText, true);
@@ -366,6 +375,7 @@ void UTSScreenPanel::RefreshTimes()
 		Times = FText::Format(LOCTEXT("TimesWithStatus", "{0}   {1}"), Times, Local);
 	}
 	TimeText->SetText(Times);
+	RefreshBrowser();
 	const bool bBlocked = Player && !Player->GetBlockedReason().IsEmpty();
 	LoadAnywayButton->SetVisibility(bBlocked ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 }
@@ -418,18 +428,76 @@ void UTSScreenPanel::RefreshBrowser()
 	{
 		BrowserNote->SetText(LOCTEXT("BrowserMissing", "The browser component isn't installed on this PC."));
 	}
+	else if (bDisclaimerPending)
+	{
+		BrowserNote->SetText(LOCTEXT("SharingNotice",
+			"Everything you show in your browser is visible to every player near this screen, including anything you're signed in to. Don't show passwords or "
+			"private messages. Press the button again to accept; this notice appears once."));
+	}
 	else if (bMine)
 	{
-		const FString Key = UTSConfig::GetString(this, UTSConfig::FocusKeyKey, TEXT("F8"));
+		const FString FocusKey = UTSConfig::GetString(this, UTSConfig::FocusKeyKey, TEXT("F8"));
+		const FString CurtainKey = UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10"));
 		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserMine",
-			"Only you see your browser for now; once live streaming arrives, everyone near the screen will. {0} switches the window between the browser and the game."),
-			FText::FromString(Key)));
+			"Other players near this screen see your browser. {0} switches the window between the browser and the game; {1} blanks it for everyone."),
+			FText::FromString(FocusKey), FText::FromString(CurtainKey)));
 	}
 	else
 	{
 		BrowserNote->SetText(LOCTEXT("BrowserNote",
-			"Only you will see your browser until live streaming arrives in a later update. Then everything you open here is visible to other players."));
+			"Whatever you open here is visible to other players near this screen. A notice asks you to accept that the first time."));
 	}
+
+	// Live stream status: the controller's viewers and encoder, or the viewer's decoder.
+	StreamRow->SetVisibility(bBrowserMode ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (bBrowserMode)
+	{
+		const FText Stats = Player ? Player->GetStreamStats() : FText::GetEmpty();
+		if (bMine)
+		{
+			const int32 Viewers = Screen->GetViewerCount();
+			FText Line = Viewers == 0 ? LOCTEXT("NoViewers", "No one is watching your browser yet.")
+									  : FText::Format(LOCTEXT("StreamingTo", "Streaming to {0} player(s)."), FText::AsNumber(Viewers));
+			if (Screen->IsCurtainOn())
+			{
+				Line = LOCTEXT("CurtainActive", "Blanked: viewers see \"paused\". You still see your browser.");
+			}
+			else if (!Stats.IsEmpty())
+			{
+				Line = FText::Format(LOCTEXT("StreamingStats", "{0}  {1}"), Line, Stats);
+			}
+			StreamText->SetText(Line);
+			if (CurtainButtonText)
+			{
+				CurtainButtonText->SetText(Screen->IsCurtainOn() ? LOCTEXT("CurtainOff", "Show again") : LOCTEXT("CurtainOn2", "Blank for everyone"));
+			}
+		}
+		else
+		{
+			StreamText->SetText(Stats.IsEmpty() ? FText::GetEmpty() : FText::Format(LOCTEXT("ViewingStats", "Watching: {0}"), Stats));
+		}
+		if (CurtainButtonText && CurtainButtonText->GetParent())
+		{
+			CurtainButtonText->GetParent()->SetVisibility(bMine ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+bool UTSScreenPanel::AcceptSharingNotice()
+{
+	if (UTSConfig::GetBool(this, UTSConfig::StreamDisclaimerKey, false))
+	{
+		return true;
+	}
+	if (!bDisclaimerPending)
+	{
+		bDisclaimerPending = true;
+		RefreshBrowser();
+		return false;
+	}
+	UTSConfig::SetBool(this, UTSConfig::StreamDisclaimerKey, true);
+	bDisclaimerPending = false;
+	return true;
 }
 
 void UTSScreenPanel::RebuildQueue()
@@ -581,10 +649,19 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::AspectFill: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Fill); break;
 	case ETSPanelAction::AspectStretch: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Stretch); break;
 	case ETSPanelAction::BrowserOpen:
-		RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, BrowserUrlBox->GetText().ToString().TrimStartAndEnd());
+		if (AcceptSharingNotice())
+		{
+			RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, BrowserUrlBox->GetText().ToString().TrimStartAndEnd());
+		}
 		break;
 	case ETSPanelAction::BrowserTakeOver:
-		RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, FString());
+		if (AcceptSharingNotice())
+		{
+			RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, FString());
+		}
+		break;
+	case ETSPanelAction::CurtainToggle:
+		RCO->Server_SetCurtain(Screen, !Screen->IsCurtainOn());
 		break;
 	case ETSPanelAction::BrowserStop:
 		RCO->Server_ReleaseControl(Screen);

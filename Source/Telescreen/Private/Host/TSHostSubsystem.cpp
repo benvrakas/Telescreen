@@ -493,6 +493,21 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		}
 		break;
 	}
+	case EMsg::StreamPacket:
+	{
+		const uint32 Session = R.U32();
+		const uint8 Kind = R.U8();
+		const uint8 Flags = R.U8();
+		const uint32 PtsMs = R.U32();
+		const uint32 Codec = R.U32();
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk && R.Pos <= Payload.Num())
+		{
+			TArray<uint8> Data;
+			Data.Append(Payload.GetData() + R.Pos, Payload.Num() - R.Pos);
+			(*Listener)->OnHostStreamPacket(Kind, Flags, PtsMs, Codec, MoveTemp(Data));
+		}
+		break;
+	}
 	case EMsg::BrowserState:
 	{
 		const uint32 Session = R.U32();
@@ -594,6 +609,71 @@ uint32 UTSHostSubsystem::OpenBrowser(const FString& Url, uint32 Width, uint32 He
 	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u opens a %ux%u browser at %s (%s)"), Session, Width, Height, *Url,
 		bKeepLogins ? TEXT("kept logins") : TEXT("clean profile"));
 	return Session;
+}
+
+uint32 UTSHostSubsystem::OpenStreamSender(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener)
+{
+	if (!EnsureConnected())
+	{
+		return 0;
+	}
+	const uint32 Session = NextSessionId++;
+	Listeners.Add(Session, Listener);
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.U32(SourceSession);
+	W.U32(Fps);
+	W.U32(Kbps);
+	W.U8(1);
+	W.Str(FString());
+	Send(EMsg::OpenStreamSender, W.Bytes);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u streams session %u at %u fps, %u kbps"), Session, SourceSession, Fps, Kbps);
+	return Session;
+}
+
+uint32 UTSHostSubsystem::OpenStreamReceiver(ITSHostSessionListener* Listener)
+{
+	if (!EnsureConnected())
+	{
+		return 0;
+	}
+	const uint32 Session = NextSessionId++;
+	Listeners.Add(Session, Listener);
+	FTSPayloadWriter W;
+	W.U32(Session);
+	Send(EMsg::OpenStreamReceiver, W.Bytes);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u receives a stream"), Session);
+	return Session;
+}
+
+void UTSHostSubsystem::SendStreamPacket(uint32 Session, uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, const TArray<uint8>& Data)
+{
+	if (!bConnected || !Listeners.Contains(Session))
+	{
+		return;
+	}
+	FTSPayloadWriter W;
+	W.Bytes.Reserve(Data.Num() + 16);
+	W.U32(Session);
+	W.U8(Kind);
+	W.U8(Flags);
+	W.U32(PtsMs);
+	W.U32(Codec);
+	W.Bytes.Append(Data);
+	Send(EMsg::StreamPacket, W.Bytes);
+}
+
+void UTSHostSubsystem::SendStreamControl(uint32 Session, EStreamControl Command, uint32 Value)
+{
+	if (!bConnected || !Listeners.Contains(Session))
+	{
+		return;
+	}
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.U8(uint8(Command));
+	W.U32(Value);
+	Send(EMsg::StreamControl, W.Bytes);
 }
 
 uint32 UTSHostSubsystem::OpenLoopback(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener)

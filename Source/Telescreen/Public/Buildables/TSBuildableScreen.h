@@ -27,6 +27,8 @@ enum class ETSMediaCommand : uint8
 };
 
 DECLARE_MULTICAST_DELEGATE(FTSOnScreenChanged);
+DECLARE_MULTICAST_DELEGATE_OneParam(FTSOnStreamChunk, const FTSStreamChunk&);
+DECLARE_MULTICAST_DELEGATE(FTSOnKeyframeRequested);
 
 // A Telescreen: a billboard-shaped sign whose face shows synced media.
 UCLASS(Abstract)
@@ -61,6 +63,27 @@ public:
 	APlayerState* GetController() const { return mController; }
 	const FString& GetControllerName() const { return mControllerName; }
 	const FString& GetSourceUrl() const { return mSourceUrl; }
+
+	// How many players are watching the controller's stream, and whether the controller blanked it.
+	int32 GetViewerCount() const { return mViewerCount; }
+	bool IsCurtainOn() const { return mCurtain; }
+
+	// Server only: the players watching the stream.
+	const TArray<TWeakObjectPtr<APlayerController>>& GetWatchers() const { return mWatchers; }
+
+	// Server only: starts or stops Watcher receiving the stream; the controller is asked for a keyframe.
+	void Server_SetWatcher(APlayerController* Watcher, bool bWatching);
+
+	// Server only: turns the privacy curtain on or off.
+	void Server_SetCurtain(bool bOn);
+
+	// Server only: true if Bytes more stream data fit the stream's rate limit right now.
+	bool Server_AllowStreamBytes(int32 Bytes);
+
+	// Delivered on the client (and on a listen server's own player) for each stream chunk, and when the controller's
+	// stream needs a keyframe.
+	FTSOnStreamChunk OnStreamChunk;
+	FTSOnKeyframeRequested OnKeyframeRequested;
 
 	// True if the local player controls this screen's source.
 	bool IsLocallyControlled() const;
@@ -150,6 +173,16 @@ protected:
 	// Where the controller's source started (Browser: the first page).
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	FString mSourceUrl;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	int32 mViewerCount = 0;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	bool mCurtain = false;
+
+	TArray<TWeakObjectPtr<APlayerController>> mWatchers;
+	double mStreamBudget = 0.0;
+	double mStreamBudgetAt = 0.0;
 
 	FTimerHandle mAdvanceTimer;
 	FTimerHandle mControllerCheckTimer;

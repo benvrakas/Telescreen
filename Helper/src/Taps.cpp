@@ -39,9 +39,31 @@ namespace
 
 	FRegistry<FrameTaps::FTap> GFrames;
 	FRegistry<AudioTaps::FTap> GAudio;
+
+	std::mutex GRefreshMutex;
+	std::map<uint32_t, std::function<void()>> GRefresh;
 }
 
-int FrameTaps::Add(uint32_t SourceSession, FTap Tap) { return GFrames.Add(SourceSession, std::move(Tap)); }
+int FrameTaps::Add(uint32_t SourceSession, FTap Tap)
+{
+	const int Id = GFrames.Add(SourceSession, std::move(Tap));
+	std::lock_guard<std::mutex> Lock(GRefreshMutex);
+	auto It = GRefresh.find(SourceSession);
+	if (It != GRefresh.end()) It->second();
+	return Id;
+}
+
+void FrameTaps::SetRefresh(uint32_t SourceSession, std::function<void()> Refresh)
+{
+	std::lock_guard<std::mutex> Lock(GRefreshMutex);
+	GRefresh[SourceSession] = std::move(Refresh);
+}
+
+void FrameTaps::ClearRefresh(uint32_t SourceSession)
+{
+	std::lock_guard<std::mutex> Lock(GRefreshMutex);
+	GRefresh.erase(SourceSession);
+}
 void FrameTaps::Remove(int TapId) { GFrames.Remove(TapId); }
 void FrameTaps::Publish(uint32_t SourceSession, const uint8_t* Bgra, int Width, int Height) { GFrames.Publish(SourceSession, Bgra, Width, Height); }
 

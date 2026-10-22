@@ -4,12 +4,14 @@
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "Telescreen.h"
+#include "Net/TSNetRate.h"
 #include "TSConfig.h"
 
 FTSOnNotice UTSRemoteCallObject::OnNotice;
 
 namespace
 {
+	constexpr int32 MaxChunkBytes = 900;
 	constexpr int32 MaxUrlLength = 2048;
 	constexpr int32 MaxTitleLength = 300;
 	constexpr int32 MaxNameLength = 64;
@@ -180,6 +182,129 @@ void UTSRemoteCallObject::Server_ReleaseControl_Implementation(ATSBuildableScree
 	if (bIsController || bIsHost)
 	{
 		Screen->Server_ReleaseControl(bIsController ? TEXT("controller stopped") : TEXT("host stopped it"));
+	}
+}
+
+bool UTSRemoteCallObject::Server_StreamChunk_Validate(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
+{
+	return Chunk.Data.Num() <= MaxChunkBytes && Chunk.Count >= 1 && Chunk.Count <= 256 && Chunk.Index < Chunk.Count && Chunk.Kind <= 1;
+}
+
+void UTSRemoteCallObject::Server_StreamChunk_Implementation(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
+{
+	const APlayerController* Sender = GetOwnerPlayerController();
+	if (!Screen || !Sender || Screen->GetMode() != ETSScreenMode::Browser || Screen->GetController() != Sender->PlayerState || Screen->IsCurtainOn() ||
+		Screen->GetWatchers().Num() == 0 || !UTSConfig::GetBool(Screen, UTSConfig::AllowStreamingKey, true))
+	{
+		return;
+	}
+	if (!Screen->Server_AllowStreamBytes(Chunk.Data.Num() + 24))
+	{
+		return;
+	}
+	TSNetRate::Raise(Screen->GetWorld(), TSNetRate::StreamRate);
+	for (const TWeakObjectPtr<APlayerController>& Watcher : Screen->GetWatchers())
+	{
+		if (!Watcher.IsValid())
+		{
+			continue;
+		}
+		if (Watcher->IsLocalController())
+		{
+			Screen->OnStreamChunk.Broadcast(Chunk);
+		}
+		else if (AFGPlayerController* Remote = Cast<AFGPlayerController>(Watcher.Get()))
+		{
+			if (UTSRemoteCallObject* RCO = Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>())
+			{
+				RCO->Client_StreamChunk(Screen, Chunk);
+			}
+		}
+	}
+}
+
+void UTSRemoteCallObject::Client_StreamChunk_Implementation(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
+{
+	if (Screen)
+	{
+		Screen->OnStreamChunk.Broadcast(Chunk);
+	}
+}
+
+bool UTSRemoteCallObject::Server_SetWatching_Validate(ATSBuildableScreen* Screen, bool bWatching)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_SetWatching_Implementation(ATSBuildableScreen* Screen, bool bWatching)
+{
+	APlayerController* Viewer = GetOwnerPlayerController();
+	if (!Screen || !Viewer)
+	{
+		return;
+	}
+	if (bWatching && !UTSConfig::GetBool(Screen, UTSConfig::AllowStreamingKey, true))
+	{
+		Client_Notice(TEXT("Sharing browsers is turned off on this world."));
+		return;
+	}
+	if (bWatching)
+	{
+		TSNetRate::Raise(Screen->GetWorld(), TSNetRate::StreamRate);
+	}
+	Screen->Server_SetWatcher(Viewer, bWatching);
+}
+
+bool UTSRemoteCallObject::Server_SetCurtain_Validate(ATSBuildableScreen* Screen, bool bOn)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_SetCurtain_Implementation(ATSBuildableScreen* Screen, bool bOn)
+{
+	const APlayerController* Controller = GetOwnerPlayerController();
+	if (Screen && Controller && Screen->GetController() == Controller->PlayerState)
+	{
+		Screen->Server_SetCurtain(bOn);
+	}
+}
+
+bool UTSRemoteCallObject::Server_RequestKeyframe_Validate(ATSBuildableScreen* Screen)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_RequestKeyframe_Implementation(ATSBuildableScreen* Screen)
+{
+	SendKeyframeRequest(Screen);
+}
+
+void UTSRemoteCallObject::Client_RequestKeyframe_Implementation(ATSBuildableScreen* Screen)
+{
+	if (Screen)
+	{
+		Screen->OnKeyframeRequested.Broadcast();
+	}
+}
+
+void UTSRemoteCallObject::SendKeyframeRequest(ATSBuildableScreen* Screen)
+{
+	const APlayerState* ControllerState = Screen ? Screen->GetController() : nullptr;
+	APlayerController* Controller = ControllerState ? Cast<APlayerController>(ControllerState->GetOwner()) : nullptr;
+	if (!Controller)
+	{
+		return;
+	}
+	if (Controller->IsLocalController())
+	{
+		Screen->OnKeyframeRequested.Broadcast();
+	}
+	else if (AFGPlayerController* Remote = Cast<AFGPlayerController>(Controller))
+	{
+		if (UTSRemoteCallObject* RCO = Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>())
+		{
+			RCO->Client_RequestKeyframe(Screen);
+		}
 	}
 }
 

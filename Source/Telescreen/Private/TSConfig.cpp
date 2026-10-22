@@ -26,6 +26,13 @@ const FString UTSConfig::AllowedSitesKey = TEXT("AllowedSites");
 const FString UTSConfig::AllowAnySiteKey = TEXT("AllowAnySite");
 const FString UTSConfig::MaxVideoMinutesKey = TEXT("MaxVideoMinutes");
 const FString UTSConfig::QueueAddsPerMinuteKey = TEXT("QueueAddsPerMinute");
+const FString UTSConfig::AllowStreamingKey = TEXT("AllowStreaming");
+const FString UTSConfig::MaxStreamKbpsKey = TEXT("MaxStreamKbps");
+const FString UTSConfig::StreamKbpsKey = TEXT("StreamKbps");
+const FString UTSConfig::StreamFpsKey = TEXT("StreamFps");
+const FString UTSConfig::ReceiveStreamsKey = TEXT("ReceiveStreams");
+const FString UTSConfig::CurtainKeyKey = TEXT("CurtainKey");
+const FString UTSConfig::StreamDisclaimerKey = TEXT("StreamDisclaimerAccepted");
 const FString UTSConfig::AllowBrowserKey = TEXT("AllowBrowser");
 const FString UTSConfig::BrowserHomeKey = TEXT("BrowserHome");
 const FString UTSConfig::KeepBrowserLoginsKey = TEXT("KeepBrowserLogins");
@@ -146,6 +153,16 @@ UTSConfig::UTSConfig()
 		LOCTEXT("BrowserHomeTip", "Page the built-in browser opens when you start it without a link."), TEXT("https://duckduckgo.com"));
 	AddBool(BrowserSection, KeepBrowserLoginsKey, LOCTEXT("KeepBrowserLogins", "Keep browser logins"),
 		LOCTEXT("KeepBrowserLoginsTip", "Remember sign-ins and cookies between sessions. Off: every browser starts clean. Once streaming arrives, anything you're signed in to is visible on the screen."), false);
+	AddInt(BrowserSection, StreamKbpsKey, LOCTEXT("StreamKbps", "Stream quality (kbps)"),
+		LOCTEXT("StreamKbpsTip", "Video bitrate when you share your browser with other players. 2500 is sharp at 720p; lower it if your upload is slow."), 2500);
+	AddInt(BrowserSection, StreamFpsKey, LOCTEXT("StreamFps", "Stream frame rate"),
+		LOCTEXT("StreamFpsTip", "Frames per second of the shared browser: 30 or 60."), 30);
+	AddInt(BrowserSection, ReceiveStreamsKey, LOCTEXT("ReceiveStreams", "Watch other players' browsers"),
+		LOCTEXT("ReceiveStreamsTip", "0: show them automatically; 1: never (you see who is using the screen only)."), 0);
+	AddString(BrowserSection, CurtainKeyKey, LOCTEXT("CurtainKey", "Privacy curtain key"),
+		LOCTEXT("CurtainKeyTip", "Blanks your shared browser for everyone (you still see it) and back. Key name, e.g. F10."), TEXT("F10"));
+	AddBool(BrowserSection, StreamDisclaimerKey, LOCTEXT("StreamDisclaimer", "I understand that shared browsers are visible to everyone"),
+		LOCTEXT("StreamDisclaimerTip", "Set when you accept the sharing notice the first time you open the browser. Turn it off to see the notice again."), false);
 	AddString(BrowserSection, FocusKeyKey, LOCTEXT("FocusKey", "Window focus key"),
 		LOCTEXT("FocusKeyTip", "Switches the screen window between using the browser (mouse and keyboard go to it) and playing (the window stays as a picture). Key name, e.g. F8."), TEXT("F8"));
 	AddString(BrowserSection, ScreensListKeyKey, LOCTEXT("ScreensListKey", "Screens list key"),
@@ -171,6 +188,10 @@ UTSConfig::UTSConfig()
 		LOCTEXT("AllowedSitesTip", "Comma-separated sites videos can be added from. Also used by the privacy setting above."), DefaultAllowedSites);
 	AddBool(Hosting, AllowAnySiteKey, LOCTEXT("AllowAnySite", "Allow videos from any site"),
 		LOCTEXT("AllowAnySiteTip", "Let players add links from sites that aren't in the list (each player's privacy setting still applies)."), false);
+	AddBool(Hosting, AllowStreamingKey, LOCTEXT("AllowStreaming", "Allow sharing browsers with other players"),
+		LOCTEXT("AllowStreamingTip", "Let a player's browser be streamed to everyone through this world's connection. Off: only the player using it sees it."), true);
+	AddInt(Hosting, MaxStreamKbpsKey, LOCTEXT("MaxStreamKbps", "Most each stream may use (kbps)"),
+		LOCTEXT("MaxStreamKbpsTip", "The server drops stream data above this rate."), 8000);
 	AddBool(Hosting, AllowBrowserKey, LOCTEXT("AllowBrowser", "Allow the built-in browser"),
 		LOCTEXT("AllowBrowserTip", "Let players use the built-in browser on screens."), true);
 	AddInt(Hosting, MaxVideoMinutesKey, LOCTEXT("MaxVideoMinutes", "Longest video (minutes)"),
@@ -222,6 +243,10 @@ namespace
 			{UTSConfig::AudioRangeKey, {0.1f, 10.f}},
 			{UTSConfig::AutoLoadKey, {0.f, 2.f}},
 			{UTSConfig::PipWidthKey, {160.f, 1600.f}},
+			{UTSConfig::StreamKbpsKey, {300.f, 20000.f}},
+			{UTSConfig::StreamFpsKey, {10.f, 60.f}},
+			{UTSConfig::ReceiveStreamsKey, {0.f, 1.f}},
+			{UTSConfig::MaxStreamKbpsKey, {500.f, 100000.f}},
 			{UTSConfig::PipCornerKey, {0.f, 3.f}},
 			{UTSConfig::QueuePolicyKey, {0.f, 1.f}},
 			{UTSConfig::MaxVideoMinutesKey, {0.f, 100000.f}},
@@ -295,6 +320,21 @@ bool UTSConfig::GetBool(const UObject* WorldContext, const FString& Key, bool Fa
 {
 	const UConfigPropertyBool* P = Cast<UConfigPropertyBool>(FindProperty(WorldContext, Key));
 	return P ? P->Value : Fallback;
+}
+
+void UTSConfig::SetBool(const UObject* WorldContext, const FString& Key, bool Value)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UConfigManager* Manager = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	UConfigPropertyBool* Property = Manager ? Cast<UConfigPropertyBool>(FindProperty(WorldContext, Key)) : nullptr;
+	if (!Property)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Config: could not set '%s'; configuration not available"), *Key);
+		return;
+	}
+	Property->Value = Value;
+	Manager->MarkConfigurationDirty(MakeConfigId());
 }
 
 float UTSConfig::GetFloat(const UObject* WorldContext, const FString& Key, float Fallback)

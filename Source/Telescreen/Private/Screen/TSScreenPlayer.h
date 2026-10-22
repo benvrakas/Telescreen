@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "Host/TSHostSubsystem.h"
 #include "Screen/TSSharedBuffers.h"
+#include "TSTypes.h"
 #include "TSScreenPlayer.generated.h"
 
 class ATSBuildableScreen;
@@ -13,6 +14,8 @@ class UCanvasRenderTarget2D;
 class UTexture2D;
 class UTexture;
 class UTSStreamingSoundWave;
+class UTSRemoteCallObject;
+class FTSStreamSenderListener;
 
 DECLARE_MULTICAST_DELEGATE(FTSOnBrowserStateChanged);
 
@@ -75,6 +78,16 @@ public:
 	bool IsLoopback() const { return LoopbackSource.IsValid(); }
 	uint32 GetSessionId() const { return Session; }
 
+	// Live stream: text about the running stream for the panel (controller: encoder, rate; viewer: decoder, rate).
+	FText GetStreamStats() const { return StreamStats; }
+	bool IsStreaming() const { return SenderSession != 0; }
+	bool IsReceivingStream() const { return bStreamReceiver && Session != 0; }
+
+	// Called by the sender's listener (game thread).
+	void SendStreamChunks(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, const TArray<uint8>& Data);
+	void OnSenderState(const FString& Message);
+	void OnSenderLost();
+
 private:
 	ATSBuildableScreen* GetScreen() const;
 	void OnScreenChanged();
@@ -120,6 +133,61 @@ private:
 	bool bActive = false;
 	bool bPinned = false;
 	bool bBrowserSession = false;
+
+	// Live stream, controller side.
+	uint32 SenderSession = 0;
+	uint32 SenderSource = 0;
+	uint32 NextPacketId[2] = {0, 0};
+	TSharedPtr<FTSStreamSenderListener> SenderListener;
+	FText StreamStats;
+	double NextSenderCheck = 0.0;
+	FDelegateHandle KeyframeHandle;
+	TArray<FTSStreamChunk> SendQueue;
+	int32 SendQueueHead = 0;
+	int64 SendQueueBytes = 0;
+	double SendBudget = 0.0;
+	double SendBudgetAt = 0.0;
+	double NextRateRaise = 0.0;
+	uint32 CurrentKbps = 0;
+	uint32 WantedKbps = 0;
+	double LastCongestion = 0.0;
+	double NextBitrateChange = 0.0;
+	void FlushStreamQueue();
+	void ClearStreamQueue();
+	void AdaptBitrate();
+	void UpdateStreamSender();
+	void OpenStreamSender();
+	void CloseStreamSender();
+	void OnKeyframeRequested();
+
+	// Live stream, viewer side.
+	struct FStreamPartial
+	{
+		bool bActive = false;
+		uint32 PacketId = 0;
+		uint8 Flags = 0;
+		uint32 PtsMs = 0;
+		uint32 Codec = 0;
+		int32 Received = 0;
+		TArray<TArray<uint8>> Parts;
+		TArray<bool> Have;
+	};
+	bool bStreamReceiver = false;
+	bool bWatching = false;
+	FStreamPartial Partial[2];
+	uint32 LastPacketId[2] = {0, 0};
+	bool bHaveLast[2] = {false, false};
+	double LastKeyframeRequest = 0.0;
+	bool bAwaitingKeyframe = false;
+	FDelegateHandle ChunkHandle;
+	void ReconcileViewer(ATSBuildableScreen* Screen);
+	void OpenReceiverSession(const FText& Title);
+	void SetWatching(bool bInWatching);
+	void OnStreamChunk(const FTSStreamChunk& Chunk);
+	void RequestKeyframe(bool bForce);
+	void ResetReassembly();
+	UTSRemoteCallObject* FindRemoteCallObject() const;
+
 	TWeakObjectPtr<UTSScreenPlayer> LoopbackSource;
 	FText LoopbackStats;
 

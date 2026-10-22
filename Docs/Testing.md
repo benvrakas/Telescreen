@@ -44,6 +44,23 @@
    Judge text sharpness and motion (e.g. scroll a page, play a video).
 2. Pressing it again stops the test; closing the browser stops it too.
 
+## M4 (live streaming, multiplayer)
+
+1. A opens the browser on a screen: the first time, the sharing notice appears and the second press opens it. The
+   panel says "No one is watching your browser yet."
+2. B walks up to the screen: within a couple of seconds B sees A's browser and hears its sound from the screen. A's
+   panel says "Streaming to 1 player(s)" with the encoder and rate; the window title says "1 watching".
+3. A scrolls, plays a video and a browser game: B sees it at about 30 fps and a fraction of a second behind.
+4. A presses F10: B sees "They paused the stream" while A keeps using the browser; F10 again brings it back for B.
+5. B walks out of play distance: A's count drops to 0 and the stream stops (A's log: `stopped streaming`); walking
+   back starts it again. B can also Show on HUD to keep watching anywhere.
+6. B takes over: A becomes the viewer of B's browser.
+7. Host turns off "Allow sharing browsers": B gets "Sharing browsers is turned off on this world." and only sees who
+   is using the screen. B's own "Watch other players' browsers" = 1 does the same on B's PC only.
+8. Dedicated server: same as 2 and 3; the server log shows the watch lines and the raised net rate.
+9. Note in the report: both players' upload and download speeds, the controller's GPU, what B saw (freezes, blur),
+   and whether movement lagged for A while streaming.
+
 ## M1 multiplayer
 
 1. Listen server: a client sees and hears the same video, within about a quarter of a second of the host.
@@ -52,5 +69,5 @@
 4. Privacy: with "Load videos other players add" = 2, a video added by someone else shows its title and
    "Not loaded on this PC" with a "Load it anyway" button in the panel.
 5. Dedicated server: same as 1 and 2; the server log has the `Server_Enqueue` and command lines and no helper.
-6. Browser (M2): when a client opens the browser, others see "<name> is using the browser"; Take over moves control;
-   when the controller leaves the game, the screen goes back to its videos.
+6. Browser (M2): when a client opens the browser, others see it (M4); Take over moves control; when the controller
+   leaves the game, the screen goes back to its videos.

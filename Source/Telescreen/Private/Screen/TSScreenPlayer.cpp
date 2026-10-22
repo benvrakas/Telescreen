@@ -17,6 +17,10 @@
 #include "Screen/TSStreamingSoundWave.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
+#include "FGPlayerController.h"
+#include "Engine/NetConnection.h"
+#include "Net/TSNetRate.h"
+#include "TSRemoteCallObject.h"
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <windows.h>
@@ -34,6 +38,16 @@ using TSHostProtocol::ESessionState;
 namespace
 {
 	TArray<TWeakObjectPtr<UTSScreenPlayer>> GPlayers;
+
+	constexpr int32 StreamChunkBytes = 768;
+	constexpr int32 MaxStreamChunks = 256;
+	// Upper bound for sending queued stream data, below the stream net rate so gameplay traffic keeps room.
+	constexpr double StreamPaceBytesPerSecond = 750000.0;
+	// Queued stream data, in seconds at the current bitrate, that lowers the bitrate or drops the queue.
+	constexpr double QueueLowerSeconds = 0.4;
+	constexpr double QueueDropSeconds = 1.0;
+	// How long a viewer waits for a requested keyframe before asking again.
+	constexpr double KeyframeRetrySeconds = 0.75;
 
 	constexpr double SyncInterval = 0.25;
 	constexpr double RankInterval = 1.0;
@@ -119,6 +133,40 @@ namespace
 	}
 }
 
+// Receives the stream sender session's messages and forwards them to the player.
+class FTSStreamSenderListener : public ITSHostSessionListener
+{
+public:
+	explicit FTSStreamSenderListener(UTSScreenPlayer* InOwner) : Owner(InOwner) {}
+
+	virtual void OnHostVideo(uint32, uint32, uint32, const FString&) override {}
+	virtual void OnHostAudio(uint32, uint32, uint32, const FString&) override {}
+	virtual void OnHostState(ESessionState State, double, double, const FString& Message) override
+	{
+		if (Owner.IsValid() && (State == ESessionState::Playing || State == ESessionState::Error))
+		{
+			Owner->OnSenderState(Message);
+		}
+	}
+	virtual void OnHostLost() override
+	{
+		if (Owner.IsValid())
+		{
+			Owner->OnSenderLost();
+		}
+	}
+	virtual void OnHostStreamPacket(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, TArray<uint8>&& Data) override
+	{
+		if (Owner.IsValid())
+		{
+			Owner->SendStreamChunks(Kind, Flags, PtsMs, Codec, Data);
+		}
+	}
+
+private:
+	TWeakObjectPtr<UTSScreenPlayer> Owner;
+};
+
 UTSScreenPlayer::UTSScreenPlayer()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -140,6 +188,8 @@ void UTSScreenPlayer::BeginPlay()
 		return;
 	}
 	ScreenChangedHandle = Screen->OnScreenChanged.AddUObject(this, &UTSScreenPlayer::OnScreenChanged);
+	ChunkHandle = Screen->OnStreamChunk.AddUObject(this, &UTSScreenPlayer::OnStreamChunk);
+	KeyframeHandle = Screen->OnKeyframeRequested.AddUObject(this, &UTSScreenPlayer::OnKeyframeRequested);
 
 	const FVector2D Size = Screen->GetScreenWorldSize();
 	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
@@ -166,6 +216,8 @@ void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (ATSBuildableScreen* Screen = GetScreen())
 	{
 		Screen->OnScreenChanged.Remove(ScreenChangedHandle);
+		Screen->OnStreamChunk.Remove(ChunkHandle);
+		Screen->OnKeyframeRequested.Remove(KeyframeHandle);
 	}
 	if (Audio)
 	{
@@ -249,10 +301,7 @@ void UTSScreenPlayer::Reconcile()
 		BlockedReason = FText::GetEmpty();
 		if (!Screen->IsLocallyControlled())
 		{
-			WantedKey.Reset();
-			CloseSession();
-			SetStatus(FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), FText::FromString(Screen->GetControllerName())),
-				LOCTEXT("OtherBrowserLater", "Everyone will see it here once live streaming arrives in a later update."));
+			ReconcileViewer(Screen);
 			return;
 		}
 		const FString Key = TEXT("browser|") + Screen->GetSourceUrl();
@@ -512,6 +561,376 @@ void UTSScreenPlayer::BrowserCommand(ECommand Command)
 	}
 }
 
+UTSRemoteCallObject* UTSScreenPlayer::FindRemoteCallObject() const
+{
+	AFGPlayerController* Controller = Cast<AFGPlayerController>(UGameplayStatics::GetPlayerController(this, 0));
+	return Controller ? Controller->GetRemoteCallObjectOfClass<UTSRemoteCallObject>() : nullptr;
+}
+
+void UTSScreenPlayer::UpdateStreamSender()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	const bool bWant = Screen && bBrowserSession && Session != 0 && Screen->GetMode() == ETSScreenMode::Browser && Screen->IsLocallyControlled() &&
+		Screen->GetViewerCount() > 0 && !Screen->IsCurtainOn();
+	if (SenderSession != 0 && (!bWant || SenderSource != Session))
+	{
+		CloseStreamSender();
+	}
+	if (bWant && SenderSession == 0)
+	{
+		OpenStreamSender();
+	}
+}
+
+void UTSScreenPlayer::OpenStreamSender()
+{
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host || Session == 0)
+	{
+		return;
+	}
+	if (!SenderListener.IsValid())
+	{
+		SenderListener = MakeShared<FTSStreamSenderListener>(this);
+	}
+	const uint32 Kbps = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamKbpsKey, 2500), 300, 20000));
+	const uint32 Fps = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamFpsKey, 30), 10, 60));
+	SenderSession = Host->OpenStreamSender(Session, Fps, Kbps, SenderListener.Get());
+	SenderSource = Session;
+	CurrentKbps = WantedKbps = Kbps;
+	LastCongestion = 0.0;
+	NextBitrateChange = FPlatformTime::Seconds() + 5.0;
+	ClearStreamQueue();
+	NextPacketId[0] = NextPacketId[1] = 0;
+	StreamStats = FText::GetEmpty();
+	TSNetRate::Raise(GetWorld(), TSNetRate::StreamRate);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: streaming my browser to %d viewer(s) at %u fps, %u kbps"), *GetNameSafe(GetOwner()), GetScreen() ? GetScreen()->GetViewerCount() : 0,
+		Fps, Kbps);
+}
+
+void UTSScreenPlayer::CloseStreamSender()
+{
+	if (SenderSession == 0)
+	{
+		return;
+	}
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+	{
+		Host->CloseSession(SenderSession);
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stopped streaming my browser"), *GetNameSafe(GetOwner()));
+	SenderSession = 0;
+	SenderSource = 0;
+	ClearStreamQueue();
+	StreamStats = FText::GetEmpty();
+}
+
+void UTSScreenPlayer::OnSenderState(const FString& Message)
+{
+	StreamStats = FText::FromString(Message);
+}
+
+void UTSScreenPlayer::OnSenderLost()
+{
+	SenderSession = 0;
+	SenderSource = 0;
+}
+
+void UTSScreenPlayer::OnKeyframeRequested()
+{
+	if (SenderSession != 0)
+	{
+		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+		{
+			Host->SendStreamControl(SenderSession, TSHostProtocol::EStreamControl::Keyframe, 0);
+		}
+	}
+}
+
+void UTSScreenPlayer::SendStreamChunks(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, const TArray<uint8>& Data)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen || SenderSession == 0 || Kind > 1)
+	{
+		return;
+	}
+	const double QueuedSeconds = CurrentKbps > 0 ? double(SendQueueBytes) * 8.0 / (double(CurrentKbps) * 1000.0) : 0.0;
+	if (QueuedSeconds > QueueDropSeconds)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("%s: stream send queue %.1f s behind; dropped it and asked for a keyframe"), *Screen->GetName(), QueuedSeconds);
+		ClearStreamQueue();
+		LastCongestion = FPlatformTime::Seconds();
+		OnKeyframeRequested();
+	}
+	const int32 Count = FMath::Max(1, FMath::DivideAndRoundUp(Data.Num(), StreamChunkBytes));
+	if (Count > MaxStreamChunks)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("%s: dropped a %d byte stream packet (too large)"), *Screen->GetName(), Data.Num());
+		return;
+	}
+	const uint32 PacketId = NextPacketId[Kind]++;
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FTSStreamChunk Chunk;
+		Chunk.Kind = Kind;
+		Chunk.Flags = Flags;
+		Chunk.PacketId = PacketId;
+		Chunk.Index = uint16(Index);
+		Chunk.Count = uint16(Count);
+		Chunk.PtsMs = PtsMs;
+		Chunk.Codec = Codec;
+		const int32 Start = Index * StreamChunkBytes;
+		Chunk.Data.Append(Data.GetData() + Start, FMath::Min(StreamChunkBytes, Data.Num() - Start));
+		SendQueueBytes += Chunk.Data.Num();
+		SendQueue.Add(MoveTemp(Chunk));
+	}
+	FlushStreamQueue();
+}
+
+void UTSScreenPlayer::ClearStreamQueue()
+{
+	SendQueue.Reset();
+	SendQueueHead = 0;
+	SendQueueBytes = 0;
+}
+
+void UTSScreenPlayer::FlushStreamQueue()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSRemoteCallObject* RCO = FindRemoteCallObject();
+	if (!Screen || !RCO || SendQueueHead >= SendQueue.Num())
+	{
+		return;
+	}
+	const double Now = FPlatformTime::Seconds();
+	if (Now >= NextRateRaise)
+	{
+		NextRateRaise = Now + 2.0;
+		TSNetRate::Raise(GetWorld(), TSNetRate::StreamRate);
+	}
+	SendBudget = FMath::Min(StreamPaceBytesPerSecond * 0.1, SendBudget + (Now - SendBudgetAt) * StreamPaceBytesPerSecond);
+	SendBudgetAt = Now;
+	const APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
+	UNetConnection* Connection = Controller ? Controller->GetNetConnection() : nullptr;
+	while (SendQueueHead < SendQueue.Num())
+	{
+		const FTSStreamChunk& Chunk = SendQueue[SendQueueHead];
+		const int32 Cost = Chunk.Data.Num() + 32;
+		if (SendBudget < Cost || (Connection && !Connection->IsNetReady()))
+		{
+			break;
+		}
+		RCO->Server_StreamChunk(Screen, Chunk);
+		SendBudget -= Cost;
+		SendQueueBytes -= Chunk.Data.Num();
+		++SendQueueHead;
+	}
+	if (SendQueueHead >= SendQueue.Num())
+	{
+		ClearStreamQueue();
+	}
+	else if (SendQueueHead > 512)
+	{
+		SendQueue.RemoveAt(0, SendQueueHead);
+		SendQueueHead = 0;
+	}
+}
+
+void UTSScreenPlayer::AdaptBitrate()
+{
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host || SenderSession == 0 || CurrentKbps == 0)
+	{
+		return;
+	}
+	const double Now = FPlatformTime::Seconds();
+	const double QueuedSeconds = double(SendQueueBytes) * 8.0 / (double(CurrentKbps) * 1000.0);
+	if (QueuedSeconds > QueueLowerSeconds)
+	{
+		LastCongestion = Now;
+	}
+	if (Now < NextBitrateChange)
+	{
+		return;
+	}
+	uint32 NewKbps = CurrentKbps;
+	if (Now - LastCongestion < 2.0)
+	{
+		NewKbps = FMath::Max<uint32>(300, CurrentKbps * 7 / 10);
+	}
+	else if (Now - LastCongestion > 10.0 && CurrentKbps < WantedKbps)
+	{
+		NewKbps = FMath::Min<uint32>(WantedKbps, CurrentKbps * 11 / 10 + 50);
+	}
+	if (NewKbps == CurrentKbps)
+	{
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stream bitrate %u -> %u kbps (%.2f s queued)"), *GetNameSafe(GetOwner()), CurrentKbps, NewKbps, QueuedSeconds);
+	CurrentKbps = NewKbps;
+	Host->SendStreamControl(SenderSession, TSHostProtocol::EStreamControl::Bitrate, NewKbps);
+	NextBitrateChange = Now + 3.0;
+}
+
+void UTSScreenPlayer::ReconcileViewer(ATSBuildableScreen* Screen)
+{
+	const FText Title = FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), FText::FromString(Screen->GetControllerName()));
+	if (Screen->IsCurtainOn())
+	{
+		WantedKey.Reset();
+		CloseSession();
+		SetStatus(Title, LOCTEXT("StreamPaused", "They paused the stream."));
+		return;
+	}
+	if (UTSConfig::GetInt(this, UTSConfig::ReceiveStreamsKey, 0) == 1)
+	{
+		WantedKey.Reset();
+		CloseSession();
+		SetStatus(Title, LOCTEXT("StreamsOff", "Watching other players' browsers is turned off in your settings."));
+		return;
+	}
+	if (!bActive)
+	{
+		WantedKey.Reset();
+		CloseSession();
+		SetStatus(Title, LOCTEXT("StreamFar", "Paused on this PC (far away, or too many screens playing)."));
+		return;
+	}
+	const FString Key = TEXT("stream|") + Screen->GetControllerName();
+	WantedKey = Key;
+	if (Session != 0 && Key == SessionKey)
+	{
+		return;
+	}
+	CloseSession();
+	OpenReceiverSession(Title);
+}
+
+void UTSScreenPlayer::OpenReceiverSession(const FText& Title)
+{
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host || !Host->EnsureConnected())
+	{
+		SetStatus(Title, Host ? Host->GetUnavailableReason() : LOCTEXT("NoHostViewer", "Telescreen's player isn't available."));
+		return;
+	}
+	Session = Host->OpenStreamReceiver(this);
+	if (Session == 0)
+	{
+		SetStatus(Title, Host->GetUnavailableReason());
+		return;
+	}
+	bStreamReceiver = true;
+	SessionKey = WantedKey;
+	ResetReassembly();
+	StreamStats = FText::GetEmpty();
+	SetStatus(Title, LOCTEXT("StreamConnecting", "Connecting..."));
+	SetWatching(true);
+	RequestKeyframe(true);
+}
+
+void UTSScreenPlayer::SetWatching(bool bInWatching)
+{
+	if (bWatching == bInWatching)
+	{
+		return;
+	}
+	bWatching = bInWatching;
+	if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+	{
+		RCO->Server_SetWatching(GetScreen(), bWatching);
+	}
+}
+
+void UTSScreenPlayer::ResetReassembly()
+{
+	for (int32 K = 0; K < 2; ++K)
+	{
+		Partial[K] = FStreamPartial();
+		bHaveLast[K] = false;
+	}
+	bAwaitingKeyframe = false;
+}
+
+void UTSScreenPlayer::RequestKeyframe(bool bForce)
+{
+	const bool bNewLoss = !bAwaitingKeyframe;
+	if (bNewLoss)
+	{
+		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && Session != 0)
+		{
+			Host->SendStreamControl(Session, TSHostProtocol::EStreamControl::Reset, 0);
+		}
+		bAwaitingKeyframe = true;
+	}
+	const double Now = FPlatformTime::Seconds();
+	if (!bForce && !bNewLoss && Now - LastKeyframeRequest < KeyframeRetrySeconds)
+	{
+		return;
+	}
+	LastKeyframeRequest = Now;
+	UE_LOG(LogTelescreen, Verbose, TEXT("%s: asking for a stream keyframe"), *GetNameSafe(GetOwner()));
+	if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+	{
+		RCO->Server_RequestKeyframe(GetScreen());
+	}
+}
+
+void UTSScreenPlayer::OnStreamChunk(const FTSStreamChunk& Chunk)
+{
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!bStreamReceiver || Session == 0 || !Host || Chunk.Kind > 1 || Chunk.Count == 0 || Chunk.Index >= Chunk.Count)
+	{
+		return;
+	}
+	const int32 Kind = Chunk.Kind;
+	FStreamPartial& P = Partial[Kind];
+	if (P.bActive && int32(Chunk.PacketId - P.PacketId) < 0)
+	{
+		return;
+	}
+	if (!P.bActive || Chunk.PacketId != P.PacketId)
+	{
+		const bool bLostPartial = P.bActive && P.Received < P.Parts.Num();
+		const bool bGap = bHaveLast[Kind] && int32(Chunk.PacketId - LastPacketId[Kind]) > 1;
+		if ((bLostPartial || bGap) && Kind == 0)
+		{
+			RequestKeyframe(false);
+		}
+		P = FStreamPartial();
+		P.bActive = true;
+		P.PacketId = Chunk.PacketId;
+		P.Flags = Chunk.Flags;
+		P.PtsMs = Chunk.PtsMs;
+		P.Codec = Chunk.Codec;
+		P.Parts.SetNum(Chunk.Count);
+		P.Have.Init(false, Chunk.Count);
+	}
+	if (Chunk.Count != P.Parts.Num() || P.Have[Chunk.Index])
+	{
+		return;
+	}
+	P.Parts[Chunk.Index] = Chunk.Data;
+	P.Have[Chunk.Index] = true;
+	if (++P.Received < P.Parts.Num())
+	{
+		return;
+	}
+	TArray<uint8> Assembled;
+	for (const TArray<uint8>& Part : P.Parts)
+	{
+		Assembled.Append(Part);
+	}
+	if (Kind == 0 && (P.Flags & 1))
+	{
+		bAwaitingKeyframe = false;
+	}
+	Host->SendStreamPacket(Session, uint8(Kind), P.Flags, P.PtsMs, P.Codec, Assembled);
+	LastPacketId[Kind] = P.PacketId;
+	bHaveLast[Kind] = true;
+	P.bActive = false;
+}
+
 void UTSScreenPlayer::StartLoopback(UTSScreenPlayer* Source)
 {
 	if (!Source || Source == this || !Source->HasBrowser())
@@ -548,6 +967,13 @@ void UTSScreenPlayer::OnHostBrowserState(const FTSBrowserState& State)
 
 void UTSScreenPlayer::CloseSession()
 {
+	CloseStreamSender();
+	if (bStreamReceiver)
+	{
+		SetWatching(false);
+		bStreamReceiver = false;
+		ResetReassembly();
+	}
 	if (Session != 0)
 	{
 		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
@@ -602,6 +1028,20 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 		return;
 	}
 	PumpVideo();
+	if (Now >= NextSenderCheck)
+	{
+		NextSenderCheck = Now + 0.5;
+		UpdateStreamSender();
+		AdaptBitrate();
+	}
+	if (SenderSession != 0)
+	{
+		FlushStreamQueue();
+	}
+	if (bStreamReceiver && bAwaitingKeyframe && Now - LastKeyframeRequest >= KeyframeRetrySeconds)
+	{
+		RequestKeyframe(false);
+	}
 	if (bBrowserSession)
 	{
 		const FIntPoint Wanted = ComputeBrowserSize();
@@ -622,7 +1062,7 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 			}
 		}
 	}
-	else if (Now >= NextSync)
+	else if (!bStreamReceiver && SessionKey != TEXT("loopback") && Now >= NextSync)
 	{
 		NextSync = Now + SyncInterval;
 		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
@@ -652,21 +1092,21 @@ void UTSScreenPlayer::RankActivity()
 	auto Wants = [&](const UTSScreenPlayer* Player, double& OutDistance)
 	{
 		const ATSBuildableScreen* S = Player->GetScreen();
-		if (!S || !S->GetMediaState().GetCurrent())
+		if (!S || (!S->GetMediaState().GetCurrent() && S->GetMode() != ETSScreenMode::Browser))
 		{
 			return false;
 		}
 		OutDistance = FVector::Dist(Viewer, S->GetActorLocation());
 		return OutDistance <= MaxDistance;
 	};
-	if (Screen->GetMode() == ETSScreenMode::Browser)
+	if (Screen->GetMode() == ETSScreenMode::Browser && Screen->IsLocallyControlled())
 	{
-		bActive = Screen->IsLocallyControlled();
+		bActive = true;
 		return;
 	}
 	if (bPinned)
 	{
-		bActive = Screen->GetMediaState().GetCurrent() != nullptr;
+		bActive = Screen->GetMode() == ETSScreenMode::Browser || Screen->GetMediaState().GetCurrent() != nullptr;
 		return;
 	}
 	double MyDistance = 0.0;
@@ -854,7 +1294,11 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 {
 	ATSBuildableScreen* Screen = GetScreen();
 	const FTSMediaItem* Item = Screen ? Screen->GetMediaState().GetCurrent() : nullptr;
-	const FText Title = Item ? FText::FromString(Item->GetDisplayTitle()) : FText::GetEmpty();
+	FText Title = Item ? FText::FromString(Item->GetDisplayTitle()) : FText::GetEmpty();
+	if (bStreamReceiver && Screen)
+	{
+		Title = FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), FText::FromString(Screen->GetControllerName()));
+	}
 	if (State != HostState)
 	{
 		UE_LOG(LogTelescreen, Log, TEXT("%s: session %u state %d at %.1f / %.0f s %s"), *GetNameSafe(GetOwner()), Session, int32(State), Position, Duration,
@@ -864,6 +1308,10 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	if (LoopbackSource.IsValid() && State == ESessionState::Playing)
 	{
 		LoopbackStats = FText::FromString(Message);
+	}
+	else if (bStreamReceiver && State == ESessionState::Playing && !Message.IsEmpty())
+	{
+		StreamStats = FText::FromString(Message);
 	}
 	switch (State)
 	{

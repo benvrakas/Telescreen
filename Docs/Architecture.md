@@ -132,5 +132,46 @@ distance and the screens-at-once limit, and its sound is 2D by default.
 ### Settings
 
 `UTSConfig` (SML mod configuration, converted to SML's editor classes at start-up like BoomBoxPlus): performance,
-audio, privacy, "When hosting" (who may change videos, allowed sites, longest video, adds per minute) and
-diagnostics (mirror the picture, in case a screen shows it flipped).
+audio, browser and window (including live stream quality and the curtain key), privacy, "When hosting" (who may
+change videos, allowed sites, longest video, adds per minute, sharing browsers, stream rate cap) and diagnostics (mirror the picture, in case a screen shows it flipped).
+
+## Live streaming (M4, game connection)
+
+The controller's browser reaches other players through the game's own network connection; nothing else has to be
+reachable or forwarded.
+
+- **Who watches.** A viewer's `UTSScreenPlayer` opens a stream receiver session and tells the server
+  (`Server_SetWatching`) when a browser screen is in range and active on its PC (the same play distance and
+  screens-at-once ranking as videos; a HUD picture always counts). The server keeps the watchers per screen and
+  replicates only their number (`mViewerCount`). The controller's player opens a stream sender for its browser
+  session while the count is above zero and the curtain is off, so nothing is encoded or sent when nobody watches.
+- **Sending.** Sender packets (HEVC/AV1/H.264 video, Opus audio) are cut into 768-byte `FTSStreamChunk`s so each fits
+  in one game packet (the engine's limit is 1024 bytes with headers), queued, and sent with the unreliable
+  `Server_StreamChunk` at most 750 KB/s and only while the connection isn't saturated. The engine silently drops
+  unreliable RPCs on a saturated connection, so sending a keyframe's 50-150 chunks in one frame would lose most of
+  them. If the queue holds more than 0.4 s of data the bitrate drops by 30% (every 3 s at most) and climbs back by
+  10% after 10 s without congestion; past 1 s the queue is dropped and a keyframe is forced.
+- **Relaying.** The server checks the sender is the controller, the curtain is off, sharing is allowed and the
+  stream stays under "Most each stream may use" (token bucket, 0.5 s burst), then calls the unreliable
+  `Client_StreamChunk` on each watcher (or delivers locally to a listen server's own player).
+- **Receiving.** Chunks are reassembled per kind by packet id. A missing chunk or a skipped packet id resets the
+  receiver to wait for a keyframe (no smeared pictures) and asks for one through the server; while waiting it asks
+  again every 0.75 s. Measured with `Tools/stream_relay_test.py` (no network delay): 30 fps at 0.2% chunk loss,
+  24-30 fps at 1%.
+- **Rates.** The game's default rates (60-300 KB/s per connection) are shared with all gameplay traffic.
+  `TSNetRate::Raise` lifts the net driver caps and connection speeds to 1.5 MB/s while a stream runs; the server
+  re-raises on every relayed chunk because the listen-server net speed timer (`AGameNetworkManager::UpdateNetSpeeds`)
+  can lower them again.
+- **Privacy.** The first time a player opens or takes over a browser, the panel shows a notice that everything in it
+  is visible to players nearby; pressing again accepts it (saved in the settings). The curtain (F10 or the panel's
+  "Blank for everyone") stops the stream for everyone while the controller keeps using the browser; viewers see
+  "They paused the stream". The panel and the window title show the controller how many players are watching.
+- **Settings.** Client: stream quality (kbps), stream frame rate, watch other players' browsers, curtain key. Host:
+  allow sharing browsers, most each stream may use.
+
+The helper's sender seeds itself with the browser's current frame when it opens (`FrameTaps::SetRefresh`), so a
+viewer joining an unchanging page sees it at once; unchanged pages are re-encoded once per frame interval and get a
+keyframe at least every 4 s.
+
+Not done yet: WebRTC / direct connections to offload the server, per-player roles for who may stream, CEF's process
+sandbox.

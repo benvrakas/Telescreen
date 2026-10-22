@@ -13,6 +13,8 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
 #include "Screen/TSScreenPlayer.h"
+#include "TSConfig.h"
+#include "TSRemoteCallObject.h"
 #include "Telescreen.h"
 #include "TimerManager.h"
 #include "UI/TSScreenPanel.h"
@@ -51,6 +53,8 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mController);
 	DOREPLIFETIME(ATSBuildableScreen, mControllerName);
 	DOREPLIFETIME(ATSBuildableScreen, mSourceUrl);
+	DOREPLIFETIME(ATSBuildableScreen, mViewerCount);
+	DOREPLIFETIME(ATSBuildableScreen, mCurtain);
 }
 
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
@@ -281,6 +285,9 @@ void ATSBuildableScreen::Server_TakeControl(APlayerState* Requester, ETSScreenMo
 	mController = Requester;
 	mControllerName = Requester->GetPlayerName();
 	mSourceUrl = Url.Left(2048);
+	mWatchers.RemoveAll([Requester](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid() || P->PlayerState == Requester; });
+	mViewerCount = mWatchers.Num();
+	mCurtain = false;
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s took control (mode %d, %s)%s"), *GetName(), *mControllerName, int32(Mode), *mSourceUrl,
 		Previous.IsEmpty() || Previous == mControllerName ? TEXT("") : *FString::Printf(TEXT(" from %s"), *Previous));
 	FlushNetDormancy();
@@ -299,13 +306,88 @@ void ATSBuildableScreen::Server_ReleaseControl(const TCHAR* Reason)
 	mController = nullptr;
 	mControllerName.Reset();
 	mSourceUrl.Reset();
+	mWatchers.Reset();
+	mViewerCount = 0;
+	mCurtain = false;
 	FlushNetDormancy();
 	ForceNetUpdate();
 	OnScreenChanged.Broadcast();
 }
 
+void ATSBuildableScreen::Server_SetWatcher(APlayerController* Watcher, bool bWatching)
+{
+	if (!HasAuthority() || !Watcher || mMode != ETSScreenMode::Browser)
+	{
+		return;
+	}
+	const bool bIsController = Watcher->PlayerState == mController;
+	bool bChanged = false;
+	if (bWatching && !bIsController && !mWatchers.Contains(Watcher))
+	{
+		mWatchers.Add(Watcher);
+		bChanged = true;
+	}
+	else if (!bWatching)
+	{
+		bChanged = mWatchers.Remove(Watcher) > 0;
+	}
+	if (!bChanged)
+	{
+		return;
+	}
+	mViewerCount = mWatchers.Num();
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s the stream (%d viewer(s))"), *GetName(), *GetNameSafe(Watcher->PlayerState), bWatching ? TEXT("watches") : TEXT("stopped watching"),
+		mViewerCount);
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+	if (bWatching)
+	{
+		UTSRemoteCallObject::SendKeyframeRequest(this);
+	}
+}
+
+void ATSBuildableScreen::Server_SetCurtain(bool bOn)
+{
+	if (!HasAuthority() || mCurtain == bOn)
+	{
+		return;
+	}
+	mCurtain = bOn;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: privacy curtain %s"), *GetName(), bOn ? TEXT("on") : TEXT("off"));
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+	if (!bOn)
+	{
+		UTSRemoteCallObject::SendKeyframeRequest(this);
+	}
+}
+
+bool ATSBuildableScreen::Server_AllowStreamBytes(int32 Bytes)
+{
+	const double KbpsCap = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamKbpsKey, 8000), 500, 100000);
+	const double BytesPerSecond = KbpsCap * 125.0;
+	const double Now = FPlatformTime::Seconds();
+	mStreamBudget = FMath::Min(BytesPerSecond * 0.5, mStreamBudget + (Now - mStreamBudgetAt) * BytesPerSecond);
+	mStreamBudgetAt = Now;
+	if (mStreamBudget < Bytes)
+	{
+		return false;
+	}
+	mStreamBudget -= Bytes;
+	return true;
+}
+
 void ATSBuildableScreen::CheckController()
 {
+	if (mWatchers.RemoveAll([](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid(); }) > 0)
+	{
+		mViewerCount = mWatchers.Num();
+		FlushNetDormancy();
+		ForceNetUpdate();
+		OnScreenChanged.Broadcast();
+	}
 	if (mMode != ETSScreenMode::SyncedMedia && !IsValid(mController))
 	{
 		Server_ReleaseControl(TEXT("controller left"));

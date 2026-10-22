@@ -15,6 +15,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
+#include "TSRemoteCallObject.h"
 #include "UI/TSScreenWindow.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
@@ -261,6 +262,21 @@ void UTSClientSubsystem::Tick(float DeltaTime)
 	if (ListKey.IsValid() && Controller->WasInputKeyJustPressed(ListKey))
 	{
 		UTSScreensList::Toggle(this);
+	}
+	const FKey CurtainKey(*UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")));
+	if (CurtainKey.IsValid() && Controller->WasInputKeyJustPressed(CurtainKey))
+	{
+		for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+		{
+			if (It->IsLocallyControlled())
+			{
+				if (UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this))
+				{
+					RCO->Server_SetCurtain(*It, !It->IsCurtainOn());
+				}
+				break;
+			}
+		}
 	}
 }
 

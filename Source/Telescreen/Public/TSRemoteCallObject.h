@@ -30,6 +30,32 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_ReleaseControl(ATSBuildableScreen* Screen);
 
+	// Live stream: the controller sends chunks up (unreliable); the server relays them to the watchers. Losses are
+	// repaired with keyframes, so nothing here is reliable.
+	UFUNCTION(Server, Unreliable, WithValidation)
+	void Server_StreamChunk(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk);
+
+	UFUNCTION(Client, Unreliable)
+	void Client_StreamChunk(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk);
+
+	// A viewer starts or stops watching a screen's stream.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetWatching(ATSBuildableScreen* Screen, bool bWatching);
+
+	// The controller turns the privacy curtain on or off.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetCurtain(ATSBuildableScreen* Screen, bool bOn);
+
+	// A viewer lost part of the stream and needs a keyframe; the server forwards it to the controller.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RequestKeyframe(ATSBuildableScreen* Screen);
+
+	UFUNCTION(Client, Reliable)
+	void Client_RequestKeyframe(ATSBuildableScreen* Screen);
+
+	// Server: asks Screen's controller for a keyframe.
+	static void SendKeyframeRequest(ATSBuildableScreen* Screen);
+
 	// Tells the player why the server refused an edit.
 	UFUNCTION(Client, Reliable)
 	void Client_Notice(const FString& Message);

@@ -24,6 +24,41 @@ enum class ETSScreenMode : uint8
 	Browser,
 };
 
+// One piece of a live stream packet, small enough to travel as one unreliable network message.
+USTRUCT()
+struct TELESCREEN_API FTSStreamChunk
+{
+	GENERATED_BODY()
+
+	// 0 video, 1 audio (the helper's EStreamKind).
+	UPROPERTY()
+	uint8 Kind = 0;
+
+	// 1: the packet is a keyframe.
+	UPROPERTY()
+	uint8 Flags = 0;
+
+	// Counts up per kind; a gap means a whole packet was lost.
+	UPROPERTY()
+	uint32 PacketId = 0;
+
+	UPROPERTY()
+	uint16 Index = 0;
+
+	UPROPERTY()
+	uint16 Count = 1;
+
+	UPROPERTY()
+	uint32 PtsMs = 0;
+
+	// AVCodecID of the stream.
+	UPROPERTY()
+	uint32 Codec = 0;
+
+	UPROPERTY()
+	TArray<uint8> Data;
+};
+
 // One entry of a screen's synced media queue.
 USTRUCT(BlueprintType)
 struct TELESCREEN_API FTSMediaItem
