@@ -110,16 +110,23 @@ void UTSScreenWindow::OpenInteractive(ATSBuildableScreen* InScreen)
 
 void UTSScreenWindow::ToggleFocus(const UObject* WorldContext)
 {
-	if (UTSScreenWindow* Window = GWindow.Get())
+	UTSScreenWindow* Window = GWindow.Get();
+	if (Window && Window->bInteractive)
 	{
-		if (Window->bInteractive && !Window->bPinned)
+		if (Window->bPinned)
 		{
-			Close();
+			Window->SetInteractive(false);
 		}
 		else
 		{
-			Window->SetInteractive(!Window->bInteractive);
+			Close();
 		}
+		return;
+	}
+	// Only a source the local player controls takes input; a HUD picture of anything else stays a picture.
+	if (Window && Window->GetBrowserPlayer())
+	{
+		Window->SetInteractive(true);
 		return;
 	}
 	UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
@@ -336,6 +343,20 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		Close();
 		return;
+	}
+	// Control moved to someone else (or the browser closed): input no longer has anywhere to go.
+	if (bInteractive && (!Shown->IsLocallyControlled() || Shown->GetMode() == ETSScreenMode::SyncedMedia))
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: no longer yours; leaving the interactive window"), *Shown->GetName());
+		if (bPinned)
+		{
+			SetInteractive(false);
+		}
+		else
+		{
+			Close();
+			return;
+		}
 	}
 	UTexture* Texture = Player->GetDisplayTexture();
 	if (Texture != ShownTexture)

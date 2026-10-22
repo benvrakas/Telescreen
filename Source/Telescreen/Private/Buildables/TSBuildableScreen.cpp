@@ -316,7 +316,7 @@ void ATSBuildableScreen::Server_ReleaseControl(const TCHAR* Reason)
 
 void ATSBuildableScreen::Server_SetWatcher(APlayerController* Watcher, bool bWatching)
 {
-	if (!HasAuthority() || !Watcher || mMode != ETSScreenMode::Browser)
+	if (!HasAuthority() || !Watcher || mMode == ETSScreenMode::SyncedMedia)
 	{
 		return;
 	}
@@ -336,8 +336,8 @@ void ATSBuildableScreen::Server_SetWatcher(APlayerController* Watcher, bool bWat
 		return;
 	}
 	mViewerCount = mWatchers.Num();
-	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s the stream (%d viewer(s))"), *GetName(), *GetNameSafe(Watcher->PlayerState), bWatching ? TEXT("watches") : TEXT("stopped watching"),
-		mViewerCount);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s the stream (%d viewer(s))"), *GetName(), Watcher->PlayerState ? *Watcher->PlayerState->GetPlayerName() : TEXT("?"),
+		bWatching ? TEXT("watches") : TEXT("stopped watching"), mViewerCount);
 	FlushNetDormancy();
 	ForceNetUpdate();
 	OnScreenChanged.Broadcast();
@@ -362,6 +362,22 @@ void ATSBuildableScreen::Server_SetCurtain(bool bOn)
 	{
 		UTSRemoteCallObject::SendKeyframeRequest(this);
 	}
+}
+
+bool ATSBuildableScreen::Server_AllowKeyframeRequest()
+{
+	const double Now = FPlatformTime::Seconds();
+	if (Now - mLastKeyframeRequest < 0.25)
+	{
+		return false;
+	}
+	mLastKeyframeRequest = Now;
+	return true;
+}
+
+FVector ATSBuildableScreen::GetScreenCenter() const
+{
+	return mScreenPlane ? mScreenPlane->GetComponentLocation() : GetActorLocation();
 }
 
 bool ATSBuildableScreen::Server_AllowStreamBytes(int32 Bytes)
@@ -438,8 +454,10 @@ void ATSBuildableScreen::Server_Enqueue(const FTSMediaItem& Item, bool bPlayNow)
 	}
 	if (mMediaState.Queue.Num() >= MaxQueueLength)
 	{
-		mMediaState.Queue.RemoveAt(0);
-		if (mMediaState.CurrentIndex != INDEX_NONE)
+		// Drops the oldest entry that isn't playing.
+		const int32 Oldest = mMediaState.CurrentIndex == 0 ? 1 : 0;
+		mMediaState.Queue.RemoveAt(Oldest);
+		if (mMediaState.CurrentIndex > Oldest)
 		{
 			--mMediaState.CurrentIndex;
 		}
@@ -538,7 +556,7 @@ ATSBuildableScreenSmall::ATSBuildableScreenSmall()
 {
 	mDisplayName = LOCTEXT("SmallName", "Small Telescreen");
 	mDescription = LOCTEXT("SmallDescription",
-		"A screen for synced videos, a shared built-in browser, windows and remote desktops, seen by every player.\n\n"
+		"A screen for synced videos, a built-in browser and shared windows, seen by every player.\n\n"
 		"Can be freestanding, placed on Walls, or attached to most buildings.\n\nSize: 8 m x 4 m");
 	ConfigureBillboardLayout(FVector(0.0, -18.0, 0.0), 1.143f, FVector(0.0, 10.0, 0.0), FVector2D(795.0, 395.0), FVector2D(800.0, 400.0),
 		FVector(0.0, 38.0, 0.0), FVector2D(1.0, 1.0), 0.0f, FBox(FVector(-400.0, -10.0, -200.0), FVector(400.0, 10.0, 200.0)), FVector(0.0, -2.0, 0.0));
@@ -548,7 +566,7 @@ ATSBuildableScreenLarge::ATSBuildableScreenLarge()
 {
 	mDisplayName = LOCTEXT("LargeName", "Large Telescreen");
 	mDescription = LOCTEXT("LargeDescription",
-		"A screen for synced videos, a shared built-in browser, windows and remote desktops, seen by every player.\n\n"
+		"A screen for synced videos, a built-in browser and shared windows, seen by every player.\n\n"
 		"Can be freestanding, placed on Walls, or attached to most buildings.\n\nSize: 16 m x 8 m");
 	ConfigureBillboardLayout(FVector(0.0, 15.0, 0.0), 2.29f, FVector(0.0, 66.719, 0.0), FVector2D(1600.0, 800.0), FVector2D(1600.0, 800.0),
 		FVector(0.0, 25.0, 0.0), FVector2D(2.0, 2.0), 60.0f, FBox(FVector(-800.0, -20.0, -400.0), FVector(800.0, 20.0, 400.0)), FVector(0.0, 46.0, 0.0));

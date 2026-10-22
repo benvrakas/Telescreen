@@ -203,6 +203,8 @@ void UTSScreenPanel::BuildTree()
 	BrowserOtherText = MakeText(FText::GetEmpty(), 13);
 	AddToHBox(OtherRow, BrowserOtherText, true);
 	AddToHBox(OtherRow, MakeButton(LOCTEXT("BrowserTakeOver", "Take over"), ETSPanelAction::BrowserTakeOver));
+	HostStopButton = MakeButton(LOCTEXT("HostStop", "Stop it (host)"), ETSPanelAction::HostStop, INDEX_NONE, FLinearColor(0.3f, 0.08f, 0.06f));
+	AddToHBox(OtherRow, HostStopButton);
 	BrowserOtherRow = OtherRow;
 	AddRow(Root, OtherRow, 4.f);
 	BrowserNote = MakeText(FText::GetEmpty(), 12, Muted);
@@ -405,6 +407,8 @@ void UTSScreenPanel::RefreshBrowser()
 	{
 		BrowserOtherText->SetText(FText::Format(LOCTEXT("BrowserOther", "{0} is using this screen's browser."), FText::FromString(Screen->GetControllerName())));
 	}
+	HostStopButton->SetVisibility(bBrowserMode && !bMine && UTSRemoteCallObject::IsLocalHostOrAdmin(this) ? ESlateVisibility::Visible
+																										 : ESlateVisibility::Collapsed);
 	if (bMine && Player && !BrowserUrlBox->HasKeyboardFocus())
 	{
 		BrowserUrlBox->SetText(FText::FromString(Player->GetBrowserState().Url));
@@ -664,6 +668,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		RCO->Server_SetCurtain(Screen, !Screen->IsCurtainOn());
 		break;
 	case ETSPanelAction::BrowserStop:
+	case ETSPanelAction::HostStop:
 		RCO->Server_ReleaseControl(Screen);
 		break;
 	case ETSPanelAction::BrowserGo:

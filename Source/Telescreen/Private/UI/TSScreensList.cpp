@@ -17,6 +17,7 @@
 #include "TSConfig.h"
 #include "TSRemoteCallObject.h"
 #include "UI/TSScreenWindow.h"
+#include "UI/TSStreamIndicator.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -264,20 +265,36 @@ void UTSClientSubsystem::Tick(float DeltaTime)
 		UTSScreensList::Toggle(this);
 	}
 	const FKey CurtainKey(*UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")));
-	if (CurtainKey.IsValid() && Controller->WasInputKeyJustPressed(CurtainKey))
+	const bool bCurtainPressed = CurtainKey.IsValid() && Controller->WasInputKeyJustPressed(CurtainKey);
+	NextIndicatorUpdate -= DeltaTime;
+	if (!bCurtainPressed && NextIndicatorUpdate > 0.f)
 	{
-		for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+		return;
+	}
+	NextIndicatorUpdate = 0.25f;
+	ATSBuildableScreen* Mine = nullptr;
+	for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+	{
+		if (It->GetMode() != ETSScreenMode::SyncedMedia && It->IsLocallyControlled())
 		{
-			if (It->IsLocallyControlled())
-			{
-				if (UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this))
-				{
-					RCO->Server_SetCurtain(*It, !It->IsCurtainOn());
-				}
-				break;
-			}
+			Mine = *It;
+			break;
 		}
 	}
+	if (bCurtainPressed && Mine)
+	{
+		if (UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this))
+		{
+			RCO->Server_SetCurtain(Mine, !Mine->IsCurtainOn());
+		}
+	}
+	UTSStreamIndicator::Update(this, Mine);
+}
+
+void UTSClientSubsystem::Deinitialize()
+{
+	UTSStreamIndicator::Update(this, nullptr);
+	Super::Deinitialize();
 }
 
 #undef LOCTEXT_NAMESPACE

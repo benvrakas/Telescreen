@@ -80,6 +80,12 @@ public:
 	// Server only: true if Bytes more stream data fit the stream's rate limit right now.
 	bool Server_AllowStreamBytes(int32 Bytes);
 
+	// Server only: true at most four times a second, so viewers can't flood the controller with keyframe requests.
+	bool Server_AllowKeyframeRequest();
+
+	// Where the screen face's centre is in the world.
+	FVector GetScreenCenter() const;
+
 	// Delivered on the client (and on a listen server's own player) for each stream chunk, and when the controller's
 	// stream needs a keyframe.
 	FTSOnStreamChunk OnStreamChunk;
@@ -183,6 +189,7 @@ protected:
 	TArray<TWeakObjectPtr<APlayerController>> mWatchers;
 	double mStreamBudget = 0.0;
 	double mStreamBudgetAt = 0.0;
+	double mLastKeyframeRequest = 0.0;
 
 	FTimerHandle mAdvanceTimer;
 	FTimerHandle mControllerCheckTimer;

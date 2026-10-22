@@ -42,6 +42,7 @@ enum class ETSPanelAction : uint8
 	BrowserTakeOver,
 	LoopbackToggle,
 	CurtainToggle,
+	HostStop,
 };
 
 // Routes one button's click to its panel with the button's action and queue index.
@@ -140,6 +141,8 @@ private:
 	TObjectPtr<UTextBlock> StreamText;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> CurtainButtonText;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> HostStopButton;
 
 	// True while the sharing notice is shown and the next press of Open accepts it.
 	bool bDisclaimerPending = false;

@@ -60,6 +60,12 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_Notice(const FString& Message);
 
+	// True if Controller is the host (listen server's own player) or a dedicated server admin.
+	static bool IsHostOrAdmin(const APlayerController* Controller);
+
+	// True if the local player is the host or an admin (for showing host tools).
+	static bool IsLocalHostOrAdmin(const UObject* WorldContext);
+
 	// Returns the local player's instance, or nullptr (logged) if the server doesn't run the mod.
 	static UTSRemoteCallObject* GetLocal(const UObject* WorldContext);
 
@@ -70,6 +76,7 @@ public:
 
 private:
 	bool MayEdit(const ATSBuildableScreen* Screen);
+	bool MayUseMode(const ATSBuildableScreen* Screen, ETSScreenMode Mode);
 	FString GetRequesterName() const;
 
 	UPROPERTY(Replicated, Meta = (NoAutoJson))

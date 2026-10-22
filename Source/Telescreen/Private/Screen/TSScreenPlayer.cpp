@@ -40,10 +40,10 @@ namespace
 	TArray<TWeakObjectPtr<UTSScreenPlayer>> GPlayers;
 
 	constexpr int32 StreamChunkBytes = 768;
-	constexpr int32 MaxStreamChunks = 256;
+	constexpr int32 MaxStreamChunks = 1024;
 	// Upper bound for sending queued stream data, below the stream net rate so gameplay traffic keeps room.
 	constexpr double StreamPaceBytesPerSecond = 750000.0;
-	// Queued stream data, in seconds at the current bitrate, that lowers the bitrate or drops the queue.
+	// How long the oldest queued chunk may wait before the bitrate is lowered, or the queue dropped.
 	constexpr double QueueLowerSeconds = 0.4;
 	constexpr double QueueDropSeconds = 1.0;
 	// How long a viewer waits for a requested keyframe before asking again.
@@ -654,7 +654,7 @@ void UTSScreenPlayer::SendStreamChunks(uint8 Kind, uint8 Flags, uint32 PtsMs, ui
 	{
 		return;
 	}
-	const double QueuedSeconds = CurrentKbps > 0 ? double(SendQueueBytes) * 8.0 / (double(CurrentKbps) * 1000.0) : 0.0;
+	const double QueuedSeconds = OldestQueuedSeconds();
 	if (QueuedSeconds > QueueDropSeconds)
 	{
 		UE_LOG(LogTelescreen, Warning, TEXT("%s: stream send queue %.1f s behind; dropped it and asked for a keyframe"), *Screen->GetName(), QueuedSeconds);
@@ -669,9 +669,12 @@ void UTSScreenPlayer::SendStreamChunks(uint8 Kind, uint8 Flags, uint32 PtsMs, ui
 		return;
 	}
 	const uint32 PacketId = NextPacketId[Kind]++;
+	const double Now = FPlatformTime::Seconds();
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
-		FTSStreamChunk Chunk;
+		FQueuedChunk& Queued = SendQueue.AddDefaulted_GetRef();
+		Queued.QueuedAt = Now;
+		FTSStreamChunk& Chunk = Queued.Chunk;
 		Chunk.Kind = Kind;
 		Chunk.Flags = Flags;
 		Chunk.PacketId = PacketId;
@@ -682,9 +685,13 @@ void UTSScreenPlayer::SendStreamChunks(uint8 Kind, uint8 Flags, uint32 PtsMs, ui
 		const int32 Start = Index * StreamChunkBytes;
 		Chunk.Data.Append(Data.GetData() + Start, FMath::Min(StreamChunkBytes, Data.Num() - Start));
 		SendQueueBytes += Chunk.Data.Num();
-		SendQueue.Add(MoveTemp(Chunk));
 	}
 	FlushStreamQueue();
+}
+
+double UTSScreenPlayer::OldestQueuedSeconds() const
+{
+	return SendQueueHead < SendQueue.Num() ? FPlatformTime::Seconds() - SendQueue[SendQueueHead].QueuedAt : 0.0;
 }
 
 void UTSScreenPlayer::ClearStreamQueue()
@@ -714,7 +721,7 @@ void UTSScreenPlayer::FlushStreamQueue()
 	UNetConnection* Connection = Controller ? Controller->GetNetConnection() : nullptr;
 	while (SendQueueHead < SendQueue.Num())
 	{
-		const FTSStreamChunk& Chunk = SendQueue[SendQueueHead];
+		const FTSStreamChunk& Chunk = SendQueue[SendQueueHead].Chunk;
 		const int32 Cost = Chunk.Data.Num() + 32;
 		if (SendBudget < Cost || (Connection && !Connection->IsNetReady()))
 		{
@@ -744,7 +751,7 @@ void UTSScreenPlayer::AdaptBitrate()
 		return;
 	}
 	const double Now = FPlatformTime::Seconds();
-	const double QueuedSeconds = double(SendQueueBytes) * 8.0 / (double(CurrentKbps) * 1000.0);
+	const double QueuedSeconds = OldestQueuedSeconds();
 	if (QueuedSeconds > QueueLowerSeconds)
 	{
 		LastCongestion = Now;
@@ -885,7 +892,7 @@ void UTSScreenPlayer::OnStreamChunk(const FTSStreamChunk& Chunk)
 	}
 	const int32 Kind = Chunk.Kind;
 	FStreamPartial& P = Partial[Kind];
-	if (P.bActive && int32(Chunk.PacketId - P.PacketId) < 0)
+	if ((P.bActive && int32(Chunk.PacketId - P.PacketId) < 0) || (bHaveLast[Kind] && int32(Chunk.PacketId - LastPacketId[Kind]) <= 0))
 	{
 		return;
 	}
@@ -1139,7 +1146,9 @@ void UTSScreenPlayer::PumpVideo()
 	const int32 Width = int32(Video.GetWidth()), Height = int32(Video.GetHeight());
 	const FVector2D Size = Screen->GetScreenWorldSize();
 	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
-	const FFit Fit = ComputeFit(Width, Height, Aspect, bBrowserSession ? ETSAspectMode::Stretch : Screen->GetAspectMode());
+	// The browser renders at the screen's shape, so it (and its stream) fills the screen exactly.
+	const bool bScreenShaped = bBrowserSession || (bStreamReceiver && Screen->GetMode() == ETSScreenMode::Browser);
+	const FFit Fit = ComputeFit(Width, Height, Aspect, bScreenShaped ? ETSAspectMode::Stretch : Screen->GetAspectMode());
 	const bool bMirrorX = UTSConfig::GetBool(this, UTSConfig::MirrorXKey, false);
 	const bool bMirrorY = UTSConfig::GetBool(this, UTSConfig::MirrorYKey, false);
 
@@ -1281,7 +1290,7 @@ void UTSScreenPlayer::OnHostAudio(uint32 SampleRate, uint32 Channels, uint32 Cap
 	Audio->AttenuationOverrides.AttenuationShapeExtents = FVector(float(Size.X) * 0.5f * Range, 0.f, 0.f);
 	Audio->AttenuationOverrides.FalloffDistance = float(Size.X) * 10.f * Range;
 	Audio->AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::Logarithmic;
-	Audio->SetWorldLocation(Screen->GetActorLocation());
+	Audio->SetWorldLocation(Screen->GetScreenCenter());
 	Audio->SetSound(Wave);
 	ApplyAudioMode();
 	UpdateAudio();

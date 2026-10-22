@@ -15,13 +15,26 @@ enum class ETSAspectMode : uint8
 	Stretch,
 };
 
-// What a screen shows: the shared synced media queue, or a player's own source.
+// What a screen shows: the shared synced media queue, or a player's own source streamed to the others.
 UENUM(BlueprintType)
 enum class ETSScreenMode : uint8
 {
 	SyncedMedia,
-	// The controller's built-in browser (only the controller sees it until live streaming exists).
+	// The controller's built-in browser.
 	Browser,
+	// A window on the controller's PC.
+	Window,
+};
+
+// Lowest role that may use a mode (host setting).
+UENUM(BlueprintType)
+enum class ETSRole : uint8
+{
+	Everyone,
+	// Players named in the host's trusted list, and the host and admins.
+	Trusted,
+	// The host (listen server) or server admins (dedicated server).
+	HostAndAdmins,
 };
 
 // One piece of a live stream packet, small enough to travel as one unreliable network message.

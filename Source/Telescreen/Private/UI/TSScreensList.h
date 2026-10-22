@@ -57,7 +57,8 @@ private:
 	float RebuildIn = 0.f;
 };
 
-// Client-side hotkeys: the window focus key and the screens list key (both set in the mod's settings).
+// Client-side hotkeys (window focus, screens list, privacy curtain; set in the mod's settings) and the HUD streaming
+// indicator.
 UCLASS()
 class UTSClientSubsystem : public UTickableWorldSubsystem
 {
@@ -68,4 +69,8 @@ public:
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 	virtual void Tick(float DeltaTime) override;
 	virtual TStatId GetStatId() const override;
+	virtual void Deinitialize() override;
+
+private:
+	float NextIndicatorUpdate = 0.f;
 };

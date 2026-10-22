@@ -142,7 +142,13 @@ private:
 	FText StreamStats;
 	double NextSenderCheck = 0.0;
 	FDelegateHandle KeyframeHandle;
-	TArray<FTSStreamChunk> SendQueue;
+	struct FQueuedChunk
+	{
+		FTSStreamChunk Chunk;
+		double QueuedAt = 0.0;
+	};
+	TArray<FQueuedChunk> SendQueue;
+	double OldestQueuedSeconds() const;
 	int32 SendQueueHead = 0;
 	int64 SendQueueBytes = 0;
 	double SendBudget = 0.0;

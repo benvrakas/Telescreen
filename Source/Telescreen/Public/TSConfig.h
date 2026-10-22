@@ -51,6 +51,14 @@ public:
 	static const FString CurtainKeyKey;
 	static const FString StreamDisclaimerKey;
 	static const FString AllowBrowserKey;
+	static const FString BrowserRoleKey;
+	static const FString WindowRoleKey;
+	static const FString TrustedPlayersKey;
+	static const FString AllowTakeOverKey;
+	static const FString MaxControlledScreensKey;
+	static const FString WindowAudioKey;
+	static const FString WindowCursorKey;
+	static const FString WindowDisclaimerKey;
 	static const FString BrowserHomeKey;
 	static const FString KeepBrowserLoginsKey;
 	static const FString FocusKeyKey;
@@ -75,4 +83,7 @@ public:
 
 	// True if Url's host is one of the "Allowed sites" (or a subdomain of one).
 	static bool IsAllowedSite(const UObject* WorldContext, const FString& Url);
+
+	// True if PlayerName is in the host's trusted players list.
+	static bool IsTrustedPlayer(const UObject* WorldContext, const FString& PlayerName);
 };

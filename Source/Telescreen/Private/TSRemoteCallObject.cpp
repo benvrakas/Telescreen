@@ -1,5 +1,7 @@
 #include "TSRemoteCallObject.h"
+#include "EngineUtils.h"
 #include "FGPlayerController.h"
+#include "FGPlayerState.h"
 #include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
@@ -12,6 +14,7 @@ FTSOnNotice UTSRemoteCallObject::OnNotice;
 namespace
 {
 	constexpr int32 MaxChunkBytes = 900;
+	constexpr int32 MaxChunksPerPacket = 1024;
 	constexpr int32 MaxUrlLength = 2048;
 	constexpr int32 MaxTitleLength = 300;
 	constexpr int32 MaxNameLength = 64;
@@ -34,6 +37,35 @@ UTSRemoteCallObject* UTSRemoteCallObject::GetLocal(const UObject* WorldContext)
 	return RCO;
 }
 
+bool UTSRemoteCallObject::IsHostOrAdmin(const APlayerController* Controller)
+{
+	if (!Controller)
+	{
+		return false;
+	}
+	if (Controller->GetNetMode() != NM_DedicatedServer && Controller->GetNetMode() != NM_Client && Controller->IsLocalController())
+	{
+		return true;
+	}
+	const AFGPlayerState* State = Cast<AFGPlayerState>(Controller->PlayerState);
+	return State && State->IsServerAdmin();
+}
+
+bool UTSRemoteCallObject::IsLocalHostOrAdmin(const UObject* WorldContext)
+{
+	const APlayerController* Controller = WorldContext ? UGameplayStatics::GetPlayerController(WorldContext, 0) : nullptr;
+	if (!Controller)
+	{
+		return false;
+	}
+	if (Controller->GetNetMode() == NM_Standalone || Controller->GetNetMode() == NM_ListenServer)
+	{
+		return true;
+	}
+	const AFGPlayerState* State = Cast<AFGPlayerState>(Controller->PlayerState);
+	return State && State->IsServerAdmin();
+}
+
 FString UTSRemoteCallObject::GetRequesterName() const
 {
 	const APlayerController* Controller = GetOwnerPlayerController();
@@ -50,8 +82,7 @@ bool UTSRemoteCallObject::MayEdit(const ATSBuildableScreen* Screen)
 	{
 		return true;
 	}
-	const APlayerController* Controller = GetOwnerPlayerController();
-	if (Screen->GetNetMode() == NM_DedicatedServer || (Controller && Controller->IsLocalController()))
+	if (IsHostOrAdmin(GetOwnerPlayerController()))
 	{
 		return true;
 	}
@@ -59,17 +90,72 @@ bool UTSRemoteCallObject::MayEdit(const ATSBuildableScreen* Screen)
 	return false;
 }
 
+bool UTSRemoteCallObject::MayUseMode(const ATSBuildableScreen* Screen, ETSScreenMode Mode)
+{
+	const APlayerController* Controller = GetOwnerPlayerController();
+	if (!Screen || !Controller)
+	{
+		return false;
+	}
+	const bool bHost = IsHostOrAdmin(Controller);
+	const TCHAR* What = Mode == ETSScreenMode::Window ? TEXT("share a window") : TEXT("use the browser");
+	if (Mode == ETSScreenMode::Browser && !UTSConfig::GetBool(Screen, UTSConfig::AllowBrowserKey, true))
+	{
+		Client_Notice(TEXT("The built-in browser is turned off on this world."));
+		return false;
+	}
+	const ETSRole Role = ETSRole(FMath::Clamp(UTSConfig::GetInt(Screen, Mode == ETSScreenMode::Window ? UTSConfig::WindowRoleKey : UTSConfig::BrowserRoleKey,
+		Mode == ETSScreenMode::Window ? int32(ETSRole::Trusted) : int32(ETSRole::Everyone)), 0, 2));
+	const bool bTrusted = bHost || UTSConfig::IsTrustedPlayer(Screen, GetRequesterName());
+	if ((Role == ETSRole::Trusted && !bTrusted) || (Role == ETSRole::HostAndAdmins && !bHost))
+	{
+		Client_Notice(FString::Printf(TEXT("Only %s can %s on this world."), Role == ETSRole::Trusted ? TEXT("trusted players") : TEXT("the host"), What));
+		return false;
+	}
+	const bool bSomeoneElse = Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->GetController() && Screen->GetController() != Controller->PlayerState;
+	if (bSomeoneElse && !bHost && !UTSConfig::GetBool(Screen, UTSConfig::AllowTakeOverKey, true))
+	{
+		Client_Notice(FString::Printf(TEXT("%s is using this screen; wait until they stop."), *Screen->GetControllerName()));
+		return false;
+	}
+	if (Screen->GetMode() == ETSScreenMode::SyncedMedia)
+	{
+		int32 InUse = 0;
+		for (TActorIterator<ATSBuildableScreen> It(Screen->GetWorld()); It; ++It)
+		{
+			if (It->GetMode() != ETSScreenMode::SyncedMedia && It->GetController() != Controller->PlayerState)
+			{
+				++InUse;
+			}
+		}
+		const int32 Limit = FMath::Max(1, UTSConfig::GetInt(Screen, UTSConfig::MaxControlledScreensKey, 4));
+		if (InUse >= Limit && !bHost)
+		{
+			Client_Notice(FString::Printf(TEXT("%d screens are already in use on this world; wait until one is free."), InUse));
+			return false;
+		}
+	}
+	return true;
+}
+
+// Validation only rejects messages the mod never sends; a failed check disconnects the player, so ordinary mistakes
+// (too long a link, a long title) are refused in the implementation with a notice instead.
 bool UTSRemoteCallObject::Server_Enqueue_Validate(ATSBuildableScreen* Screen, const FTSMediaItem& Item, bool bPlayNow)
 {
-	return Item.Url.Len() <= MaxUrlLength && Item.Title.Len() <= MaxTitleLength;
+	return FMath::IsFinite(Item.Duration);
 }
 
 void UTSRemoteCallObject::Server_Enqueue_Implementation(ATSBuildableScreen* Screen, const FTSMediaItem& Item, bool bPlayNow)
 {
 	const FString Requester = GetRequesterName();
-	UE_LOG(LogTelescreen, Log, TEXT("Server_Enqueue from %s on %s: %s"), *Requester, *GetNameSafe(Screen), *Item.Url);
+	UE_LOG(LogTelescreen, Log, TEXT("Server_Enqueue from %s on %s: %s"), *Requester, *GetNameSafe(Screen), *Item.Url.Left(300));
 	if (!MayEdit(Screen))
 	{
+		return;
+	}
+	if (Item.Url.Len() > MaxUrlLength)
+	{
+		Client_Notice(TEXT("That link is too long."));
 		return;
 	}
 	const FString Url = Item.Url.TrimStartAndEnd();
@@ -105,6 +191,7 @@ void UTSRemoteCallObject::Server_Enqueue_Implementation(ATSBuildableScreen* Scre
 
 	FTSMediaItem Accepted = Item;
 	Accepted.Url = Url;
+	Accepted.Title = Item.Title.Left(MaxTitleLength);
 	Accepted.AddedBy = Requester;
 	Accepted.Duration = FMath::Max(0.f, Accepted.Duration);
 	Screen->Server_Enqueue(Accepted, bPlayNow);
@@ -127,40 +214,48 @@ void UTSRemoteCallObject::Server_MediaCommand_Implementation(ATSBuildableScreen*
 
 bool UTSRemoteCallObject::Server_SetScreenSettings_Validate(ATSBuildableScreen* Screen, const FString& Name, ETSAspectMode AspectMode)
 {
-	return Name.Len() <= MaxNameLength && uint8(AspectMode) <= uint8(ETSAspectMode::Stretch);
+	return uint8(AspectMode) <= uint8(ETSAspectMode::Stretch);
 }
 
 void UTSRemoteCallObject::Server_SetScreenSettings_Implementation(ATSBuildableScreen* Screen, const FString& Name, ETSAspectMode AspectMode)
 {
-	UE_LOG(LogTelescreen, Log, TEXT("Server_SetScreenSettings from %s on %s: \"%s\", aspect %d"), *GetRequesterName(), *GetNameSafe(Screen), *Name,
+	UE_LOG(LogTelescreen, Log, TEXT("Server_SetScreenSettings from %s on %s: \"%s\", aspect %d"), *GetRequesterName(), *GetNameSafe(Screen), *Name.Left(MaxNameLength),
 		int32(AspectMode));
 	if (MayEdit(Screen))
 	{
-		Screen->Server_SetScreenSettings(Name, AspectMode);
+		Screen->Server_SetScreenSettings(Name.Left(MaxNameLength), AspectMode);
 	}
 }
 
 bool UTSRemoteCallObject::Server_TakeControl_Validate(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)
 {
-	return uint8(Mode) <= uint8(ETSScreenMode::Browser) && Url.Len() <= MaxUrlLength;
+	return uint8(Mode) <= uint8(ETSScreenMode::Window);
 }
 
 void UTSRemoteCallObject::Server_TakeControl_Implementation(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)
 {
 	APlayerController* Controller = GetOwnerPlayerController();
-	UE_LOG(LogTelescreen, Log, TEXT("Server_TakeControl from %s on %s: mode %d, %s"), *GetRequesterName(), *GetNameSafe(Screen), int32(Mode), *Url);
+	UE_LOG(LogTelescreen, Log, TEXT("Server_TakeControl from %s on %s: mode %d, %s"), *GetRequesterName(), *GetNameSafe(Screen), int32(Mode), *Url.Left(300));
 	if (!Screen || !Controller || !Controller->PlayerState || Mode == ETSScreenMode::SyncedMedia)
 	{
 		return;
 	}
-	if (Mode == ETSScreenMode::Browser && !UTSConfig::GetBool(Screen, UTSConfig::AllowBrowserKey, true))
+	if (Url.Len() > MaxUrlLength)
 	{
-		Client_Notice(TEXT("The built-in browser is turned off on this world."));
+		Client_Notice(TEXT("That address is too long."));
 		return;
 	}
-	if (!MayEdit(Screen))
+	if (!MayUseMode(Screen, Mode))
 	{
 		return;
+	}
+	// One screen per player: their other screen goes back to its videos.
+	for (TActorIterator<ATSBuildableScreen> It(Screen->GetWorld()); It; ++It)
+	{
+		if (*It != Screen && It->GetMode() != ETSScreenMode::SyncedMedia && It->GetController() == Controller->PlayerState)
+		{
+			It->Server_ReleaseControl(TEXT("controller moved to another screen"));
+		}
 	}
 	Screen->Server_TakeControl(Controller->PlayerState, Mode, Url.TrimStartAndEnd());
 }
@@ -178,22 +273,22 @@ void UTSRemoteCallObject::Server_ReleaseControl_Implementation(ATSBuildableScree
 		return;
 	}
 	const bool bIsController = Screen->GetController() == Controller->PlayerState;
-	const bool bIsHost = Controller->IsLocalController() && Screen->GetNetMode() != NM_DedicatedServer;
+	const bool bIsHost = IsHostOrAdmin(Controller);
 	if (bIsController || bIsHost)
 	{
-		Screen->Server_ReleaseControl(bIsController ? TEXT("controller stopped") : TEXT("host stopped it"));
+		Screen->Server_ReleaseControl(bIsController ? TEXT("controller stopped") : *FString::Printf(TEXT("stopped by %s"), *GetRequesterName()));
 	}
 }
 
 bool UTSRemoteCallObject::Server_StreamChunk_Validate(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
 {
-	return Chunk.Data.Num() <= MaxChunkBytes && Chunk.Count >= 1 && Chunk.Count <= 256 && Chunk.Index < Chunk.Count && Chunk.Kind <= 1;
+	return Chunk.Data.Num() <= MaxChunkBytes && Chunk.Count >= 1 && Chunk.Count <= MaxChunksPerPacket && Chunk.Index < Chunk.Count && Chunk.Kind <= 1;
 }
 
 void UTSRemoteCallObject::Server_StreamChunk_Implementation(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
 {
 	const APlayerController* Sender = GetOwnerPlayerController();
-	if (!Screen || !Sender || Screen->GetMode() != ETSScreenMode::Browser || Screen->GetController() != Sender->PlayerState || Screen->IsCurtainOn() ||
+	if (!Screen || !Sender || Screen->GetMode() == ETSScreenMode::SyncedMedia || Screen->GetController() != Sender->PlayerState || Screen->IsCurtainOn() ||
 		Screen->GetWatchers().Num() == 0 || !UTSConfig::GetBool(Screen, UTSConfig::AllowStreamingKey, true))
 	{
 		return;
@@ -276,7 +371,11 @@ bool UTSRemoteCallObject::Server_RequestKeyframe_Validate(ATSBuildableScreen* Sc
 
 void UTSRemoteCallObject::Server_RequestKeyframe_Implementation(ATSBuildableScreen* Screen)
 {
-	SendKeyframeRequest(Screen);
+	const APlayerController* Viewer = GetOwnerPlayerController();
+	if (Screen && Viewer && Screen->GetWatchers().Contains(Viewer) && Screen->Server_AllowKeyframeRequest())
+	{
+		SendKeyframeRequest(Screen);
+	}
 }
 
 void UTSRemoteCallObject::Client_RequestKeyframe_Implementation(ATSBuildableScreen* Screen)

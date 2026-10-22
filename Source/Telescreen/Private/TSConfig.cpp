@@ -34,6 +34,14 @@ const FString UTSConfig::ReceiveStreamsKey = TEXT("ReceiveStreams");
 const FString UTSConfig::CurtainKeyKey = TEXT("CurtainKey");
 const FString UTSConfig::StreamDisclaimerKey = TEXT("StreamDisclaimerAccepted");
 const FString UTSConfig::AllowBrowserKey = TEXT("AllowBrowser");
+const FString UTSConfig::BrowserRoleKey = TEXT("BrowserRole");
+const FString UTSConfig::WindowRoleKey = TEXT("WindowRole");
+const FString UTSConfig::TrustedPlayersKey = TEXT("TrustedPlayers");
+const FString UTSConfig::AllowTakeOverKey = TEXT("AllowTakeOver");
+const FString UTSConfig::MaxControlledScreensKey = TEXT("MaxControlledScreens");
+const FString UTSConfig::WindowAudioKey = TEXT("WindowAudio");
+const FString UTSConfig::WindowCursorKey = TEXT("WindowCursor");
+const FString UTSConfig::WindowDisclaimerKey = TEXT("WindowDisclaimerAccepted");
 const FString UTSConfig::BrowserHomeKey = TEXT("BrowserHome");
 const FString UTSConfig::KeepBrowserLoginsKey = TEXT("KeepBrowserLogins");
 const FString UTSConfig::FocusKeyKey = TEXT("FocusKey");
@@ -89,7 +97,7 @@ UTSConfig::UTSConfig()
 {
 	ConfigId = MakeConfigId();
 	DisplayName = LOCTEXT("ConfigName", "Telescreen");
-	Description = LOCTEXT("ConfigDescription", "Screens for synced videos, browsers, windows and remote desktops.");
+	Description = LOCTEXT("ConfigDescription", "Screens for synced videos, a built-in browser and shared windows.");
 	RootSection = CreateDefaultSubobject<UConfigPropertySection>(TEXT("RootSection"));
 
 	auto AddSection = [this](const FString& Key, const FText& Name) -> UConfigPropertySection*
@@ -152,7 +160,7 @@ UTSConfig::UTSConfig()
 	AddString(BrowserSection, BrowserHomeKey, LOCTEXT("BrowserHome", "Browser start page"),
 		LOCTEXT("BrowserHomeTip", "Page the built-in browser opens when you start it without a link."), TEXT("https://duckduckgo.com"));
 	AddBool(BrowserSection, KeepBrowserLoginsKey, LOCTEXT("KeepBrowserLogins", "Keep browser logins"),
-		LOCTEXT("KeepBrowserLoginsTip", "Remember sign-ins and cookies between sessions. Off: every browser starts clean. Once streaming arrives, anything you're signed in to is visible on the screen."), false);
+		LOCTEXT("KeepBrowserLoginsTip", "Remember sign-ins and cookies between sessions. Off: every browser starts clean. Anything you're signed in to is visible to players watching the screen."), false);
 	AddInt(BrowserSection, StreamKbpsKey, LOCTEXT("StreamKbps", "Stream quality (kbps)"),
 		LOCTEXT("StreamKbpsTip", "Video bitrate when you share your browser with other players. 2500 is sharp at 720p; lower it if your upload is slow."), 2500);
 	AddInt(BrowserSection, StreamFpsKey, LOCTEXT("StreamFps", "Stream frame rate"),
@@ -163,6 +171,12 @@ UTSConfig::UTSConfig()
 		LOCTEXT("CurtainKeyTip", "Blanks your shared browser for everyone (you still see it) and back. Key name, e.g. F10."), TEXT("F10"));
 	AddBool(BrowserSection, StreamDisclaimerKey, LOCTEXT("StreamDisclaimer", "I understand that shared browsers are visible to everyone"),
 		LOCTEXT("StreamDisclaimerTip", "Set when you accept the sharing notice the first time you open the browser. Turn it off to see the notice again."), false);
+	AddBool(BrowserSection, WindowAudioKey, LOCTEXT("WindowAudio", "Share a window's sound"),
+		LOCTEXT("WindowAudioTip", "Send the shared window's own sound to the screen (needs Windows 11 or Windows 10 21H2 and later). You keep hearing it from the window itself."), true);
+	AddBool(BrowserSection, WindowCursorKey, LOCTEXT("WindowCursor", "Show the mouse in a shared window"),
+		LOCTEXT("WindowCursorTip", "Include your mouse pointer in the picture of a shared window."), true);
+	AddBool(BrowserSection, WindowDisclaimerKey, LOCTEXT("WindowDisclaimer", "I understand that shared windows are visible to everyone"),
+		LOCTEXT("WindowDisclaimerTip", "Set when you accept the notice the first time you share a window. Turn it off to see it again."), false);
 	AddString(BrowserSection, FocusKeyKey, LOCTEXT("FocusKey", "Window focus key"),
 		LOCTEXT("FocusKeyTip", "Switches the screen window between using the browser (mouse and keyboard go to it) and playing (the window stays as a picture). Key name, e.g. F8."), TEXT("F8"));
 	AddString(BrowserSection, ScreensListKeyKey, LOCTEXT("ScreensListKey", "Screens list key"),
@@ -183,7 +197,7 @@ UTSConfig::UTSConfig()
 
 	UConfigPropertySection* Hosting = AddSection(TEXT("Hosting"), LOCTEXT("Hosting", "When hosting"));
 	AddInt(Hosting, QueuePolicyKey, LOCTEXT("QueuePolicy", "Who can change screen videos"),
-		LOCTEXT("QueuePolicyTip", "0: anyone; 1: only the host. Applies to worlds this PC hosts; no effect on dedicated servers yet."), int32(ETSQueuePolicy::Anyone));
+		LOCTEXT("QueuePolicyTip", "0: anyone; 1: only the host (on a dedicated server: its admins)."), int32(ETSQueuePolicy::Anyone));
 	AddString(Hosting, AllowedSitesKey, LOCTEXT("AllowedSites", "Allowed sites"),
 		LOCTEXT("AllowedSitesTip", "Comma-separated sites videos can be added from. Also used by the privacy setting above."), DefaultAllowedSites);
 	AddBool(Hosting, AllowAnySiteKey, LOCTEXT("AllowAnySite", "Allow videos from any site"),
@@ -194,6 +208,18 @@ UTSConfig::UTSConfig()
 		LOCTEXT("MaxStreamKbpsTip", "The server drops stream data above this rate."), 8000);
 	AddBool(Hosting, AllowBrowserKey, LOCTEXT("AllowBrowser", "Allow the built-in browser"),
 		LOCTEXT("AllowBrowserTip", "Let players use the built-in browser on screens."), true);
+	AddInt(Hosting, BrowserRoleKey, LOCTEXT("BrowserRole", "Who can use the browser"),
+		LOCTEXT("BrowserRoleTip", "0: everyone; 1: trusted players (list below) and the host; 2: only the host (on a dedicated server: its admins)."),
+		int32(ETSRole::Everyone));
+	AddInt(Hosting, WindowRoleKey, LOCTEXT("WindowRole", "Who can share a window"),
+		LOCTEXT("WindowRoleTip", "Sharing a window shows something from that player's desktop to everyone. 0: everyone; 1: trusted players and the host; 2: only the host or admins."),
+		int32(ETSRole::Trusted));
+	AddString(Hosting, TrustedPlayersKey, LOCTEXT("TrustedPlayers", "Trusted players"),
+		LOCTEXT("TrustedPlayersTip", "Comma-separated player names for the \"trusted players\" choices above."), FString());
+	AddBool(Hosting, AllowTakeOverKey, LOCTEXT("AllowTakeOver", "Players can take over a screen in use"),
+		LOCTEXT("AllowTakeOverTip", "Off: only the player using a screen (or the host and admins) can stop it; others wait until it's free."), true);
+	AddInt(Hosting, MaxControlledScreensKey, LOCTEXT("MaxControlledScreens", "Screens in use at once"),
+		LOCTEXT("MaxControlledScreensTip", "Most screens showing a browser or window at the same time in this world. Each player uses one at a time."), 4);
 	AddInt(Hosting, MaxVideoMinutesKey, LOCTEXT("MaxVideoMinutes", "Longest video (minutes)"),
 		LOCTEXT("MaxVideoMinutesTip", "Reject longer videos. 0 means no limit."), 0);
 	AddInt(Hosting, QueueAddsPerMinuteKey, LOCTEXT("QueueAddsPerMinute", "Videos a player can add per minute"),
@@ -249,6 +275,9 @@ namespace
 			{UTSConfig::MaxStreamKbpsKey, {500.f, 100000.f}},
 			{UTSConfig::PipCornerKey, {0.f, 3.f}},
 			{UTSConfig::QueuePolicyKey, {0.f, 1.f}},
+			{UTSConfig::BrowserRoleKey, {0.f, 2.f}},
+			{UTSConfig::WindowRoleKey, {0.f, 2.f}},
+			{UTSConfig::MaxControlledScreensKey, {1.f, 64.f}},
 			{UTSConfig::MaxVideoMinutesKey, {0.f, 100000.f}},
 			{UTSConfig::QueueAddsPerMinuteKey, {1.f, 1000.f}},
 		};
@@ -362,16 +391,44 @@ bool UTSConfig::IsAllowedSite(const UObject* WorldContext, const FString& Url)
 	{
 		return false;
 	}
-	FString Host = Rest;
-	Rest.Split(TEXT("/"), &Host, nullptr);
+	// The host ends at the first of / ? # and drops any user@ part and :port.
+	int32 End = Rest.Len();
+	for (const TCHAR* Stop : {TEXT("/"), TEXT("?"), TEXT("#"), TEXT("\\")})
+	{
+		const int32 At = Rest.Find(Stop);
+		if (At != INDEX_NONE)
+		{
+			End = FMath::Min(End, At);
+		}
+	}
+	FString Host = Rest.Left(End);
+	Host.Split(TEXT("@"), nullptr, &Host, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
 	Host.Split(TEXT(":"), &Host, nullptr);
 	Host = Host.ToLower();
+	if (Host.IsEmpty())
+	{
+		return false;
+	}
 	TArray<FString> Sites;
 	GetString(WorldContext, AllowedSitesKey, DefaultAllowedSites).ParseIntoArray(Sites, TEXT(","));
 	for (FString Site : Sites)
 	{
 		Site = Site.TrimStartAndEnd().ToLower();
 		if (!Site.IsEmpty() && (Host == Site || Host.EndsWith(TEXT(".") + Site)))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UTSConfig::IsTrustedPlayer(const UObject* WorldContext, const FString& PlayerName)
+{
+	TArray<FString> Names;
+	GetString(WorldContext, TrustedPlayersKey, FString()).ParseIntoArray(Names, TEXT(","));
+	for (const FString& Name : Names)
+	{
+		if (!PlayerName.IsEmpty() && Name.TrimStartAndEnd().Equals(PlayerName, ESearchCase::IgnoreCase))
 		{
 			return true;
 		}
