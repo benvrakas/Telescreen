@@ -366,6 +366,11 @@ void UTSHostSubsystem::StopHost(const TCHAR* Reason)
 		Pair.Value(Failed);
 	}
 	PendingProbes.Reset();
+	for (auto& Pair : PendingWindowLists)
+	{
+		Pair.Value(TArray<FTSWindowInfo>());
+	}
+	PendingWindowLists.Reset();
 }
 
 void UTSHostSubsystem::Tick(float DeltaTime)
@@ -525,6 +530,29 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		}
 		break;
 	}
+	case EMsg::WindowList:
+	{
+		const uint32 Request = R.U32();
+		const uint32 Count = R.U32();
+		TArray<FTSWindowInfo> Windows;
+		for (uint32 I = 0; I < Count && R.bOk && I < 1000; ++I)
+		{
+			FTSWindowInfo& Info = Windows.AddDefaulted_GetRef();
+			const uint32 Low = R.U32();
+			const uint32 High = R.U32();
+			Info.Window = uint64(Low) | (uint64(High) << 32);
+			Info.ProcessId = R.U32();
+			Info.Title = R.Str();
+			Info.Exe = R.Str();
+		}
+		TFunction<void(const TArray<FTSWindowInfo>&)> OnDone;
+		if (R.bOk && PendingWindowLists.RemoveAndCopyValue(Request, OnDone))
+		{
+			UE_LOG(LogTelescreen, Log, TEXT("Host: %d shareable windows"), Windows.Num());
+			OnDone(Windows);
+		}
+		break;
+	}
 	case EMsg::ProbeResult:
 	{
 		const uint32 Request = R.U32();
@@ -674,6 +702,42 @@ void UTSHostSubsystem::SendStreamControl(uint32 Session, EStreamControl Command,
 	W.U8(uint8(Command));
 	W.U32(Value);
 	Send(EMsg::StreamControl, W.Bytes);
+}
+
+uint32 UTSHostSubsystem::OpenWindow(uint64 Window, bool bCursor, bool bAudio, uint32 MaxWidth, uint32 MaxHeight, ITSHostSessionListener* Listener)
+{
+	if (!EnsureConnected())
+	{
+		return 0;
+	}
+	const uint32 Session = NextSessionId++;
+	Listeners.Add(Session, Listener);
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.U32(uint32(Window & 0xFFFFFFFFull));
+	W.U32(uint32(Window >> 32));
+	W.U8(bCursor ? 1 : 0);
+	W.U8(bAudio ? 1 : 0);
+	W.U32(MaxWidth);
+	W.U32(MaxHeight);
+	Send(EMsg::OpenWindow, W.Bytes);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u shares window %llx (cursor %d, sound %d, max %ux%u)"), Session, Window, int32(bCursor), int32(bAudio), MaxWidth,
+		MaxHeight);
+	return Session;
+}
+
+void UTSHostSubsystem::ListWindows(TFunction<void(const TArray<FTSWindowInfo>&)> OnDone)
+{
+	if (!EnsureConnected())
+	{
+		OnDone(TArray<FTSWindowInfo>());
+		return;
+	}
+	const uint32 Request = NextWindowListId++;
+	PendingWindowLists.Add(Request, MoveTemp(OnDone));
+	FTSPayloadWriter W;
+	W.U32(Request);
+	Send(EMsg::ListWindows, W.Bytes);
 }
 
 uint32 UTSHostSubsystem::OpenLoopback(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener)

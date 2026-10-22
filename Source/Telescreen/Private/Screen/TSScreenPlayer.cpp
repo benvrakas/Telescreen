@@ -296,7 +296,7 @@ void UTSScreenPlayer::Reconcile()
 		return;
 	}
 
-	if (Screen->GetMode() == ETSScreenMode::Browser)
+	if (Screen->GetMode() != ETSScreenMode::SyncedMedia)
 	{
 		BlockedReason = FText::GetEmpty();
 		if (!Screen->IsLocallyControlled())
@@ -304,14 +304,22 @@ void UTSScreenPlayer::Reconcile()
 			ReconcileViewer(Screen);
 			return;
 		}
-		const FString Key = TEXT("browser|") + Screen->GetSourceUrl();
+		const bool bWindow = Screen->GetMode() == ETSScreenMode::Window;
+		const FString Key = (bWindow ? TEXT("window|") : TEXT("browser|")) + Screen->GetSourceUrl();
 		WantedKey = Key;
 		if (Session != 0 && Key == SessionKey)
 		{
 			return;
 		}
 		CloseSession();
-		OpenBrowserSession();
+		if (bWindow)
+		{
+			OpenWindowSession();
+		}
+		else
+		{
+			OpenBrowserSession();
+		}
 		return;
 	}
 
@@ -426,19 +434,63 @@ void UTSScreenPlayer::OpenBrowserSession()
 	SetStatus(Title, LOCTEXT("BrowserStarting", "Starting the browser..."));
 }
 
-FIntPoint UTSScreenPlayer::ToBrowserPixels(const FVector2D& Position) const
+FIntPoint UTSScreenPlayer::ToSourcePixels(const FVector2D& Position) const
 {
-	return FIntPoint(FMath::Clamp(int32(Position.X * BrowserSize.X), 0, BrowserSize.X - 1), FMath::Clamp(int32(Position.Y * BrowserSize.Y), 0, BrowserSize.Y - 1));
+	if (ShownTexWidth <= 0 || ShownWidth <= 0)
+	{
+		return FIntPoint(FMath::Clamp(int32(Position.X * BrowserSize.X), 0, BrowserSize.X - 1), FMath::Clamp(int32(Position.Y * BrowserSize.Y), 0, BrowserSize.Y - 1));
+	}
+	// Texture pixel -> picture pixel, undoing the letterbox offset or fill crop.
+	const int32 X = int32(Position.X * ShownTexWidth) - ShownDstX + ShownSrcX;
+	const int32 Y = int32(Position.Y * ShownTexHeight) - ShownDstY + ShownSrcY;
+	return FIntPoint(FMath::Clamp(X, 0, ShownWidth - 1), FMath::Clamp(Y, 0, ShownHeight - 1));
+}
+
+FText UTSScreenPlayer::GetControllerTitle() const
+{
+	const ATSBuildableScreen* Screen = GetScreen();
+	const FText Name = FText::FromString(Screen ? Screen->GetControllerName() : FString());
+	return Screen && Screen->GetMode() == ETSScreenMode::Window ? FText::Format(LOCTEXT("OtherWindow", "{0} is sharing a window"), Name)
+															   : FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), Name);
+}
+
+void UTSScreenPlayer::OpenWindowSession()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	const FText Title = LOCTEXT("YourWindow", "Your shared window");
+	if (!Host || !Host->EnsureConnected())
+	{
+		SetStatus(Title, Host ? Host->GetUnavailableReason() : LOCTEXT("NoHostWindow", "Telescreen's player isn't available."));
+		return;
+	}
+	const uint64 Window = FCString::Strtoui64(*Screen->GetSourceUrl(), nullptr, 10);
+	if (Window == 0)
+	{
+		SetStatus(Title, LOCTEXT("NoWindowChosen", "No window chosen."));
+		return;
+	}
+	const bool bCursor = UTSConfig::GetBool(this, UTSConfig::WindowCursorKey, true);
+	const bool bAudio = UTSConfig::GetBool(this, UTSConfig::WindowAudioKey, true);
+	Session = Host->OpenWindow(Window, bCursor, bAudio, 1920, 1080, this);
+	if (Session == 0)
+	{
+		SetStatus(Title, Host->GetUnavailableReason());
+		return;
+	}
+	bWindowSession = true;
+	SessionKey = WantedKey;
+	SetStatus(Title, LOCTEXT("WindowStarting", "Starting the capture..."));
 }
 
 void UTSScreenPlayer::BrowserMouseMove(const FVector2D& Position, uint32 Modifiers)
 {
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
-	if (!Host || !HasBrowser())
+	if (!Host || !AcceptsInput())
 	{
 		return;
 	}
-	const FIntPoint P = ToBrowserPixels(Position);
+	const FIntPoint P = ToSourcePixels(Position);
 	FTSPayloadWriter W;
 	W.I32(P.X);
 	W.I32(P.Y);
@@ -449,11 +501,11 @@ void UTSScreenPlayer::BrowserMouseMove(const FVector2D& Position, uint32 Modifie
 void UTSScreenPlayer::BrowserMouseButton(const FVector2D& Position, uint8 Button, bool bUp, int32 ClickCount, uint32 Modifiers)
 {
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
-	if (!Host || !HasBrowser())
+	if (!Host || !AcceptsInput())
 	{
 		return;
 	}
-	const FIntPoint P = ToBrowserPixels(Position);
+	const FIntPoint P = ToSourcePixels(Position);
 	FTSPayloadWriter W;
 	W.I32(P.X);
 	W.I32(P.Y);
@@ -467,11 +519,11 @@ void UTSScreenPlayer::BrowserMouseButton(const FVector2D& Position, uint8 Button
 void UTSScreenPlayer::BrowserWheel(const FVector2D& Position, int32 DeltaX, int32 DeltaY, uint32 Modifiers)
 {
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
-	if (!Host || !HasBrowser())
+	if (!Host || !AcceptsInput())
 	{
 		return;
 	}
-	const FIntPoint P = ToBrowserPixels(Position);
+	const FIntPoint P = ToSourcePixels(Position);
 	FTSPayloadWriter W;
 	W.I32(P.X);
 	W.I32(P.Y);
@@ -484,7 +536,7 @@ void UTSScreenPlayer::BrowserWheel(const FVector2D& Position, int32 DeltaX, int3
 void UTSScreenPlayer::BrowserKey(EKeyType Type, int32 KeyCode, TCHAR Character, uint32 Modifiers)
 {
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
-	if (!Host || !HasBrowser())
+	if (!Host || !AcceptsInput())
 	{
 		return;
 	}
@@ -504,7 +556,7 @@ void UTSScreenPlayer::BrowserKey(EKeyType Type, int32 KeyCode, TCHAR Character, 
 void UTSScreenPlayer::BrowserText(const FString& Text)
 {
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
-	if (Host && HasBrowser() && !Text.IsEmpty())
+	if (Host && AcceptsInput() && !Text.IsEmpty())
 	{
 		FTSPayloadWriter W;
 		W.Str(Text);
@@ -526,7 +578,7 @@ void UTSScreenPlayer::BrowserPointerDelta(int32 DeltaX, int32 DeltaY)
 
 void UTSScreenPlayer::BrowserMouseLeave()
 {
-	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser())
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && AcceptsInput())
 	{
 		Host->SendBrowserInput(Session, EInput::MouseLeave, TArray<uint8>());
 	}
@@ -534,7 +586,7 @@ void UTSScreenPlayer::BrowserMouseLeave()
 
 void UTSScreenPlayer::BrowserFocus(bool bFocused)
 {
-	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser())
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && AcceptsInput())
 	{
 		FTSPayloadWriter W;
 		W.U8(bFocused ? 1 : 0);
@@ -570,7 +622,7 @@ UTSRemoteCallObject* UTSScreenPlayer::FindRemoteCallObject() const
 void UTSScreenPlayer::UpdateStreamSender()
 {
 	ATSBuildableScreen* Screen = GetScreen();
-	const bool bWant = Screen && bBrowserSession && Session != 0 && Screen->GetMode() == ETSScreenMode::Browser && Screen->IsLocallyControlled() &&
+	const bool bWant = Screen && (bBrowserSession || bWindowSession) && Session != 0 && Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled() &&
 		Screen->GetViewerCount() > 0 && !Screen->IsCurtainOn();
 	if (SenderSession != 0 && (!bWant || SenderSource != Session))
 	{
@@ -604,7 +656,7 @@ void UTSScreenPlayer::OpenStreamSender()
 	NextPacketId[0] = NextPacketId[1] = 0;
 	StreamStats = FText::GetEmpty();
 	TSNetRate::Raise(GetWorld(), TSNetRate::StreamRate);
-	UE_LOG(LogTelescreen, Log, TEXT("%s: streaming my browser to %d viewer(s) at %u fps, %u kbps"), *GetNameSafe(GetOwner()), GetScreen() ? GetScreen()->GetViewerCount() : 0,
+	UE_LOG(LogTelescreen, Log, TEXT("%s: streaming my source to %d viewer(s) at %u fps, %u kbps"), *GetNameSafe(GetOwner()), GetScreen() ? GetScreen()->GetViewerCount() : 0,
 		Fps, Kbps);
 }
 
@@ -618,7 +670,7 @@ void UTSScreenPlayer::CloseStreamSender()
 	{
 		Host->CloseSession(SenderSession);
 	}
-	UE_LOG(LogTelescreen, Log, TEXT("%s: stopped streaming my browser"), *GetNameSafe(GetOwner()));
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stopped streaming my source"), *GetNameSafe(GetOwner()));
 	SenderSession = 0;
 	SenderSource = 0;
 	ClearStreamQueue();
@@ -781,7 +833,7 @@ void UTSScreenPlayer::AdaptBitrate()
 
 void UTSScreenPlayer::ReconcileViewer(ATSBuildableScreen* Screen)
 {
-	const FText Title = FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), FText::FromString(Screen->GetControllerName()));
+	const FText Title = GetControllerTitle();
 	if (Screen->IsCurtainOn())
 	{
 		WantedKey.Reset();
@@ -1001,6 +1053,8 @@ void UTSScreenPlayer::CloseSession()
 	}
 	bShowingVideo = false;
 	bBrowserSession = false;
+	bWindowSession = false;
+	ShownTexWidth = ShownWidth = 0;
 }
 
 void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -1099,21 +1153,21 @@ void UTSScreenPlayer::RankActivity()
 	auto Wants = [&](const UTSScreenPlayer* Player, double& OutDistance)
 	{
 		const ATSBuildableScreen* S = Player->GetScreen();
-		if (!S || (!S->GetMediaState().GetCurrent() && S->GetMode() != ETSScreenMode::Browser))
+		if (!S || (!S->GetMediaState().GetCurrent() && S->GetMode() == ETSScreenMode::SyncedMedia))
 		{
 			return false;
 		}
 		OutDistance = FVector::Dist(Viewer, S->GetActorLocation());
 		return OutDistance <= MaxDistance;
 	};
-	if (Screen->GetMode() == ETSScreenMode::Browser && Screen->IsLocallyControlled())
+	if (Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled())
 	{
 		bActive = true;
 		return;
 	}
 	if (bPinned)
 	{
-		bActive = Screen->GetMode() == ETSScreenMode::Browser || Screen->GetMediaState().GetCurrent() != nullptr;
+		bActive = Screen->GetMode() != ETSScreenMode::SyncedMedia || Screen->GetMediaState().GetCurrent() != nullptr;
 		return;
 	}
 	double MyDistance = 0.0;
@@ -1149,6 +1203,14 @@ void UTSScreenPlayer::PumpVideo()
 	// The browser renders at the screen's shape, so it (and its stream) fills the screen exactly.
 	const bool bScreenShaped = bBrowserSession || (bStreamReceiver && Screen->GetMode() == ETSScreenMode::Browser);
 	const FFit Fit = ComputeFit(Width, Height, Aspect, bScreenShaped ? ETSAspectMode::Stretch : Screen->GetAspectMode());
+	ShownTexWidth = Fit.TexWidth;
+	ShownTexHeight = Fit.TexHeight;
+	ShownSrcX = Fit.SrcX;
+	ShownSrcY = Fit.SrcY;
+	ShownDstX = Fit.DstX;
+	ShownDstY = Fit.DstY;
+	ShownWidth = Width;
+	ShownHeight = Height;
 	const bool bMirrorX = UTSConfig::GetBool(this, UTSConfig::MirrorXKey, false);
 	const bool bMirrorY = UTSConfig::GetBool(this, UTSConfig::MirrorYKey, false);
 
@@ -1306,7 +1368,11 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	FText Title = Item ? FText::FromString(Item->GetDisplayTitle()) : FText::GetEmpty();
 	if (bStreamReceiver && Screen)
 	{
-		Title = FText::Format(LOCTEXT("OtherBrowser", "{0} is using the browser"), FText::FromString(Screen->GetControllerName()));
+		Title = GetControllerTitle();
+	}
+	else if (bWindowSession)
+	{
+		Title = LOCTEXT("YourWindow", "Your shared window");
 	}
 	if (State != HostState)
 	{
@@ -1321,6 +1387,25 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	else if (bStreamReceiver && State == ESessionState::Playing && !Message.IsEmpty())
 	{
 		StreamStats = FText::FromString(Message);
+	}
+	if (bWindowSession && !Message.IsEmpty() && (State == ESessionState::Error || State == ESessionState::Buffering))
+	{
+		SetStatus(Title, FText::FromString(Message));
+		// Minimised: the controller sees why the picture stopped (viewers keep the last frame) until frames return.
+		bShowingVideo = false;
+		ShowStatus();
+		if (State == ESessionState::Error)
+		{
+			// The window closed or can't be captured: give the screen back.
+			bShowingVideo = false;
+			ShowStatus();
+			UTSRemoteCallObject::OnNotice.Broadcast(FText::FromString(Message));
+			if (UTSRemoteCallObject* RCO = FindRemoteCallObject(); RCO && Screen)
+			{
+				RCO->Server_ReleaseControl(Screen);
+			}
+		}
+		return;
 	}
 	switch (State)
 	{

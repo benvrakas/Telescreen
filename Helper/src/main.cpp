@@ -7,6 +7,8 @@
 #include "StreamSession.h"
 #include "MediaSession.h"
 #include "Pipe.h"
+#include "Taps.h"
+#include "WindowSession.h"
 #include "YtDlp.h"
 
 #include <algorithm>
@@ -37,6 +39,7 @@ namespace
 		bool SelfTestLocal = false;
 		bool SelfTestBrowser = false;
 		bool SelfTestStream = false;
+		bool SelfTestWindow = false;
 		double LossPercent = 0.0;
 		FEncodeBenchArgs Bench;
 		bool bBench = false;
@@ -57,6 +60,7 @@ namespace
 			else if (Key == L"--browserdata") Args.BrowserData = Value;
 			else if (Key == L"--selftest-browser") { Args.SelfTest = Narrow(Value); Args.SelfTestBrowser = true; }
 			else if (Key == L"--selftest-stream") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; }
+			else if (Key == L"--selftest-window") { Args.SelfTest = Narrow(Value); Args.SelfTestWindow = true; }
 			else if (Key == L"--loss") Args.LossPercent = _wtof(Value.c_str());
 			else if (Key == L"--parent") Args.Parent = wcstoul(Value.c_str(), nullptr, 10);
 			else if (Key == L"--selftest") Args.SelfTest = Narrow(Value);
@@ -315,6 +319,48 @@ namespace
 				Sessions[Params.SessionId] = std::make_unique<FBrowserSession>(Params, Events);
 				break;
 			}
+			case EMsg::OpenWindow:
+			{
+				FWindowParams Params;
+				Params.SessionId = R.U32();
+				const uint32_t Low = R.U32();
+				const uint32_t High = R.U32();
+				Params.Window = uint64_t(Low) | (uint64_t(High) << 32);
+				Params.bCursor = R.U8() != 0;
+				Params.bAudio = R.U8() != 0;
+				Params.MaxWidth = std::clamp<uint32_t>(R.U32(), 320, 3840);
+				Params.MaxHeight = std::clamp<uint32_t>(R.U32(), 180, 2160);
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto Existing = Sessions.find(Params.SessionId);
+				if (Existing != Sessions.end())
+				{
+					Retire(std::move(Existing->second));
+					Sessions.erase(Existing);
+				}
+				Sessions[Params.SessionId] = std::make_unique<FWindowSession>(Params, Events);
+				break;
+			}
+			case EMsg::ListWindows:
+			{
+				const uint32_t Request = R.U32();
+				if (!R.Ok) break;
+				const std::vector<FWindowInfo> Windows = ListShareableWindows(Args.Parent);
+				FPayloadWriter W;
+				W.U32(Request);
+				W.U32(uint32_t(Windows.size()));
+				for (const FWindowInfo& Info : Windows)
+				{
+					W.U32(uint32_t(Info.Window & 0xFFFFFFFFu));
+					W.U32(uint32_t(Info.Window >> 32));
+					W.U32(Info.ProcessId);
+					W.Str(Info.Title);
+					W.Str(Info.Exe);
+				}
+				LOG_INFO("listed %zu shareable windows", Windows.size());
+				Pipe.Send(uint16_t(EMsg::WindowList), W.Bytes);
+				break;
+			}
 			case EMsg::OpenLoopback:
 			{
 				FLoopbackParams Params;
@@ -423,6 +469,47 @@ namespace
 
 	// Runs a browser on Args.SelfTest, streams it through a sender and a receiver with LossPercent of the packets dropped,
 	// and reports what arrives.
+	// Shares the first window whose title contains Args.SelfTest for Args.Seconds and reports frames and sound.
+	int RunWindowSelfTest(const FArgs& Args)
+	{
+		const std::vector<FWindowInfo> Windows = ListShareableWindows(0);
+		const FWindowInfo* Pick = nullptr;
+		for (const FWindowInfo& Info : Windows)
+		{
+			LOG_INFO("selftest: window %llx pid %u %s \"%s\"", (unsigned long long)Info.Window, Info.ProcessId, Info.Exe.c_str(), Info.Title.c_str());
+			if (!Pick && Info.Title.find(Args.SelfTest) != std::string::npos) Pick = &Info;
+		}
+		if (!Pick)
+		{
+			LOG_ERROR("selftest: no window title contains \"%s\"", Args.SelfTest.c_str());
+			return 1;
+		}
+		std::atomic<int> Frames{0};
+		std::atomic<int64_t> AudioFrames{0};
+		std::atomic<int> Width{0}, Height{0};
+		const int FrameTap = FrameTaps::Add(9, [&](const uint8_t*, int W, int H) { ++Frames; Width = W; Height = H; });
+		const int AudioTap = AudioTaps::Add(9, [&](const float*, int N) { AudioFrames += N; });
+		FSessionEvents Events;
+		Events.OnVideo = [](uint32_t, uint32_t Generation, uint32_t W, uint32_t H, const std::string&) { LOG_INFO("selftest: video %ux%u (generation %u)", W, H, Generation); };
+		Events.OnState = [](uint32_t, ESessionState State, double, double, const std::string& Message) { LOG_INFO("selftest: state %d %s", int(State), Message.c_str()); };
+		FWindowParams Params;
+		Params.SessionId = 9;
+		Params.Window = Pick->Window;
+		{
+			FWindowSession Session(Params, Events);
+			const double Start = NowSeconds();
+			while (NowSeconds() - Start < Args.Seconds)
+			{
+				Sleep(1000);
+				LOG_INFO("selftest: %d frames (%dx%d), %.1f s of sound so far", Frames.load(), Width.load(), Height.load(), AudioFrames.load() / 48000.0);
+			}
+		}
+		FrameTaps::Remove(FrameTap);
+		AudioTaps::Remove(AudioTap);
+		LOG_INFO("selftest result: %d frames, %.1f s of sound", Frames.load(), AudioFrames.load() / 48000.0);
+		return Frames > 0 ? 0 : 1;
+	}
+
 	int RunStreamSelfTest(const FArgs& Args)
 	{
 		std::string Error;
@@ -863,6 +950,7 @@ int wmain(int Argc, wchar_t** Argv)
 
 	if (Args.bBench) return RunEncodeBench(Args.Bench);
 	if (Args.SelfTestStream) return RunStreamSelfTest(Args);
+	if (Args.SelfTestWindow) return RunWindowSelfTest(Args);
 	if (!Args.SelfTest.empty()) return RunSelfTest(Args);
 	if (Args.Pipe.empty())
 	{

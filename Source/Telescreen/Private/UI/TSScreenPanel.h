@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Host/TSHostSubsystem.h"
 #include "TSTypes.h"
 #include "UI/FGInteractWidget.h"
 #include "TSScreenPanel.generated.h"
@@ -43,6 +44,8 @@ enum class ETSPanelAction : uint8
 	LoopbackToggle,
 	CurtainToggle,
 	HostStop,
+	WindowList,
+	WindowShare,
 };
 
 // Routes one button's click to its panel with the button's action and queue index.
@@ -143,10 +146,26 @@ private:
 	TObjectPtr<UTextBlock> CurtainButtonText;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> HostStopButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> TakeOverButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> StopButtonText;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> WindowSection;
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> WindowListBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> WindowNote;
 
-	// True while the sharing notice is shown and the next press of Open accepts it.
+	// The windows last listed by "Choose a window" (this PC only).
+	TArray<FTSWindowInfo> Windows;
+	void ShowWindowList();
+
+	// True while a sharing notice is shown and the next press of the same button accepts it.
 	bool bDisclaimerPending = false;
+	bool bWindowDisclaimerPending = false;
 	bool AcceptSharingNotice();
+	bool AcceptWindowNotice();
 
 	void RefreshBrowser();
 	FDelegateHandle BrowserStateHandle;

@@ -56,6 +56,15 @@ public:
 	virtual void OnHostStreamPacket(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, TArray<uint8>&& Data) {}
 };
 
+// A window on this PC that can be shared (from the helper's list).
+struct FTSWindowInfo
+{
+	uint64 Window = 0;
+	uint32 ProcessId = 0;
+	FString Title;
+	FString Exe;
+};
+
 struct FTSProbeResult
 {
 	bool bOk = false;
@@ -123,6 +132,13 @@ public:
 	// Command 0: keyframe, 1: bitrate (Value kbps), 2: drop video until the next keyframe.
 	void SendStreamControl(uint32 Session, TSHostProtocol::EStreamControl Command, uint32 Value);
 
+	// Shares a window of this PC (Window from ListWindows); frames larger than MaxWidth x MaxHeight are scaled down.
+	uint32 OpenWindow(uint64 Window, bool bCursor, bool bAudio, uint32 MaxWidth, uint32 MaxHeight, ITSHostSessionListener* Listener);
+
+	// Asks the helper for the windows that can be shared; OnDone runs on the game thread (empty if the helper isn't
+	// running).
+	void ListWindows(TFunction<void(const TArray<FTSWindowInfo>&)> OnDone);
+
 	// M3 test: shows SourceSession's frames after the stream encoder and decoder; returns the new session id.
 	uint32 OpenLoopback(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener);
 
@@ -148,6 +164,8 @@ private:
 	int32 StartAttempts = 0;
 	uint32 NextSessionId = 1;
 	uint32 NextProbeId = 1;
+	uint32 NextWindowListId = 1;
+	TMap<uint32, TFunction<void(const TArray<FTSWindowInfo>&)>> PendingWindowLists;
 	TMap<uint32, ITSHostSessionListener*> Listeners;
 	TMap<uint32, TFunction<void(const FTSProbeResult&)>> PendingProbes;
 	FText LastProblem;

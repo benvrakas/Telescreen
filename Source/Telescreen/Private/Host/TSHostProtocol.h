@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 2;
+	constexpr uint32_t Version = 3;
 
 	enum class EMsg : uint16_t
 	{
@@ -31,6 +31,9 @@ namespace TSHostProtocol
 		OpenStreamReceiver = 18,
 		StreamPacket = 19,
 		StreamControl = 20,
+		OpenWindow = 21,
+		ListWindows = 22,
+		WindowList = 23,
 	};
 
 	// StreamControl commands.

@@ -57,6 +57,12 @@ public:
 
 	// True while this client runs the screen's browser (the local player controls it).
 	bool HasBrowser() const { return bBrowserSession && Session != 0; }
+
+	// True while this client shares one of its windows on the screen.
+	bool HasWindow() const { return bWindowSession && Session != 0; }
+
+	// True if the window's mouse and keyboard can go to this screen's source (the local player's browser or window).
+	bool AcceptsInput() const { return HasBrowser() || HasWindow(); }
 	const FTSBrowserState& GetBrowserState() const { return BrowserState; }
 	FTSOnBrowserStateChanged OnBrowserStateChanged;
 
@@ -94,8 +100,10 @@ private:
 	void Reconcile();
 	void OpenSession(const struct FTSMediaItem& Item);
 	void OpenBrowserSession();
+	void OpenWindowSession();
 	FIntPoint ComputeBrowserSize() const;
-	FIntPoint ToBrowserPixels(const FVector2D& Position) const;
+	FIntPoint ToSourcePixels(const FVector2D& Position) const;
+	FText GetControllerTitle() const;
 	void CloseSession();
 	void PumpVideo();
 	void UpdateAudio();
@@ -133,6 +141,9 @@ private:
 	bool bActive = false;
 	bool bPinned = false;
 	bool bBrowserSession = false;
+	bool bWindowSession = false;
+	// Where the source's picture sits in the shown texture (for mapping window positions back to source pixels).
+	int32 ShownTexWidth = 0, ShownTexHeight = 0, ShownSrcX = 0, ShownSrcY = 0, ShownDstX = 0, ShownDstY = 0, ShownWidth = 0, ShownHeight = 0;
 
 	// Live stream, controller side.
 	uint32 SenderSession = 0;

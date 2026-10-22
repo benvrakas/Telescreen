@@ -1,12 +1,13 @@
 """Tests the live stream path like the mod runs it, without the game.
 
-  python Tools/stream_relay_test.py [url] [seconds] [loss-percent]
+  python Tools/stream_relay_test.py [url | window:<title part>] [seconds] [loss-percent]
 
 Starts the staged TelescreenHost.exe and opens a browser session, a stream sender for it and a stream receiver over the
-pipe. Sender packets are cut into the mod's 768-byte chunks, chunks are dropped at random (the network), and the rest
+pipe (or, for window:<title part>, lists the PC's windows and shares the first matching one). Sender packets are cut into the mod's 768-byte chunks, chunks are dropped at random (the network), and the rest
 are reassembled and passed to the receiver with the mod's loss handling: on a lost video packet the receiver is reset
 to wait for a keyframe, and a keyframe is asked from the sender right away, then every 0.75 s until one arrives.
 """
+import mmap
 import os
 import random
 import struct
@@ -21,6 +22,7 @@ HOST = os.path.join(RUNTIME, 'host', 'TelescreenHost.exe')
 
 HELLO, SESSION_VIDEO, SESSION_AUDIO, SESSION_STATE, SHUTDOWN = 1, 8, 9, 10, 11
 OPEN_BROWSER, OPEN_SENDER, OPEN_RECEIVER, STREAM_PACKET, STREAM_CONTROL = 12, 17, 18, 19, 20
+OPEN_WINDOW, LIST_WINDOWS, WINDOW_LIST = 21, 22, 23
 CONTROL_KEYFRAME, CONTROL_RESET = 0, 2
 BROWSER, SENDER, RECEIVER = 1, 2, 3
 CHUNK = 768
@@ -117,6 +119,23 @@ class Relay:
             self.request_keyframe(False)
 
 
+class AudioConsumer:
+    """Reads the receiver's audio ring at 48 kHz like the game's mixer, so its audio clock runs."""
+
+    def __init__(self, name, capacity):
+        self.map = mmap.mmap(-1, 256 + capacity * 8, tagname=name)
+        self.start = time.time()
+        self.pulled = 0
+
+    def tick(self):
+        due = int((time.time() - self.start) * 48000)
+        write, read, discard = struct.unpack_from('<qqq', self.map, 24)
+        read = max(read, discard)
+        take = max(0, min(due - self.pulled, write - read))
+        struct.pack_into('<q', self.map, 32, read + take)
+        self.pulled = due
+
+
 def main():
     url = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else 'https://www.youtube.com/embed/aqz-KE-bpKQ?autoplay=1'
     seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 20.0
@@ -135,8 +154,33 @@ def main():
             time.sleep(0.1)
     else:
         sys.exit('could not connect')
-    pipe.write(message(HELLO, struct.pack('<I', 2)))
-    pipe.write(message(OPEN_BROWSER, struct.pack('<I', BROWSER) + string(url) + struct.pack('<IIB', 1280, 720, 0) + string('')))
+    pipe.write(message(HELLO, struct.pack('<I', 3)))
+    if url.startswith('window:'):
+        pipe.write(message(LIST_WINDOWS, struct.pack('<I', 1)))
+        while True:
+            size, kind, _ = struct.unpack('<IHH', read_exact(pipe, 8))
+            payload = read_exact(pipe, size)
+            if kind == WINDOW_LIST:
+                break
+        count = struct.unpack_from('<I', payload, 4)[0]
+        pos, chosen = 8, None
+        for _ in range(count):
+            low, high, pid = struct.unpack_from('<III', payload, pos)
+            pos += 12
+            (n,) = struct.unpack_from('<I', payload, pos)
+            title = payload[pos + 4:pos + 4 + n].decode('utf-8', 'replace')
+            pos += 4 + n
+            (n,) = struct.unpack_from('<I', payload, pos)
+            exe = payload[pos + 4:pos + 4 + n].decode('utf-8', 'replace')
+            pos += 4 + n
+            print(f'window {high:08x}{low:08x} {exe} "{title}"')
+            if chosen is None and url[7:] in title:
+                chosen = (low, high)
+        if chosen is None:
+            sys.exit('no matching window')
+        pipe.write(message(OPEN_WINDOW, struct.pack('<IIIBBII', BROWSER, chosen[0], chosen[1], 1, 1, 1920, 1080)))
+    else:
+        pipe.write(message(OPEN_BROWSER, struct.pack('<I', BROWSER) + string(url) + struct.pack('<IIB', 1280, 720, 0) + string('')))
     time.sleep(2.0)
     pipe.write(message(OPEN_RECEIVER, struct.pack('<I', RECEIVER)))
     pipe.write(message(OPEN_SENDER, struct.pack('<IIIIB', SENDER, BROWSER, 30, 2500, 1) + string('')))
@@ -144,6 +188,7 @@ def main():
     relay.request_keyframe(True)
     start = time.time()
     receiver_states = []
+    audio = None
     sender_states = []
     while time.time() - start < seconds:
         try:
@@ -163,8 +208,15 @@ def main():
             text = payload[25:25 + length].decode('utf-8', 'replace')
             (receiver_states if session == RECEIVER else sender_states).append((round(time.time() - start, 1), state, text))
         elif kind in (SESSION_VIDEO, SESSION_AUDIO):
-            print(f'{time.time() - start:5.1f}s session {struct.unpack_from("<I", payload)[0]} {"video" if kind == SESSION_VIDEO else "audio"}')
+            session = struct.unpack_from("<I", payload)[0]
+            print(f'{time.time() - start:5.1f}s session {session} {"video" if kind == SESSION_VIDEO else "audio"}')
+            if kind == SESSION_AUDIO and session == RECEIVER:
+                capacity = struct.unpack_from('<I', payload, 12)[0]
+                (n,) = struct.unpack_from('<I', payload, 16)
+                audio = AudioConsumer(payload[20:20 + n].decode(), capacity)
         relay.tick()
+        if audio:
+            audio.tick()
     pipe.write(message(SHUTDOWN))
     pipe.close()
     proc.wait(timeout=10)

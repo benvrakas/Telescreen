@@ -331,7 +331,7 @@ UTSScreenPlayer* UTSScreenWindow::GetBrowserPlayer() const
 {
 	ATSBuildableScreen* Shown = Screen.Get();
 	UTSScreenPlayer* Player = Shown ? Shown->GetPlayer() : nullptr;
-	return Player && Player->HasBrowser() ? Player : nullptr;
+	return Player && Player->AcceptsInput() ? Player : nullptr;
 }
 
 void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -431,7 +431,7 @@ FReply UTSScreenWindow::NativeOnMouseMove(const FGeometry& InGeometry, const FPo
 	{
 		return FReply::Unhandled();
 	}
-	if (Player->GetBrowserState().bPointerLocked)
+	if (Player->HasBrowser() && Player->GetBrowserState().bPointerLocked)
 	{
 		const FVector2D Delta = InMouseEvent.GetCursorDelta();
 		Player->BrowserPointerDelta(FMath::RoundToInt(Delta.X), FMath::RoundToInt(Delta.Y));
