@@ -1,5 +1,6 @@
 // TelescreenHost: Telescreen's media helper process. See Docs/HostProtocol.md.
 
+#include "BrowserSession.h"
 #include "Common.h"
 #include "MediaSession.h"
 #include "Pipe.h"
@@ -26,10 +27,11 @@ namespace
 {
 	struct FArgs
 	{
-		std::wstring Pipe, Log, YtDlp, JsRuntime, Out;
+		std::wstring Pipe, Log, YtDlp, JsRuntime, Out, BrowserDir, BrowserData;
 		DWORD Parent = 0;
 		std::string SelfTest;
 		bool SelfTestLocal = false;
+		bool SelfTestBrowser = false;
 		double Seconds = 12.0, Start = 0.0, SeekAt = -1.0, SeekTo = 0.0, PauseAt = -1.0, ResumeAt = -1.0;
 	};
 
@@ -43,6 +45,9 @@ namespace
 			else if (Key == L"--log") Args.Log = Value;
 			else if (Key == L"--ytdlp") Args.YtDlp = Value;
 			else if (Key == L"--jsruntime") Args.JsRuntime = Value;
+			else if (Key == L"--browserdir") Args.BrowserDir = Value;
+			else if (Key == L"--browserdata") Args.BrowserData = Value;
+			else if (Key == L"--selftest-browser") { Args.SelfTest = Narrow(Value); Args.SelfTestBrowser = true; }
 			else if (Key == L"--parent") Args.Parent = wcstoul(Value.c_str(), nullptr, 10);
 			else if (Key == L"--selftest") Args.SelfTest = Narrow(Value);
 			else if (Key == L"--selftest-file") { Args.SelfTest = Narrow(Value); Args.SelfTestLocal = true; }
@@ -55,6 +60,15 @@ namespace
 			else if (Key == L"--out") Args.Out = Value;
 		}
 		return Args;
+	}
+
+	std::wstring LogDirectory(const std::wstring& LogFile)
+	{
+		const size_t Slash = LogFile.find_last_of(L"\\/");
+		if (Slash != std::wstring::npos) return LogFile.substr(0, Slash);
+		wchar_t Temp[MAX_PATH];
+		GetTempPathW(MAX_PATH, Temp);
+		return Temp;
 	}
 
 	void FFmpegLog(void*, int Level, const char* Format, va_list Args)
@@ -91,11 +105,28 @@ namespace
 		LOG_INFO("mod connected on %s", Narrow(Args.Pipe).c_str());
 
 		std::mutex SessionsMutex;
-		std::map<uint32_t, std::unique_ptr<FMediaSession>> Sessions;
-		auto Retire = [](std::unique_ptr<FMediaSession> Session)
+		std::map<uint32_t, std::unique_ptr<FSession>> Sessions;
+		std::atomic<int> Retiring{0};
+		auto Retire = [&Retiring](std::unique_ptr<FSession> Session)
 		{
-			// Closing can wait on yt-dlp or the network; do it off the pipe thread.
-			if (Session) std::thread([S = std::move(Session)]() mutable { S.reset(); }).detach();
+			// Closing can wait on yt-dlp, the network or the browser; do it off the pipe thread.
+			if (!Session) return;
+			++Retiring;
+			std::thread([S = std::move(Session), &Retiring]() mutable
+			{
+				S.reset();
+				--Retiring;
+			}).detach();
+		};
+		auto ShutdownAll = [&]
+		{
+			{
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				for (auto& Pair : Sessions) Retire(std::move(Pair.second));
+				Sessions.clear();
+			}
+			for (int I = 0; I < 100 && Retiring.load() > 0; ++I) Sleep(50);
+			Browser::Shutdown();
 		};
 
 		FSessionEvents Events;
@@ -128,6 +159,21 @@ namespace
 			W.F64(Duration);
 			W.Str(Message);
 			Pipe.Send(uint16_t(EMsg::SessionState), W.Bytes);
+		};
+
+		Events.OnBrowserState = [&Pipe](uint32_t Session, const std::string& Url, const std::string& Title, bool Loading, bool CanGoBack,
+									  bool CanGoForward, uint8_t Cursor, bool PointerLocked)
+		{
+			FPayloadWriter W;
+			W.U32(Session);
+			W.Str(Url);
+			W.Str(Title);
+			W.U8(Loading ? 1 : 0);
+			W.U8(CanGoBack ? 1 : 0);
+			W.U8(CanGoForward ? 1 : 0);
+			W.U8(Cursor);
+			W.U8(PointerLocked ? 1 : 0);
+			Pipe.Send(uint16_t(EMsg::BrowserState), W.Bytes);
 		};
 
 		uint16_t Type = 0;
@@ -211,8 +257,49 @@ namespace
 				}).detach();
 				break;
 			}
+			case EMsg::OpenBrowser:
+			{
+				FBrowserParams Params;
+				Params.SessionId = R.U32();
+				Params.Url = R.Str();
+				Params.Width = R.U32();
+				Params.Height = R.U32();
+				Params.KeepLogins = R.U8() != 0;
+				Params.ProfileName = R.Str();
+				if (!R.Ok) break;
+				std::string Error;
+				if (!Browser::EnsureInitialized(Args.BrowserDir, Args.BrowserData, LogDirectory(Args.Log), Error))
+				{
+					LOG_ERROR("session %u: %s", Params.SessionId, Error.c_str());
+					if (Events.OnState) Events.OnState(Params.SessionId, ESessionState::Error, 0.0, 0.0, Error);
+					break;
+				}
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto Existing = Sessions.find(Params.SessionId);
+				if (Existing != Sessions.end())
+				{
+					Retire(std::move(Existing->second));
+					Sessions.erase(Existing);
+				}
+				Sessions[Params.SessionId] = std::make_unique<FBrowserSession>(Params, Events);
+				break;
+			}
+			case EMsg::BrowserInput:
+			case EMsg::BrowserCommand:
+			{
+				const uint32_t Session = R.U32();
+				const uint8_t Kind = R.U8();
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto It = Sessions.find(Session);
+				if (It == Sessions.end()) break;
+				if (EMsg(Type) == EMsg::BrowserInput) It->second->HandleInput(EInput(Kind), R);
+				else It->second->HandleCommand(ECommand(Kind), R);
+				break;
+			}
 			case EMsg::Shutdown:
 				LOG_INFO("shutdown requested");
+				ShutdownAll();
 				ExitProcess(0);
 			default:
 				LOG_WARN("unknown message type %u (%zu bytes)", Type, Payload.size());
@@ -220,6 +307,7 @@ namespace
 			}
 		}
 		LOG_INFO("pipe closed; exiting");
+		ShutdownAll();
 		ExitProcess(0);
 	}
 
@@ -298,12 +386,150 @@ namespace
 			State.LastMessage = Message;
 		};
 
-		FOpenParams Params;
-		Params.SessionId = 1;
-		Params.Url = Args.SelfTest;
-		Params.IsLocalFile = Args.SelfTestLocal;
-		Params.StartSeconds = Args.Start;
-		auto Session = std::make_unique<FMediaSession>(Params, Args.YtDlp, Events);
+		std::unique_ptr<FSession> Session;
+		FBrowserSession* BrowserSession = nullptr;
+		if (Args.SelfTestBrowser)
+		{
+			std::string Error;
+			Browser::AllowFileUrls(true);
+			if (!Browser::EnsureInitialized(Args.BrowserDir, Args.BrowserData, LogDirectory(Args.Log), Error))
+			{
+				LOG_ERROR("selftest: %s", Error.c_str());
+				return 1;
+			}
+			FBrowserParams Params;
+			Params.SessionId = 1;
+			Params.Url = Args.SelfTest;
+			Params.Width = 1280;
+			Params.Height = 720;
+			Events.OnBrowserState = [](uint32_t, const std::string& Url, const std::string& Title, bool Loading, bool Back, bool Forward, uint8_t Cursor,
+										 bool Locked)
+			{
+				LOG_INFO("selftest: browser state url=%s title=%s loading=%d back=%d forward=%d cursor=%u locked=%d", Url.substr(0, 80).c_str(),
+					Title.substr(0, 60).c_str(), Loading, Back, Forward, Cursor, Locked);
+			};
+			auto NewBrowser = std::make_unique<FBrowserSession>(Params, Events);
+			BrowserSession = NewBrowser.get();
+			Session = std::move(NewBrowser);
+		}
+		else
+		{
+			FOpenParams Params;
+			Params.SessionId = 1;
+			Params.Url = Args.SelfTest;
+			Params.IsLocalFile = Args.SelfTestLocal;
+			Params.StartSeconds = Args.Start;
+			Session = std::make_unique<FMediaSession>(Params, Args.YtDlp, Events);
+		}
+
+		// Scripted input for the browser selftest page (Tools/browser_test.html), at seconds since the start.
+		struct FStep
+		{
+			double At;
+			std::function<void()> Run;
+			bool Done = false;
+		};
+		auto Send = [&](EInput Kind, const FPayloadWriter& W)
+		{
+			FPayloadReader R(W.Bytes);
+			Session->HandleInput(Kind, R);
+		};
+		auto Command = [&](ECommand Kind, const std::string& Text)
+		{
+			FPayloadWriter W;
+			W.Str(Text);
+			FPayloadReader R(W.Bytes);
+			Session->HandleCommand(Kind, R);
+		};
+		auto Click = [&](int X, int Y)
+		{
+			for (int Up = 0; Up < 2; ++Up)
+			{
+				FPayloadWriter W;
+				W.U32(uint32_t(X));
+				W.U32(uint32_t(Y));
+				W.U8(0);
+				W.U8(uint8_t(Up));
+				W.U8(1);
+				W.U32(0);
+				Send(EInput::MouseButton, W);
+			}
+		};
+		auto Move = [&](int X, int Y)
+		{
+			FPayloadWriter W;
+			W.U32(uint32_t(X));
+			W.U32(uint32_t(Y));
+			W.U32(0);
+			Send(EInput::MouseMove, W);
+		};
+		auto Key = [&](EKeyType KeyType, int Vk, uint16_t Ch)
+		{
+			FPayloadWriter W;
+			W.U8(uint8_t(KeyType));
+			W.U32(uint32_t(Vk));
+			W.U32(uint32_t(MapVirtualKeyW(Vk, MAPVK_VK_TO_VSC) << 16));
+			W.Append(&Ch, 2);
+			W.U32(0);
+			Send(EInput::Key, W);
+		};
+		std::vector<FStep> Steps;
+		if (BrowserSession)
+		{
+			Steps.push_back({3.0, [&]
+			{
+				LOG_INFO("selftest: click canvas, type a, click text box, insert hey");
+				Move(600, 300);
+				Click(600, 300);
+				Key(EKeyType::RawKeyDown, 'A', 'a');
+				Key(EKeyType::Char, 'A', 'a');
+				Key(EKeyType::KeyUp, 'A', 'a');
+				Click(170, 311);
+				FPayloadWriter W;
+				W.Str("hey");
+				Send(EInput::Text, W);
+			}});
+			Steps.push_back({4.0, [&]
+			{
+				LOG_INFO("selftest: click Lock pointer");
+				Move(100, 230);
+				Click(100, 230);
+			}});
+			Steps.push_back({4.6, [&]
+			{
+				LOG_INFO("selftest: pointer deltas");
+				for (int I = 1; I <= 5; ++I)
+				{
+					FPayloadWriter W;
+					W.U32(uint32_t(10));
+					W.U32(uint32_t(-5));
+					Send(EInput::PointerDelta, W);
+				}
+			}});
+			Steps.push_back({5.2, [&]
+			{
+				LOG_INFO("selftest: Escape");
+				Key(EKeyType::RawKeyDown, VK_ESCAPE, 0);
+				Key(EKeyType::KeyUp, VK_ESCAPE, 0);
+			}});
+			Steps.push_back({6.0, [&]
+			{
+				LOG_INFO("selftest: wheel");
+				FPayloadWriter W;
+				W.U32(600);
+				W.U32(300);
+				W.U32(0);
+				W.U32(uint32_t(-120));
+				W.U32(0);
+				Send(EInput::Wheel, W);
+			}});
+			Steps.push_back({7.0, [&]
+			{
+				LOG_INFO("selftest: navigate to chrome://version (should be blocked), then example.com");
+				Command(ECommand::Navigate, "chrome://version");
+				Command(ECommand::Navigate, "https://example.com");
+			}});
+		}
 
 		const double Start = NowSeconds();
 		double TargetBase = Args.Start, TargetBaseTime = Start;
@@ -337,6 +563,14 @@ namespace
 			}
 			const double Target = TargetBase + (Paused ? 0.0 : NowSeconds() - TargetBaseTime);
 			Session->SetTarget(Target, Paused);
+			for (FStep& Step : Steps)
+			{
+				if (!Step.Done && Elapsed >= Step.At)
+				{
+					Step.Done = true;
+					Step.Run();
+				}
+			}
 
 			{
 				std::lock_guard<std::mutex> Lock(State.Mutex);
@@ -368,7 +602,8 @@ namespace
 		const double Rms = State.AudioFrames > 0 ? std::sqrt(State.SumSquares.load() / (State.AudioFrames.load() * 2.0)) : 0.0;
 		LOG_INFO("selftest result: %llu frames in %.1f s (%.1f fps), %.2f s audio consumed, audio RMS %.4f, published %llu, last state %d",
 			(unsigned long long)FramesSeen, Seconds, FramesSeen / Seconds, State.AudioFrames.load() / 48000.0, Rms,
-			(unsigned long long)Session->GetFramesPublished(), int(State.LastState));
+			(unsigned long long)(BrowserSession ? BrowserSession->GetFramesPublished() : static_cast<FMediaSession*>(Session.get())->GetFramesPublished()),
+			int(State.LastState));
 
 		if (!Args.Out.empty() && State.Video)
 		{
@@ -395,12 +630,19 @@ namespace
 			}
 		}
 		Session.reset();
+		Browser::Shutdown();
 		return FramesSeen > 0 || State.AudioFrames > 0 ? 0 : 1;
 	}
 }
 
 int wmain(int Argc, wchar_t** Argv)
 {
+	const int SubprocessExit = Browser::RunSubprocessIfNeeded();
+	if (SubprocessExit >= 0)
+	{
+		return SubprocessExit;
+	}
+
 	const FArgs Args = ParseArgs(Argc, Argv);
 	LogOpen(Args.Log);
 	LOG_INFO("TelescreenHost %s starting (pid %lu, protocol %u)", HOST_VERSION, GetCurrentProcessId(), Version);

@@ -29,6 +29,21 @@ handles serialize reads and writes on one pipe.
 | SessionAudio | host → mod | u32 session, u32 sample rate, u32 channels, u32 capacity frames, str mapping name |
 | SessionState | host → mod | u32 session, u8 state, f64 position, f64 duration, str message |
 | Shutdown | mod → host | (empty) |
+| OpenBrowser | mod → host | u32 session, str url, u32 width, u32 height, u8 keep logins, str profile name |
+| BrowserInput | mod → host | u32 session, u8 kind, then by kind: MouseMove: i32 x, i32 y, u32 modifiers; MouseButton: i32 x, i32 y, u8 button (0 left, 1 middle, 2 right), u8 up, u8 click count, u32 modifiers; Wheel: i32 x, i32 y, i32 dx, i32 dy, u32 modifiers; Key: u8 type, i32 Windows key code, i32 native key code, u16 character, u32 modifiers; Text: str; MouseLeave: none; Focus: u8 focused; PointerDelta: i32 dx, i32 dy (raw mouse movement while the page holds the pointer lock) |
+| BrowserCommand | mod → host | u32 session, u8 command, then Navigate: str url; Resize: u32 width, u32 height |
+| BrowserState | host → mod | u32 session, str url, str title, u8 loading, u8 can go back, u8 can go forward, u8 cursor type (cef_cursor_type_t), u8 pointer locked |
+
+CEF's off-screen mode rejects `requestPointerLock()`, so the helper injects a small script into every page before
+its own scripts run (DevTools `Page.addScriptToEvaluateOnNewDocument`). It stands in for the Pointer Lock API:
+`pointerLockElement`, `requestPointerLock`, `exitPointerLock`, `pointerlockchange`, Escape to leave. It tells the
+helper through a tagged console message, which becomes the "pointer locked" flag in BrowserState. While it is set,
+the mod sends PointerDelta instead of absolute moves, and the page gets them as `mousemove` events with
+`movementX/Y`, the way browser games read the mouse. These events are untrusted (`isTrusted` false), which games
+don't check.
+
+Browser sessions use the same SessionVideo / SessionAudio / SessionState messages; their audio is live (no clock
+or sync target), and the browser's coordinates are the pixels of its video frames.
 
 ## Video: triple buffer in shared memory
 

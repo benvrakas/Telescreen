@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.h"
+#include "Session.h"
 #include "SharedMemory.h"
 
 #include <atomic>
@@ -29,23 +30,15 @@ struct FOpenParams
 	uint32_t MaxHeight = 720;
 };
 
-// Messages a session sends towards the mod.
-struct FSessionEvents
-{
-	std::function<void(uint32_t Session, uint32_t Generation, uint32_t Width, uint32_t Height, const std::string& Mapping)> OnVideo;
-	std::function<void(uint32_t Session, uint32_t SampleRate, uint32_t Channels, uint32_t Capacity, const std::string& Mapping)> OnAudio;
-	std::function<void(uint32_t Session, TSHostProtocol::ESessionState State, double Position, double Duration, const std::string& Message)> OnState;
-};
-
 // Plays one media URL or file into a session's shared video and audio buffers, following the mod's sync target.
-class FMediaSession
+class FMediaSession : public FSession
 {
 public:
 	FMediaSession(const FOpenParams& Params, const std::wstring& YtDlpPath, FSessionEvents Events);
-	~FMediaSession();
+	virtual ~FMediaSession() override;
 
 	// Where playback should be now, in media seconds; thread-safe.
-	void SetTarget(double MediaSeconds, bool Paused);
+	virtual void SetTarget(double MediaSeconds, bool Paused) override;
 
 	uint64_t GetFramesPublished() const { return FramesPublished.load(); }
 

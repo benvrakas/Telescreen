@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Test page for TelescreenHost --selftest-browser: reports frame rate, input events, pointer lock and audio to the console. -->
+<html><head><meta charset="utf-8"><title>Telescreen browser test</title><style>
+html,body{margin:0;background:#202830;color:#fff;font:16px sans-serif;overflow:hidden;width:100%;height:100%}
+#sq{position:absolute;left:0;top:0;width:128px;height:128px}
+#info{position:absolute;left:150px;top:20px;font-size:28px}
+#lock{position:absolute;left:20px;top:200px;width:160px;height:60px}
+#txt{position:absolute;left:20px;top:300px;width:300px;height:22px}
+#cv{position:absolute;left:400px;top:150px;width:400px;height:300px;background:#345;overflow:auto}
+#tall{height:2000px}
+</style></head><body>
+<div id=sq></div><div id=info>Telescreen browser test</div>
+<button id=lock>Lock pointer</button><input id=txt><div id=cv><div id=tall></div></div>
+<script>
+const log=m=>console.log(m);
+let n=0,last=performance.now(),frames=0;
+function tick(t){n++;frames++;sq.style.background=`rgb(${n%256},${(n*7)%256},${(n*13)%256})`;info.textContent='frame '+n;
+ if(t-last>=1000){log(`fps ${(frames*1000/(t-last)).toFixed(1)} vis=${document.visibilityState} focus=${document.hasFocus()?1:0}`);frames=0;last=t;}
+ requestAnimationFrame(tick);}
+requestAnimationFrame(tick);
+for(const ev of ['mousedown','mouseup','click','keydown','keyup'])
+ addEventListener(ev,e=>log(`evt ${ev} trusted=${e.isTrusted?1:0}${e.key!==undefined?' key='+e.key:''}${e.clientX!==undefined?' x='+e.clientX+' y='+e.clientY:''}`),true);
+let moves=0,mx=0,my=0;addEventListener('mousemove',e=>{moves++;mx+=e.movementX;my+=e.movementY;},true);
+setInterval(()=>{if(moves){log(`evt moves n=${moves} dx=${mx} dy=${my} locked=${document.pointerLockElement?1:0}`);moves=0;mx=0;my=0;}},250);
+cv.addEventListener('scroll',()=>log('evt scroll top='+cv.scrollTop));
+lock.onclick=()=>{try{const p=cv.requestPointerLock();if(p&&p.catch)p.catch(e=>log('evt lock rejected '+e.name+': '+e.message));}catch(e){log('evt lock threw '+e.message)}};
+document.addEventListener('pointerlockchange',()=>log('evt lock change locked='+(document.pointerLockElement?1:0)));
+document.addEventListener('pointerlockerror',()=>log('evt lock error'));
+txt.addEventListener('input',()=>log('evt input value='+txt.value));
+try{const ac=new AudioContext();const o=ac.createOscillator();const g=ac.createGain();g.gain.value=0.05;o.frequency.value=440;
+ o.connect(g).connect(ac.destination);o.start();setTimeout(()=>log('evt audio state='+ac.state),500);}catch(e){log('evt audio error '+e.message)}
+navigator.mediaDevices&&navigator.mediaDevices.getUserMedia({audio:true}).then(()=>log('evt microphone GRANTED')).catch(e=>log('evt microphone denied: '+e.name));
+window.open('https://example.org/popup','_blank');
+log('ready');
+</script></body></html>

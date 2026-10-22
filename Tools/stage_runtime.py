@@ -5,6 +5,7 @@
 Components (see D:/SFMod/Tools/RuntimeComponents.md):
   host     TelescreenHost.exe (built by Helper/build.bat) and the FFmpeg LGPL DLLs it links
   fetcher  yt-dlp.exe and QuickJS (qjs.exe), which yt-dlp uses for YouTube's challenges
+  browser  the CEF runtime (libcef.dll and its resources, en-US only) that TelescreenHost loads for Browser mode
 
 Third-party files come from D:/SFMod/Tools (pinned downloads) and are checked against the pins below before copying.
 The manifest (Source/Telescreen/Private/Runtime/TSRuntimeManifest.inl) lists every staged file with its size and
@@ -18,6 +19,10 @@ import sys
 MOD = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = r'D:/SFMod/Tools'
 FFMPEG = os.path.join(TOOLS, 'ffmpeg', 'ffmpeg-n8.1.3-win64-lgpl-shared-8.1')
+CEF = os.path.join(TOOLS, 'cef', 'cef-152.0.15')
+CEF_RELEASE_FILES = ['libcef.dll', 'chrome_elf.dll', 'd3dcompiler_47.dll', 'dxcompiler.dll', 'dxil.dll', 'v8_context_snapshot.bin',
+                     'vk_swiftshader.dll', 'vk_swiftshader_icd.json', 'vulkan-1.dll']
+CEF_RESOURCE_FILES = ['icudtl.dat', 'resources.pak', 'chrome_100_percent.pak', 'chrome_200_percent.pak']
 RUNTIME = os.path.join(MOD, 'Resources', 'Runtime')
 MANIFEST = os.path.join(MOD, 'Source', 'Telescreen', 'Private', 'Runtime', 'TSRuntimeManifest.inl')
 
@@ -48,6 +53,16 @@ COMPONENTS = {
                                   'Source: https://github.com/yt-dlp/yt-dlp\n',
         },
     },
+    'browser': {
+        'version': 'cef-152.0.15+chromium-152.0.7977.169',
+        'files': [
+            *[(os.path.join(CEF, 'Release', f), f) for f in CEF_RELEASE_FILES],
+            *[(os.path.join(CEF, 'Resources', f), f) for f in CEF_RESOURCE_FILES],
+            (os.path.join(CEF, 'Resources', 'locales', 'en-US.pak'), 'locales/en-US.pak'),
+            (os.path.join(CEF, 'LICENSE.txt'), 'LICENSE-CEF.txt'),
+            (os.path.join(CEF, 'CREDITS.html'), 'CREDITS-Chromium.html'),
+        ],
+    },
 }
 
 
@@ -71,15 +86,18 @@ def main():
                 sys.exit(f'missing {source}')
             if source in PINS and sha256(source) != PINS[source]:
                 sys.exit(f'{source} does not match its pinned SHA-256')
+            os.makedirs(os.path.dirname(os.path.join(dest, name)), exist_ok=True)
             shutil.copy2(source, os.path.join(dest, name))
         for name, text in spec.get('texts', {}).items():
             with open(os.path.join(dest, name), 'w', newline='\n') as f:
                 f.write(text)
         lines.append(f'TS_RUNTIME_COMPONENT(TEXT("{component}"), TEXT("{spec["version"]}"))')
-        for name in sorted(os.listdir(dest)):
+        names = sorted(os.path.relpath(os.path.join(root, f), dest).replace(os.sep, '/')
+                       for root, _, files in os.walk(dest) for f in files)
+        for name in names:
             path = os.path.join(dest, name)
             lines.append(f'TS_RUNTIME_FILE(TEXT("{component}"), TEXT("{name}"), {os.path.getsize(path)}, TEXT("{sha256(path)}"))')
-        print(f'{component}: {len(os.listdir(dest))} files')
+        print(f'{component}: {len(names)} files')
     os.makedirs(os.path.dirname(MANIFEST), exist_ok=True)
     with open(MANIFEST, 'w', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')

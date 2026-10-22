@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 1;
+	constexpr uint32_t Version = 2;
 
 	enum class EMsg : uint16_t
 	{
@@ -22,7 +22,52 @@ namespace TSHostProtocol
 		SessionAudio = 9,
 		SessionState = 10,
 		Shutdown = 11,
+		OpenBrowser = 12,
+		BrowserInput = 13,
+		BrowserCommand = 14,
+		BrowserState = 15,
 	};
+
+	// BrowserInput kinds.
+	enum class EInput : uint8_t
+	{
+		MouseMove = 0,
+		MouseButton = 1,
+		Wheel = 2,
+		Key = 3,
+		Text = 4,
+		MouseLeave = 5,
+		Focus = 6,
+		PointerDelta = 7,
+	};
+
+	// BrowserInput Key types (as cef_key_event_type_t).
+	enum class EKeyType : uint8_t
+	{
+		RawKeyDown = 0,
+		KeyDown = 1,
+		KeyUp = 2,
+		Char = 3,
+	};
+
+	// BrowserCommand kinds.
+	enum class ECommand : uint8_t
+	{
+		Navigate = 0,
+		Back = 1,
+		Forward = 2,
+		Reload = 3,
+		Stop = 4,
+		Resize = 5,
+	};
+
+	// Modifier bits in input messages (as cef_event_flags_t).
+	constexpr uint32_t ModShift = 1 << 1;
+	constexpr uint32_t ModControl = 1 << 2;
+	constexpr uint32_t ModAlt = 1 << 3;
+	constexpr uint32_t ModLeftButton = 1 << 4;
+	constexpr uint32_t ModMiddleButton = 1 << 5;
+	constexpr uint32_t ModRightButton = 1 << 6;
 
 	enum class ESessionState : uint8_t
 	{
