@@ -60,5 +60,16 @@ public class Telescreen : ModuleRules
 			PublicDependencyModuleNames.AddRange(new string[] {/*"OnlineBlueprintSupport",*/ "AnimGraph"});
 		}
 		PublicDependencyModuleNames.AddRange(new string[] {"FactoryGame", "SML"});
+
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"Projects",
+			"ApplicationCore",
+			"AudioExtensions",
+		});
+
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			PublicSystemLibraries.Add("bcrypt.lib");
+		}
 	}
 }

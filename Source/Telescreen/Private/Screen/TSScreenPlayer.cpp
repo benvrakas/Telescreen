@@ -1,0 +1,620 @@
+#include "Screen/TSScreenPlayer.h"
+#include "Buildables/TSBuildableScreen.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/AudioComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/Canvas.h"
+#include "Engine/CanvasRenderTarget2D.h"
+#include "Engine/Engine.h"
+#include "Engine/Font.h"
+#include "Engine/Texture2D.h"
+#include "FGGameUserSettings.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+#include "HAL/PlatformApplicationMisc.h"
+#include "Kismet/GameplayStatics.h"
+#include "Rendering/Texture2DResource.h"
+#include "Screen/TSStreamingSoundWave.h"
+#include "Telescreen.h"
+#include "TSConfig.h"
+
+#define LOCTEXT_NAMESPACE "Telescreen"
+
+using TSHostProtocol::ESessionState;
+
+namespace
+{
+	TArray<TWeakObjectPtr<UTSScreenPlayer>> GPlayers;
+
+	constexpr double SyncInterval = 0.25;
+	constexpr double RankInterval = 1.0;
+	constexpr double AudioInterval = 0.5;
+	constexpr int32 StatusWidth = 1024;
+
+	FString ItemKey(int32 Index, const FTSMediaItem& Item)
+	{
+		return FString::Printf(TEXT("%d|%s"), Index, *Item.Url);
+	}
+
+	float ReadMasterVolume()
+	{
+		const UFGGameUserSettings* Settings = UFGGameUserSettings::GetFGGameUserSettings();
+		if (!Settings)
+		{
+			return 1.f;
+		}
+		static bool bReported = false;
+		if (bReported)
+		{
+			return 1.f;
+		}
+		const FVariant Raw = Settings->GetOptionValue(TEXT("RTPC.Menu_Volume_Master"));
+		float Value;
+		switch (Raw.GetType())
+		{
+		case EVariantTypes::Float: Value = Raw.GetValue<float>(); break;
+		case EVariantTypes::Double: Value = float(Raw.GetValue<double>()); break;
+		case EVariantTypes::Int32: Value = float(Raw.GetValue<int32>()); break;
+		default:
+			bReported = true;
+			UE_LOG(LogTelescreen, Warning, TEXT("Master volume option unreadable (variant type %d); using full volume"), int32(Raw.GetType()));
+			return 1.f;
+		}
+		return FMath::Clamp(Value > 1.f ? Value / 100.f : Value, 0.f, 1.f);
+	}
+
+	// Lays out a Width x Height picture on a screen of aspect ScreenAspect: texture size, source rectangle, destination offset.
+	struct FFit
+	{
+		int32 TexWidth, TexHeight;
+		int32 SrcX, SrcY, SrcWidth, SrcHeight;
+		int32 DstX, DstY;
+	};
+
+	FFit ComputeFit(int32 Width, int32 Height, double ScreenAspect, ETSAspectMode Mode)
+	{
+		FFit F{Width, Height, 0, 0, Width, Height, 0, 0};
+		const double VideoAspect = double(Width) / double(FMath::Max(1, Height));
+		if (Mode == ETSAspectMode::Stretch || FMath::IsNearlyEqual(VideoAspect, ScreenAspect, 0.01))
+		{
+			return F;
+		}
+		const bool bScreenWider = ScreenAspect > VideoAspect;
+		if (Mode == ETSAspectMode::Letterbox)
+		{
+			if (bScreenWider)
+			{
+				F.TexWidth = FMath::Max(2, int32(FMath::RoundToInt(Height * ScreenAspect)) & ~1);
+				F.DstX = (F.TexWidth - Width) / 2;
+			}
+			else
+			{
+				F.TexHeight = FMath::Max(2, int32(FMath::RoundToInt(Width / ScreenAspect)) & ~1);
+				F.DstY = (F.TexHeight - Height) / 2;
+			}
+		}
+		else
+		{
+			if (bScreenWider)
+			{
+				F.TexHeight = F.SrcHeight = FMath::Clamp(int32(FMath::RoundToInt(Width / ScreenAspect)) & ~1, 2, Height);
+				F.SrcY = (Height - F.SrcHeight) / 2;
+			}
+			else
+			{
+				F.TexWidth = F.SrcWidth = FMath::Clamp(int32(FMath::RoundToInt(Height * ScreenAspect)) & ~1, 2, Width);
+				F.SrcX = (Width - F.SrcWidth) / 2;
+			}
+		}
+		return F;
+	}
+}
+
+UTSScreenPlayer::UTSScreenPlayer()
+{
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = true;
+}
+
+ATSBuildableScreen* UTSScreenPlayer::GetScreen() const
+{
+	return Cast<ATSBuildableScreen>(GetOwner());
+}
+
+void UTSScreenPlayer::BeginPlay()
+{
+	Super::BeginPlay();
+	GPlayers.Add(this);
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen)
+	{
+		return;
+	}
+	ScreenChangedHandle = Screen->OnScreenChanged.AddUObject(this, &UTSScreenPlayer::OnScreenChanged);
+
+	const FVector2D Size = Screen->GetScreenWorldSize();
+	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
+	StatusTarget = UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(this, UCanvasRenderTarget2D::StaticClass(), StatusWidth,
+		FMath::Clamp(int32(StatusWidth / Aspect), 64, 2048));
+	if (StatusTarget)
+	{
+		StatusTarget->ClearColor = FLinearColor(0.01f, 0.012f, 0.02f, 1.f);
+		StatusTarget->OnCanvasRenderTargetUpdate.AddDynamic(this, &UTSScreenPlayer::DrawStatus);
+	}
+	RankActivity();
+	Reconcile();
+}
+
+void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	CloseSession();
+	GPlayers.RemoveAll([this](const TWeakObjectPtr<UTSScreenPlayer>& P) { return !P.IsValid() || P.Get() == this; });
+	if (ATSBuildableScreen* Screen = GetScreen())
+	{
+		Screen->OnScreenChanged.Remove(ScreenChangedHandle);
+	}
+	if (Audio)
+	{
+		Audio->Stop();
+		Audio->DestroyComponent();
+		Audio = nullptr;
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void UTSScreenPlayer::OnScreenChanged()
+{
+	Reconcile();
+	if (!bShowingVideo)
+	{
+		ShowStatus();
+	}
+}
+
+bool UTSScreenPlayer::ShouldLoad(const FTSMediaItem& Item, FText& OutReason) const
+{
+	const APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
+	const FString MyName = Controller && Controller->PlayerState ? Controller->PlayerState->GetPlayerName() : FString();
+	if (!MyName.IsEmpty() && Item.AddedBy == MyName)
+	{
+		return true;
+	}
+	const bool bLocalFile = !Item.Url.Contains(TEXT("://"));
+	switch (ETSAutoLoad(UTSConfig::GetInt(this, UTSConfig::AutoLoadKey, 0)))
+	{
+	case ETSAutoLoad::Everything:
+		return true;
+	case ETSAutoLoad::Never:
+		OutReason = LOCTEXT("BlockedNever", "Not loaded on this PC: your privacy setting only loads videos you add.");
+		return false;
+	default:
+		if (bLocalFile || UTSConfig::IsAllowedSite(this, Item.Url))
+		{
+			return true;
+		}
+		OutReason = LOCTEXT("BlockedSite", "Not loaded on this PC: the site isn't in your allowed list. Open the screen to load it anyway.");
+		return false;
+	}
+}
+
+void UTSScreenPlayer::LoadAnyway()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	const FTSMediaItem* Item = Screen ? Screen->GetMediaState().GetCurrent() : nullptr;
+	if (Item)
+	{
+		UnblockedKey = ItemKey(Screen->GetMediaState().CurrentIndex, *Item);
+		UE_LOG(LogTelescreen, Log, TEXT("%s: loading %s despite the privacy setting"), *Screen->GetName(), *Item->Url);
+		Reconcile();
+	}
+}
+
+void UTSScreenPlayer::Reconcile()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen)
+	{
+		return;
+	}
+	const FTSMediaState& State = Screen->GetMediaState();
+	const FTSMediaItem* Item = State.GetCurrent();
+	if (!Item)
+	{
+		WantedKey.Reset();
+		BlockedReason = FText::GetEmpty();
+		CloseSession();
+		SetStatus(Screen->GetDisplayName(), LOCTEXT("Idle", "Interact to add a video"));
+		return;
+	}
+	const FString Key = ItemKey(State.CurrentIndex, *Item);
+	const FText Title = FText::FromString(Item->GetDisplayTitle());
+	FText Reason;
+	if (Key != UnblockedKey && !ShouldLoad(*Item, Reason))
+	{
+		WantedKey.Reset();
+		BlockedReason = Reason;
+		CloseSession();
+		SetStatus(Title, Reason);
+		return;
+	}
+	BlockedReason = FText::GetEmpty();
+	if (!bActive)
+	{
+		WantedKey.Reset();
+		CloseSession();
+		SetStatus(Title, LOCTEXT("Inactive", "Paused on this PC (far away, or too many screens playing)"));
+		return;
+	}
+	WantedKey = Key;
+	if (Session != 0 && Key == SessionKey)
+	{
+		return;
+	}
+	CloseSession();
+	OpenSession(*Item);
+}
+
+void UTSScreenPlayer::OpenSession(const FTSMediaItem& Item)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	const FText Title = FText::FromString(Item.GetDisplayTitle());
+	if (!Host || !Host->EnsureConnected())
+	{
+		SetStatus(Title, Host ? Host->GetUnavailableReason() : LOCTEXT("NoHost", "Telescreen's player isn't available."));
+		return;
+	}
+	FTSOpenMediaParams Params;
+	Params.Url = Item.Url;
+	Params.bIsLocalFile = !Item.Url.Contains(TEXT("://"));
+	Params.StartSeconds = Screen->GetPlaybackPosition();
+	Params.bPaused = Screen->GetMediaState().bPaused;
+	Params.MaxHeight = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxVideoHeightKey, 720), 144, 2160));
+	Params.MaxWidth = Params.MaxHeight * 16 / 9;
+	Session = Host->OpenMedia(Params, this);
+	if (Session == 0)
+	{
+		SetStatus(Title, Host->GetUnavailableReason());
+		return;
+	}
+	SessionKey = WantedKey;
+	HostState = ESessionState::Resolving;
+	NextSync = 0.0;
+	SetStatus(Title, LOCTEXT("Loading", "Loading..."));
+}
+
+void UTSScreenPlayer::CloseSession()
+{
+	if (Session != 0)
+	{
+		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+		{
+			Host->CloseSession(Session);
+		}
+		Session = 0;
+	}
+	SessionKey.Reset();
+	Video.Close();
+	if (Wave)
+	{
+		Wave->SetReader(nullptr);
+	}
+	if (Audio)
+	{
+		Audio->Stop();
+	}
+	bShowingVideo = false;
+}
+
+void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen)
+	{
+		return;
+	}
+	const double Now = FPlatformTime::Seconds();
+	if (Now >= NextRank)
+	{
+		NextRank = Now + RankInterval;
+		const bool bWasActive = bActive;
+		RankActivity();
+		if (bWasActive != bActive || (Session == 0 && !WantedKey.IsEmpty()))
+		{
+			Reconcile();
+			if (!bShowingVideo)
+			{
+				ShowStatus();
+			}
+		}
+	}
+	if (Session == 0)
+	{
+		return;
+	}
+	PumpVideo();
+	if (Now >= NextSync)
+	{
+		NextSync = Now + SyncInterval;
+		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+		{
+			Host->SyncTarget(Session, Screen->GetPlaybackPosition(), Screen->GetMediaState().bPaused);
+		}
+	}
+	if (Now >= NextAudioUpdate)
+	{
+		NextAudioUpdate = Now + AudioInterval;
+		UpdateAudio();
+	}
+}
+
+void UTSScreenPlayer::RankActivity()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	const APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
+	if (!Screen || !Controller || !Controller->PlayerCameraManager)
+	{
+		bActive = false;
+		return;
+	}
+	const FVector Viewer = Controller->PlayerCameraManager->GetCameraLocation();
+	const double MaxDistance = UTSConfig::GetFloat(this, UTSConfig::PlayDistanceKey, 150.f) * 100.0;
+	const int32 MaxActive = UTSConfig::GetInt(this, UTSConfig::MaxActiveScreensKey, 4);
+	auto Wants = [&](const UTSScreenPlayer* Player, double& OutDistance)
+	{
+		const ATSBuildableScreen* S = Player->GetScreen();
+		if (!S || !S->GetMediaState().GetCurrent())
+		{
+			return false;
+		}
+		OutDistance = FVector::Dist(Viewer, S->GetActorLocation());
+		return OutDistance <= MaxDistance;
+	};
+	double MyDistance = 0.0;
+	if (!Wants(this, MyDistance))
+	{
+		bActive = false;
+		return;
+	}
+	int32 Closer = 0;
+	for (const TWeakObjectPtr<UTSScreenPlayer>& Other : GPlayers)
+	{
+		double Distance = 0.0;
+		if (Other.IsValid() && Other.Get() != this && Other->GetWorld() == GetWorld() && Wants(Other.Get(), Distance) && Distance < MyDistance)
+		{
+			++Closer;
+		}
+	}
+	bActive = Closer < MaxActive;
+}
+
+void UTSScreenPlayer::PumpVideo()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	double Pts = 0.0;
+	if (!Screen || !Video.IsOpen() || !Video.FetchNewFrame(FrameBuffer, Pts))
+	{
+		return;
+	}
+	const int32 Width = int32(Video.GetWidth()), Height = int32(Video.GetHeight());
+	const FVector2D Size = Screen->GetScreenWorldSize();
+	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
+	const FFit Fit = ComputeFit(Width, Height, Aspect, Screen->GetAspectMode());
+	const bool bMirrorX = UTSConfig::GetBool(this, UTSConfig::MirrorXKey, false);
+	const bool bMirrorY = UTSConfig::GetBool(this, UTSConfig::MirrorYKey, false);
+
+	if (!VideoTexture || VideoTexture->GetSizeX() != Fit.TexWidth || VideoTexture->GetSizeY() != Fit.TexHeight)
+	{
+		VideoTexture = UTexture2D::CreateTransient(Fit.TexWidth, Fit.TexHeight, PF_B8G8R8A8, TEXT("TelescreenVideo"));
+		if (!VideoTexture)
+		{
+			UE_LOG(LogTelescreen, Error, TEXT("%s: could not create a %dx%d video texture"), *Screen->GetName(), Fit.TexWidth, Fit.TexHeight);
+			return;
+		}
+		VideoTexture->SRGB = true;
+		VideoTexture->Filter = TF_Bilinear;
+		VideoTexture->NeverStream = true;
+		VideoTexture->UpdateResource();
+		bShowingVideo = false;
+		UE_LOG(LogTelescreen, Log, TEXT("%s: video texture %dx%d for a %dx%d picture (aspect mode %d)"), *Screen->GetName(), Fit.TexWidth,
+			Fit.TexHeight, Width, Height, int32(Screen->GetAspectMode()));
+	}
+
+	TArray<uint8>* Composed = new TArray<uint8>();
+	Composed->SetNumZeroed(Fit.TexWidth * Fit.TexHeight * 4);
+	const uint32* Src = reinterpret_cast<const uint32*>(FrameBuffer.GetData());
+	uint32* Dst = reinterpret_cast<uint32*>(Composed->GetData());
+	for (int32 Row = 0; Row < Fit.SrcHeight; ++Row)
+	{
+		const int32 OutRow = Fit.DstY + Row;
+		uint32* DstRow = Dst + int64(bMirrorY ? Fit.TexHeight - 1 - OutRow : OutRow) * Fit.TexWidth;
+		const uint32* SrcRow = Src + int64(Fit.SrcY + Row) * Width + Fit.SrcX;
+		if (bMirrorX)
+		{
+			for (int32 X = 0; X < Fit.SrcWidth; ++X) DstRow[Fit.TexWidth - 1 - (Fit.DstX + X)] = SrcRow[X];
+		}
+		else
+		{
+			FMemory::Memcpy(DstRow + Fit.DstX, SrcRow, Fit.SrcWidth * 4);
+		}
+	}
+	FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(0, 0, 0, 0, Fit.TexWidth, Fit.TexHeight);
+	VideoTexture->UpdateTextureRegions(0, 1, Region, Fit.TexWidth * 4, 4, Composed->GetData(),
+		[Composed](uint8*, const FUpdateTextureRegion2D* Regions)
+		{
+			delete Composed;
+			delete Regions;
+		});
+	if (!bShowingVideo)
+	{
+		bShowingVideo = true;
+		Screen->SetScreenTexture(VideoTexture);
+	}
+}
+
+void UTSScreenPlayer::UpdateAudio()
+{
+	if (!Audio)
+	{
+		return;
+	}
+	float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f) * ReadMasterVolume();
+	if (UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true) && !FPlatformApplicationMisc::IsThisApplicationForeground())
+	{
+		Volume = 0.f;
+	}
+	Audio->SetVolumeMultiplier(FMath::Max(Volume, 0.0001f));
+}
+
+void UTSScreenPlayer::OnHostVideo(uint32 Generation, uint32 Width, uint32 Height, const FString& MappingName)
+{
+	if (!Video.Open(MappingName))
+	{
+		UE_LOG(LogTelescreen, Error, TEXT("Could not open video %s"), *MappingName);
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: video generation %u, %ux%u"), *GetNameSafe(GetOwner()), Generation, Width, Height);
+}
+
+void UTSScreenPlayer::OnHostAudio(uint32 SampleRate, uint32 Channels, uint32 CapacityFrames, const FString& MappingName)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe> Reader = FTSAudioReader::Open(MappingName);
+	if (!Screen || !Reader.IsValid())
+	{
+		UE_LOG(LogTelescreen, Error, TEXT("Could not open audio %s"), *MappingName);
+		return;
+	}
+	if (!Wave)
+	{
+		Wave = NewObject<UTSStreamingSoundWave>(this);
+	}
+	Wave->SetReader(Reader);
+	if (!Audio)
+	{
+		Audio = NewObject<UAudioComponent>(Screen, TEXT("TelescreenAudio"));
+		Audio->bAutoActivate = false;
+		Audio->bAllowSpatialization = true;
+		Audio->bOverrideAttenuation = true;
+		Audio->RegisterComponent();
+	}
+
+	// Bigger screens carry further: full volume within half the screen's width, fading out over ten widths.
+	const FVector2D Size = Screen->GetScreenWorldSize();
+	const float Range = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::AudioRangeKey, 1.f), 0.1f, 10.f);
+	Audio->AttenuationOverrides.bAttenuate = true;
+	Audio->AttenuationOverrides.bSpatialize = true;
+	Audio->AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
+	Audio->AttenuationOverrides.AttenuationShapeExtents = FVector(float(Size.X) * 0.5f * Range, 0.f, 0.f);
+	Audio->AttenuationOverrides.FalloffDistance = float(Size.X) * 10.f * Range;
+	Audio->AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::Logarithmic;
+	Audio->SetWorldLocation(Screen->GetActorLocation());
+	Audio->SetSound(Wave);
+	UpdateAudio();
+	Audio->Play();
+	UE_LOG(LogTelescreen, Log, TEXT("%s: audio %u Hz x%u, heard up to %.0f m"), *Screen->GetName(), SampleRate, Channels,
+		(Size.X * 0.5f + Size.X * 10.f) * Range / 100.f);
+}
+
+void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double Duration, const FString& Message)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	const FTSMediaItem* Item = Screen ? Screen->GetMediaState().GetCurrent() : nullptr;
+	const FText Title = Item ? FText::FromString(Item->GetDisplayTitle()) : FText::GetEmpty();
+	if (State != HostState)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: session %u state %d at %.1f / %.0f s %s"), *GetNameSafe(GetOwner()), Session, int32(State), Position, Duration,
+			*Message);
+	}
+	HostState = State;
+	switch (State)
+	{
+	case ESessionState::Error:
+		bShowingVideo = false;
+		SetStatus(Title, FText::Format(LOCTEXT("PlayError", "Could not play: {0}"), FText::FromString(Message)));
+		ShowStatus();
+		break;
+	case ESessionState::Ended:
+		bShowingVideo = false;
+		SetStatus(Title, LOCTEXT("Ended", "Finished"));
+		ShowStatus();
+		break;
+	case ESessionState::Resolving:
+		SetStatus(Title, LOCTEXT("Resolving", "Loading..."));
+		break;
+	case ESessionState::Buffering:
+		SetStatus(Title, LOCTEXT("Buffering", "Buffering..."));
+		break;
+	default:
+		break;
+	}
+	if (!bShowingVideo)
+	{
+		ShowStatus();
+	}
+}
+
+void UTSScreenPlayer::OnHostLost()
+{
+	UE_LOG(LogTelescreen, Warning, TEXT("%s: player stopped; reopening"), *GetNameSafe(GetOwner()));
+	Session = 0;
+	SessionKey.Reset();
+	Video.Close();
+	if (Wave)
+	{
+		Wave->SetReader(nullptr);
+	}
+	bShowingVideo = false;
+	SetStatus(StatusLine1, LOCTEXT("HostLost", "Player restarting..."));
+	ShowStatus();
+}
+
+void UTSScreenPlayer::SetStatus(const FText& Line1, const FText& Line2)
+{
+	const bool bChanged = !Line1.EqualTo(StatusLine1) || !Line2.EqualTo(StatusLine2);
+	StatusLine1 = Line1;
+	StatusLine2 = Line2;
+	if (bChanged && !bShowingVideo)
+	{
+		ShowStatus();
+	}
+}
+
+void UTSScreenPlayer::ShowStatus()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen || !StatusTarget)
+	{
+		return;
+	}
+	StatusTarget->UpdateResource();
+	Screen->SetScreenTexture(StatusTarget);
+}
+
+void UTSScreenPlayer::DrawStatus(UCanvas* Canvas, int32 Width, int32 Height)
+{
+	UFont* Font = GEngine ? GEngine->GetLargeFont() : nullptr;
+	if (!Canvas || !Font)
+	{
+		return;
+	}
+	auto DrawCentered = [&](const FString& Text, float CenterY, float Scale, const FLinearColor& Color)
+	{
+		float TextWidth = 0.f, TextHeight = 0.f;
+		Canvas->TextSize(Font, Text, TextWidth, TextHeight, Scale, Scale);
+		if (TextWidth > Width * 0.92f && TextWidth > 0.f)
+		{
+			Scale *= Width * 0.92f / TextWidth;
+			Canvas->TextSize(Font, Text, TextWidth, TextHeight, Scale, Scale);
+		}
+		Canvas->SetDrawColor(Color.ToFColor(true));
+		Canvas->DrawText(Font, Text, (Width - TextWidth) * 0.5f, CenterY - TextHeight * 0.5f, Scale, Scale);
+	};
+	const float Base = Height / 256.f;
+	DrawCentered(TEXT("TELESCREEN"), Height * 0.18f, 0.8f * Base, FLinearColor(0.95f, 0.55f, 0.1f));
+	DrawCentered(StatusLine1.ToString(), Height * 0.45f, 1.6f * Base, FLinearColor::White);
+	DrawCentered(StatusLine2.ToString(), Height * 0.68f, 1.0f * Base, FLinearColor(0.7f, 0.75f, 0.8f));
+}
+
+#undef LOCTEXT_NAMESPACE

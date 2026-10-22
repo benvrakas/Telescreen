@@ -2,23 +2,31 @@
 #include "Components/StaticMeshComponent.h"
 #include "Content/TSAssetPaths.h"
 #include "Engine/StaticMesh.h"
+#include "FGCharacterPlayer.h"
 #include "FGColoredInstanceMeshProxy.h"
+#include "FGHUD.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerController.h"
 #include "Hologram/FGHologram.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Screen/TSTestPattern.h"
+#include "Net/UnrealNetwork.h"
+#include "Screen/TSScreenPlayer.h"
 #include "Telescreen.h"
+#include "TimerManager.h"
+#include "UI/TSScreenPanel.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
 namespace
 {
-	const FName ScreenTextureParam(TEXT("SlateUI"));
 	const FName ScreenEmissionParam(TEXT("Emission"));
 	const FName ScreenGlossinessParam(TEXT("Glossiness"));
 	const FName ScreenTintParam(TEXT("TintColorAndOpacity"));
 	const FName ScreenBackgroundParam(TEXT("Background"));
 	const FName ScreenOpacityFromTextureParam(TEXT("OpacityFromTexture"));
-	constexpr int32 TestPatternVariants = 3;
+	const FName ScreenTextureParam(TEXT("SlateUI"));
+	constexpr int32 MaxQueueLength = 100;
+	constexpr double AdvanceGraceSeconds = 1.0;
 }
 
 ATSBuildableScreen::ATSBuildableScreen()
@@ -28,13 +36,20 @@ ATSBuildableScreen::ATSBuildableScreen()
 	mScreenPlane->SetMobility(EComponentMobility::Static);
 	mScreenPlane->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	mScreenPlane->SetCastShadow(false);
-	mScreenPlaneSize = FVector2D(100.0, 100.0);
 	mAllowColoring = false;
 }
 
+void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ATSBuildableScreen, mMediaState);
+	DOREPLIFETIME(ATSBuildableScreen, mScreenName);
+	DOREPLIFETIME(ATSBuildableScreen, mAspectMode);
+}
+
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
-	const FVector2D& PlaneSize, const FVector2D& WorldDimensions, const FVector& PoleOffset, const FVector2D& PoleScale, float SignToSignOffset, const FBox& ClearanceBox,
-	const FVector& ClearanceOffset)
+	const FVector2D& PlaneSize, const FVector2D& WorldDimensions, const FVector& PoleOffset, const FVector2D& PoleScale, float SignToSignOffset,
+	const FBox& ClearanceBox, const FVector& ClearanceOffset)
 {
 	mMeshComponentProxy->SetRelativeLocation(MeshLocation);
 	mMeshComponentProxy->SetRelativeRotation(FRotator(0.0, 90.0, 0.0));
@@ -44,7 +59,6 @@ void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, f
 	mScreenPlane->SetRelativeLocation(PlaneLocation);
 	mScreenPlane->SetRelativeRotation(FRotator(0.0, 0.0, 90.0));
 	mScreenPlane->SetRelativeScale3D(FVector(PlaneSize.X / 100.0, PlaneSize.Y / 100.0, 1.0));
-	mScreenPlaneSize = PlaneSize;
 
 	mWorldDimensions = WorldDimensions;
 	mPoleOffset = PoleOffset;
@@ -95,7 +109,6 @@ void ATSBuildableScreen::ApplyVanillaAssets(const TCHAR* HologramPath)
 	{
 		mHologramClass = Hologram;
 	}
-
 	UE_LOG(LogTelescreen, Log, TEXT("%s: billboard mesh %s, background %s, plane %s, screen material %s, hologram %s"), *GetClass()->GetName(),
 		BillboardMesh ? TEXT("ok") : TEXT("MISSING"), Background ? TEXT("ok") : TEXT("MISSING"), Plane ? TEXT("ok") : TEXT("MISSING"),
 		ScreenMaterial ? TEXT("ok") : TEXT("MISSING"), Hologram ? *Hologram->GetName() : TEXT("MISSING"));
@@ -106,9 +119,13 @@ void ATSBuildableScreen::BeginPlay()
 	Super::BeginPlay();
 
 	const FVector2D Size = GetScreenWorldSize();
-	UE_LOG(LogTelescreen, Log, TEXT("%s began play at %s, screen %.0f x %.0f cm"), *GetName(), *GetActorLocation().ToCompactString(), Size.X,
-		Size.Y);
+	UE_LOG(LogTelescreen, Log, TEXT("%s began play at %s, screen %.0f x %.0f cm, %d queued, playing %d"), *GetName(),
+		*GetActorLocation().ToCompactString(), Size.X, Size.Y, mMediaState.Queue.Num(), mMediaState.CurrentIndex);
 
+	if (HasAuthority())
+	{
+		ScheduleAdvance();
+	}
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
@@ -125,34 +142,42 @@ void ATSBuildableScreen::BeginPlay()
 	mScreenMID->SetVectorParameterValue(ScreenTintParam, FLinearColor::White);
 	mScreenMID->SetVectorParameterValue(ScreenBackgroundParam, FLinearColor::Black);
 	mScreenPlane->SetMaterial(0, mScreenMID);
-	SetScreenTexture(nullptr);
+
+	mPlayer = NewObject<UTSScreenPlayer>(this, TEXT("TelescreenPlayer"));
+	mPlayer->RegisterComponent();
 }
 
 void ATSBuildableScreen::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	UE_LOG(LogTelescreen, Verbose, TEXT("%s end play (%d)"), *GetName(), (int32)EndPlayReason);
+	GetWorldTimerManager().ClearTimer(mAdvanceTimer);
+	if (mPlayer)
+	{
+		mPlayer->DestroyComponent();
+		mPlayer = nullptr;
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
-void ATSBuildableScreen::SetScreenTexture(UTexture* Texture)
+void ATSBuildableScreen::PreSaveGame_Implementation(int32 SaveVersion, int32 GameVersion)
 {
-	if (!mScreenMID)
+	Super::PreSaveGame_Implementation(SaveVersion, GameVersion);
+	// World time restarts with every session, so the save keeps the position instead of the start time.
+	if (!mMediaState.bPaused)
 	{
-		return;
+		mMediaState.PausedPosition = GetPlaybackPosition();
 	}
-	UTexture* Shown = Texture ? Texture : TSTestPattern::Get(mTestPatternVariant);
-	if (!Shown)
-	{
-		UE_LOG(LogTelescreen, Warning, TEXT("%s: no texture to show"), *GetName());
-		return;
-	}
-	mScreenMID->SetTextureParameterValue(ScreenTextureParam, Shown);
 }
 
-FVector2D ATSBuildableScreen::GetScreenWorldSize() const
+void ATSBuildableScreen::PostLoadGame_Implementation(int32 SaveVersion, int32 GameVersion)
 {
-	const FVector Scale = mScreenPlane->GetComponentScale();
-	return FVector2D(100.0 * FMath::Abs(Scale.X), 100.0 * FMath::Abs(Scale.Y));
+	Super::PostLoadGame_Implementation(SaveVersion, GameVersion);
+	if (!mMediaState.Queue.IsValidIndex(mMediaState.CurrentIndex))
+	{
+		mMediaState.CurrentIndex = INDEX_NONE;
+	}
+	mMediaState.StartServerTime = GetServerTime() - mMediaState.PausedPosition;
+	UE_LOG(LogTelescreen, Log, TEXT("%s loaded: %d queued, item %d at %.1f s%s"), *GetName(), mMediaState.Queue.Num(), mMediaState.CurrentIndex,
+		mMediaState.PausedPosition, mMediaState.bPaused ? TEXT(" (paused)") : TEXT(""));
 }
 
 bool ATSBuildableScreen::IsUseable_Implementation() const
@@ -162,14 +187,207 @@ bool ATSBuildableScreen::IsUseable_Implementation() const
 
 void ATSBuildableScreen::OnUse_Implementation(AFGCharacterPlayer* ByCharacter, const FUseState& State)
 {
-	mTestPatternVariant = (mTestPatternVariant + 1) % TestPatternVariants;
-	UE_LOG(LogTelescreen, Log, TEXT("%s used; test pattern %d"), *GetName(), mTestPatternVariant);
-	SetScreenTexture(nullptr);
+	APlayerController* Controller = ByCharacter ? Cast<APlayerController>(ByCharacter->GetController()) : nullptr;
+	if (!Controller || !Controller->IsLocalPlayerController())
+	{
+		return;
+	}
+	if (AFGHUD* Hud = Cast<AFGHUD>(Controller->GetHUD()))
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: opening the screen panel"), *GetName());
+		Hud->OpenInteractUI(UTSScreenPanel::StaticClass(), this);
+	}
+	else
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("%s: no FGHUD to open the screen panel on"), *GetName());
+	}
 }
 
 FText ATSBuildableScreen::GetLookAtDecription_Implementation(AFGCharacterPlayer* ByCharacter, const FUseState& State) const
 {
-	return FText::Format(LOCTEXT("LookAt", "{0}: change test pattern"), mDisplayName);
+	return GetDisplayName();
+}
+
+FText ATSBuildableScreen::GetDisplayName() const
+{
+	return mScreenName.IsEmpty() ? mDisplayName : FText::FromString(mScreenName);
+}
+
+void ATSBuildableScreen::SetScreenTexture(UTexture* Texture)
+{
+	if (mScreenMID && Texture)
+	{
+		mScreenMID->SetTextureParameterValue(ScreenTextureParam, Texture);
+	}
+}
+
+FVector2D ATSBuildableScreen::GetScreenWorldSize() const
+{
+	const FVector Scale = mScreenPlane->GetComponentScale();
+	return FVector2D(100.0 * FMath::Abs(Scale.X), 100.0 * FMath::Abs(Scale.Y));
+}
+
+double ATSBuildableScreen::GetServerTime() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return 0.0;
+	}
+	const AGameStateBase* GameState = World->GetGameState();
+	return GameState ? GameState->GetServerWorldTimeSeconds() : World->GetTimeSeconds();
+}
+
+void ATSBuildableScreen::OnRep_MediaState()
+{
+	UE_LOG(LogTelescreen, Verbose, TEXT("%s: media state revision %d (item %d, %s)"), *GetName(), mMediaState.Revision, mMediaState.CurrentIndex,
+		mMediaState.bPaused ? TEXT("paused") : TEXT("playing"));
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::OnRep_ScreenSettings()
+{
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::CommitMediaState()
+{
+	++mMediaState.Revision;
+	FlushNetDormancy();
+	ForceNetUpdate();
+	ScheduleAdvance();
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::ScheduleAdvance()
+{
+	FTimerManager& Timers = GetWorldTimerManager();
+	Timers.ClearTimer(mAdvanceTimer);
+	const FTSMediaItem* Current = mMediaState.GetCurrent();
+	if (!Current || mMediaState.bPaused || Current->bIsLive || Current->Duration <= 0.0f)
+	{
+		return;
+	}
+	const double Remaining = FMath::Max(0.1, Current->Duration - GetPlaybackPosition() + AdvanceGraceSeconds);
+	Timers.SetTimer(mAdvanceTimer, this, &ATSBuildableScreen::OnCurrentItemFinished, float(Remaining), false);
+}
+
+void ATSBuildableScreen::OnCurrentItemFinished()
+{
+	UE_LOG(LogTelescreen, Log, TEXT("%s: item %d finished"), *GetName(), mMediaState.CurrentIndex);
+	ApplyMediaCommand(ETSMediaCommand::Next, 0, 0.0);
+}
+
+void ATSBuildableScreen::StartItem(int32 Index, double Position)
+{
+	mMediaState.CurrentIndex = mMediaState.Queue.IsValidIndex(Index) ? Index : INDEX_NONE;
+	mMediaState.bPaused = false;
+	mMediaState.PausedPosition = 0.0;
+	mMediaState.StartServerTime = GetServerTime() - Position;
+}
+
+void ATSBuildableScreen::Server_Enqueue(const FTSMediaItem& Item, bool bPlayNow)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	if (mMediaState.Queue.Num() >= MaxQueueLength)
+	{
+		mMediaState.Queue.RemoveAt(0);
+		if (mMediaState.CurrentIndex != INDEX_NONE)
+		{
+			--mMediaState.CurrentIndex;
+		}
+	}
+	const int32 Index = mMediaState.Queue.Add(Item);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s queued \"%s\" (%s, %.0f s)%s"), *GetName(), *Item.AddedBy, *Item.GetDisplayTitle(), *Item.Url, Item.Duration,
+		bPlayNow ? TEXT(", playing now") : TEXT(""));
+	if (bPlayNow || mMediaState.CurrentIndex == INDEX_NONE)
+	{
+		StartItem(Index, 0.0);
+	}
+	CommitMediaState();
+}
+
+void ATSBuildableScreen::ApplyMediaCommand(ETSMediaCommand Command, int32 Index, double Seconds)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	FTSMediaState& S = mMediaState;
+	switch (Command)
+	{
+	case ETSMediaCommand::PlayIndex:
+		if (!S.Queue.IsValidIndex(Index)) return;
+		StartItem(Index, 0.0);
+		break;
+	case ETSMediaCommand::Remove:
+		if (!S.Queue.IsValidIndex(Index)) return;
+		S.Queue.RemoveAt(Index);
+		if (Index == S.CurrentIndex)
+		{
+			StartItem(S.Queue.IsValidIndex(Index) ? Index : INDEX_NONE, 0.0);
+		}
+		else if (Index < S.CurrentIndex)
+		{
+			--S.CurrentIndex;
+		}
+		break;
+	case ETSMediaCommand::Pause:
+		if (S.bPaused || !S.GetCurrent()) return;
+		S.PausedPosition = S.GetPosition(GetServerTime());
+		S.bPaused = true;
+		break;
+	case ETSMediaCommand::Resume:
+		if (!S.bPaused) return;
+		S.StartServerTime = GetServerTime() - S.PausedPosition;
+		S.bPaused = false;
+		break;
+	case ETSMediaCommand::Seek:
+	{
+		const FTSMediaItem* Current = S.GetCurrent();
+		if (!Current || Current->bIsLive) return;
+		const double Clamped = FMath::Clamp(Seconds, 0.0, Current->Duration > 0.0f ? double(Current->Duration) : Seconds);
+		if (S.bPaused)
+		{
+			S.PausedPosition = Clamped;
+		}
+		else
+		{
+			S.StartServerTime = GetServerTime() - Clamped;
+		}
+		break;
+	}
+	case ETSMediaCommand::Next:
+		StartItem(S.Queue.IsValidIndex(S.CurrentIndex + 1) ? S.CurrentIndex + 1 : INDEX_NONE, 0.0);
+		break;
+	case ETSMediaCommand::Stop:
+		StartItem(INDEX_NONE, 0.0);
+		break;
+	case ETSMediaCommand::Clear:
+		S.Queue.Reset();
+		StartItem(INDEX_NONE, 0.0);
+		break;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: command %d (index %d, %.1f s) -> item %d, %s at %.1f s"), *GetName(), int32(Command), Index, Seconds,
+		S.CurrentIndex, S.bPaused ? TEXT("paused") : TEXT("playing"), S.GetPosition(GetServerTime()));
+	CommitMediaState();
+}
+
+void ATSBuildableScreen::Server_SetScreenSettings(const FString& Name, ETSAspectMode AspectMode)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	mScreenName = Name.Left(64).TrimStartAndEnd();
+	mAspectMode = AspectMode;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: renamed to \"%s\", aspect %d"), *GetName(), *mScreenName, int32(mAspectMode));
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
 }
 
 ATSBuildableScreenSmall::ATSBuildableScreenSmall()
@@ -179,8 +397,7 @@ ATSBuildableScreenSmall::ATSBuildableScreenSmall()
 		"A screen for synced videos, a shared built-in browser, windows and remote desktops, seen by every player.\n\n"
 		"Can be freestanding, placed on Walls, or attached to most buildings.\n\nSize: 8 m x 4 m");
 	ConfigureBillboardLayout(FVector(0.0, -18.0, 0.0), 1.143f, FVector(0.0, 10.0, 0.0), FVector2D(795.0, 395.0), FVector2D(800.0, 400.0),
-		FVector(0.0, 38.0, 0.0),
-		FVector2D(1.0, 1.0), 0.0f, FBox(FVector(-400.0, -10.0, -200.0), FVector(400.0, 10.0, 200.0)), FVector(0.0, -2.0, 0.0));
+		FVector(0.0, 38.0, 0.0), FVector2D(1.0, 1.0), 0.0f, FBox(FVector(-400.0, -10.0, -200.0), FVector(400.0, 10.0, 200.0)), FVector(0.0, -2.0, 0.0));
 }
 
 ATSBuildableScreenLarge::ATSBuildableScreenLarge()
@@ -190,8 +407,7 @@ ATSBuildableScreenLarge::ATSBuildableScreenLarge()
 		"A screen for synced videos, a shared built-in browser, windows and remote desktops, seen by every player.\n\n"
 		"Can be freestanding, placed on Walls, or attached to most buildings.\n\nSize: 16 m x 8 m");
 	ConfigureBillboardLayout(FVector(0.0, 15.0, 0.0), 2.29f, FVector(0.0, 66.719, 0.0), FVector2D(1600.0, 800.0), FVector2D(1600.0, 800.0),
-		FVector(0.0, 25.0, 0.0),
-		FVector2D(2.0, 2.0), 60.0f, FBox(FVector(-800.0, -20.0, -400.0), FVector(800.0, 20.0, 400.0)), FVector(0.0, 46.0, 0.0));
+		FVector(0.0, 25.0, 0.0), FVector2D(2.0, 2.0), 60.0f, FBox(FVector(-800.0, -20.0, -400.0), FVector(800.0, 20.0, 400.0)), FVector(0.0, 46.0, 0.0));
 }
 
 #undef LOCTEXT_NAMESPACE

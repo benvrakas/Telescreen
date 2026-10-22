@@ -5,7 +5,7 @@
 #include "Module/GameWorldModule.h"
 #include "TSModules.generated.h"
 
-// Telescreen's root game instance module; resolves the vanilla assets the screens reuse.
+// Telescreen's root game instance module: settings, remote call object, and the vanilla assets the screens reuse.
 UCLASS()
 class TELESCREEN_API UTSGameInstanceModule : public UGameInstanceModule
 {
