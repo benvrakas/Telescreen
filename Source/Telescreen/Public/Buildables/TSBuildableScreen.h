@@ -40,6 +40,7 @@ public:
 	ATSBuildableScreen();
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void PostInitProperties() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PreSaveGame_Implementation(int32 SaveVersion, int32 GameVersion) override;
@@ -124,6 +125,10 @@ public:
 
 protected:
 	void ApplyVanillaAssets(const TCHAR* HologramPath);
+
+	// Copies the vanilla assets ApplyVanillaAssets put on the class default onto this instance (native actors don't
+	// copy class-default changes made after construction).
+	void CopyAssetsFromClassDefault();
 
 	void ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation, const FVector2D& PlaneSize,
 		const FVector2D& WorldDimensions, const FVector& PoleOffset, const FVector2D& PoleScale, float SignToSignOffset, const FBox& ClearanceBox,

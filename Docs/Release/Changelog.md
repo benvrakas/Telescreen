@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0 beta 3
+
+- Fix: built screens showed only the post (no billboard, no screen, nothing to use). The vanilla billboard assets
+  set on the class at start-up never reached placed screens; each screen now copies them when it is created.
+
 ## 0.1.0 beta 2
 
 - **Live streaming:** a player's built-in browser is streamed to everyone near the screen through the game's own

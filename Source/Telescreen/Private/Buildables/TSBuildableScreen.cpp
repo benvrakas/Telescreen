@@ -124,13 +124,56 @@ void ATSBuildableScreen::ApplyVanillaAssets(const TCHAR* HologramPath)
 		ScreenMaterial ? TEXT("ok") : TEXT("MISSING"), Hologram ? *Hologram->GetName() : TEXT("MISSING"));
 }
 
+void ATSBuildableScreen::PostInitProperties()
+{
+	Super::PostInitProperties();
+	if (!HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+	{
+		CopyAssetsFromClassDefault();
+	}
+}
+
+void ATSBuildableScreen::CopyAssetsFromClassDefault()
+{
+	const ATSBuildableScreen* Defaults = GetClass()->GetDefaultObject<ATSBuildableScreen>();
+	if (!Defaults || Defaults == this)
+	{
+		return;
+	}
+	mScreenMaterial = Defaults->mScreenMaterial;
+	if (mMeshComponentProxy && Defaults->mMeshComponentProxy)
+	{
+		if (UStaticMesh* Mesh = Defaults->mMeshComponentProxy->GetStaticMesh(); Mesh && !mMeshComponentProxy->SetStaticMesh(Mesh))
+		{
+			UE_LOG(LogTelescreen, Error, TEXT("%s: the billboard mesh could not be set"), *GetName());
+		}
+		const TArray<TObjectPtr<UMaterialInterface>>& Materials = Defaults->mMeshComponentProxy->OverrideMaterials;
+		for (int32 Index = 0; Index < Materials.Num(); ++Index)
+		{
+			if (Materials[Index])
+			{
+				mMeshComponentProxy->SetMaterial(Index, Materials[Index]);
+			}
+		}
+	}
+	if (mScreenPlane && Defaults->mScreenPlane)
+	{
+		if (UStaticMesh* Plane = Defaults->mScreenPlane->GetStaticMesh(); Plane && !mScreenPlane->SetStaticMesh(Plane))
+		{
+			UE_LOG(LogTelescreen, Error, TEXT("%s: the screen plane could not be set"), *GetName());
+		}
+	}
+}
+
 void ATSBuildableScreen::BeginPlay()
 {
 	Super::BeginPlay();
 
 	const FVector2D Size = GetScreenWorldSize();
-	UE_LOG(LogTelescreen, Log, TEXT("%s began play at %s, screen %.0f x %.0f cm, %d queued, playing %d"), *GetName(),
-		*GetActorLocation().ToCompactString(), Size.X, Size.Y, mMediaState.Queue.Num(), mMediaState.CurrentIndex);
+	UE_LOG(LogTelescreen, Log, TEXT("%s began play at %s, screen %.0f x %.0f cm, %d queued, playing %d (billboard %s, plane %s, material %s)"), *GetName(),
+		*GetActorLocation().ToCompactString(), Size.X, Size.Y, mMediaState.Queue.Num(), mMediaState.CurrentIndex,
+		mMeshComponentProxy && mMeshComponentProxy->GetStaticMesh() ? TEXT("ok") : TEXT("MISSING"), mScreenPlane && mScreenPlane->GetStaticMesh() ? TEXT("ok") : TEXT("MISSING"),
+		mScreenMaterial ? TEXT("ok") : TEXT("MISSING"));
 
 	if (HasAuthority())
 	{
