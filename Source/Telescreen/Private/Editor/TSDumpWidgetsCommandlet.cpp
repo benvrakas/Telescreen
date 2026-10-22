@@ -87,7 +87,20 @@ int32 UTSDumpWidgetsCommandlet::Main(const FString& Params)
 			{
 				continue;
 			}
-			Out.Add(FString::Printf(TEXT("  %s %s%s"), *It->GetCPPType(), *It->GetName(), CastField<FMulticastDelegateProperty>(*It) ? TEXT("  (event dispatcher)") : TEXT("")));
+			FString Type = It->GetCPPType();
+			// Element types of arrays and the members of struct properties, so Blueprint structs can be filled from C++.
+			if (const FArrayProperty* Array = CastField<FArrayProperty>(*It))
+			{
+				Type += TEXT("<") + Array->Inner->GetCPPType() + TEXT(">");
+				if (const FStructProperty* Inner = CastField<FStructProperty>(Array->Inner))
+				{
+					for (TFieldIterator<FProperty> Member(Inner->Struct); Member; ++Member)
+					{
+						Type += FString::Printf(TEXT(" {%s %s}"), *Member->GetCPPType(), *Member->GetName());
+					}
+				}
+			}
+			Out.Add(FString::Printf(TEXT("  %s %s%s"), *Type, *It->GetName(), CastField<FMulticastDelegateProperty>(*It) ? TEXT("  (event dispatcher)") : TEXT("")));
 		}
 		Out.Add(TEXT("functions (Blueprint-declared):"));
 		for (TFieldIterator<UFunction> It(Class, EFieldIteratorFlags::IncludeSuper); It; ++It)
