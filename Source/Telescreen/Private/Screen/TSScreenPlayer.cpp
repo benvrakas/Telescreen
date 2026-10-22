@@ -44,8 +44,10 @@ namespace
 
 	constexpr int32 StreamChunkBytes = 768;
 	constexpr int32 MaxStreamChunks = 1024;
-	// Upper bound for sending queued stream data, below the stream net rate so gameplay traffic keeps room.
+	// Least rate for sending queued stream data; it rises with the bitrate, staying below the connection's net rate.
 	constexpr double StreamPaceBytesPerSecond = 750000.0;
+	// Audio and chunk overhead on top of the video bitrate, kept out of the world host's limit.
+	constexpr uint32 StreamOverheadKbps = 200;
 	// How long the oldest queued chunk may wait before the bitrate is lowered, or the queue dropped.
 	constexpr double QueueLowerSeconds = 0.4;
 	constexpr double QueueDropSeconds = 1.0;
@@ -413,7 +415,7 @@ FIntPoint UTSScreenPlayer::ComputeBrowserSize() const
 	const ATSBuildableScreen* Screen = GetScreen();
 	const FVector2D Size = Screen ? Screen->GetScreenWorldSize() : FVector2D(2.0, 1.0);
 	const double Aspect = Size.Y > 1.0 ? FMath::Clamp(Size.X / Size.Y, 0.25, 8.0) : 2.0;
-	const int32 Height = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxVideoHeightKey, 720), 360, 1440);
+	const int32 Height = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::BrowserHeightKey, 720), 360, 1440);
 	const int32 Width = FMath::Clamp(int32(FMath::RoundToInt(Height * Aspect)) & ~1, 320, 3840);
 	return FIntPoint(Width, FMath::Clamp(int32(FMath::RoundToInt(Width / Aspect)) & ~1, 180, 2160));
 }
@@ -745,10 +747,51 @@ void UTSScreenPlayer::UpdateStreamSender()
 	{
 		CloseStreamSender();
 	}
+	if (bWant && SenderSession != 0)
+	{
+		const FSenderConfig Wanted = ComputeSenderConfig();
+		if (Wanted.Fps != SenderConfig.Fps || Wanted.Height != SenderConfig.Height || Wanted.Encoder != SenderConfig.Encoder)
+		{
+			UE_LOG(LogTelescreen, Log, TEXT("%s: stream settings changed; restarting the stream"), *GetNameSafe(GetOwner()));
+			CloseStreamSender();
+		}
+		else if (Wanted.Kbps != SenderConfig.Kbps)
+		{
+			UE_LOG(LogTelescreen, Log, TEXT("%s: stream bitrate setting %u -> %u kbps"), *GetNameSafe(GetOwner()), SenderConfig.Kbps, Wanted.Kbps);
+			SenderConfig.Kbps = WantedKbps = Wanted.Kbps;
+			if (CurrentKbps > WantedKbps)
+			{
+				CurrentKbps = WantedKbps;
+				if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+				{
+					Host->SendStreamControl(SenderSession, TSHostProtocol::EStreamControl::Bitrate, CurrentKbps);
+				}
+			}
+		}
+	}
 	if (bWant && SenderSession == 0)
 	{
 		OpenStreamSender();
 	}
+}
+
+UTSScreenPlayer::FSenderConfig UTSScreenPlayer::ComputeSenderConfig() const
+{
+	static const TCHAR* Encoders[] = {TEXT(""), TEXT("av1"), TEXT("hevc"), TEXT("h264"), TEXT("software")};
+	const ATSBuildableScreen* Screen = GetScreen();
+	const FTSStreamLimits Limits = Screen ? Screen->GetStreamLimits() : FTSStreamLimits();
+	FSenderConfig Config;
+	Config.Fps = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamFpsKey, 30), 10, FMath::Clamp(Limits.MaxFps, 10, 60)));
+	const int32 KbpsCap = FMath::Max(300, Limits.MaxKbps - int32(StreamOverheadKbps));
+	Config.Kbps = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamKbpsKey, 2500), 300, FMath::Min(20000, KbpsCap)));
+	Config.Height = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamHeightKey, 720), 240, FMath::Clamp(Limits.MaxHeight, 240, 2160)));
+	Config.Encoder = Encoders[FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamEncoderKey, 0), 0, 4)];
+	return Config;
+}
+
+double UTSScreenPlayer::PaceBytesPerSecond() const
+{
+	return FMath::Max(StreamPaceBytesPerSecond, (SenderConfig.Kbps + StreamOverheadKbps) * 125.0 * 1.5);
 }
 
 void UTSScreenPlayer::OpenStreamSender()
@@ -762,9 +805,10 @@ void UTSScreenPlayer::OpenStreamSender()
 	{
 		SenderListener = MakeShared<FTSStreamSenderListener>(this);
 	}
-	const uint32 Kbps = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamKbpsKey, 2500), 300, 20000));
-	const uint32 Fps = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamFpsKey, 30), 10, 60));
-	SenderSession = Host->OpenStreamSender(Session, Fps, Kbps, SenderListener.Get());
+	SenderConfig = ComputeSenderConfig();
+	const uint32 Kbps = SenderConfig.Kbps;
+	const uint32 Fps = SenderConfig.Fps;
+	SenderSession = Host->OpenStreamSender(Session, Fps, Kbps, SenderConfig.Height, SenderConfig.Encoder, SenderListener.Get());
 	SenderSource = Session;
 	CurrentKbps = WantedKbps = Kbps;
 	LastCongestion = 0.0;
@@ -772,9 +816,9 @@ void UTSScreenPlayer::OpenStreamSender()
 	ClearStreamQueue();
 	NextPacketId[0] = NextPacketId[1] = 0;
 	StreamStats = FText::GetEmpty();
-	TSNetRate::Raise(GetWorld(), TSNetRate::StreamRate);
-	UE_LOG(LogTelescreen, Log, TEXT("%s: streaming my source to %d viewer(s) at %u fps, %u kbps"), *GetNameSafe(GetOwner()), GetScreen() ? GetScreen()->GetViewerCount() : 0,
-		Fps, Kbps);
+	TSNetRate::Raise(GetWorld(), TSNetRate::RateFor(Kbps + StreamOverheadKbps));
+	UE_LOG(LogTelescreen, Log, TEXT("%s: streaming my source to %d viewer(s) at %u fps, %u kbps, up to %u lines, encoder '%s'"), *GetNameSafe(GetOwner()),
+		GetScreen() ? GetScreen()->GetViewerCount() : 0, Fps, Kbps, SenderConfig.Height, SenderConfig.Encoder.IsEmpty() ? TEXT("best") : *SenderConfig.Encoder);
 }
 
 void UTSScreenPlayer::CloseStreamSender()
@@ -882,9 +926,10 @@ void UTSScreenPlayer::FlushStreamQueue()
 	if (Now >= NextRateRaise)
 	{
 		NextRateRaise = Now + 2.0;
-		TSNetRate::Raise(GetWorld(), TSNetRate::StreamRate);
+		TSNetRate::Raise(GetWorld(), TSNetRate::RateFor(SenderConfig.Kbps + StreamOverheadKbps));
 	}
-	SendBudget = FMath::Min(StreamPaceBytesPerSecond * 0.1, SendBudget + (Now - SendBudgetAt) * StreamPaceBytesPerSecond);
+	const double Pace = PaceBytesPerSecond();
+	SendBudget = FMath::Min(Pace * 0.1, SendBudget + (Now - SendBudgetAt) * Pace);
 	SendBudgetAt = Now;
 	const APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
 	UNetConnection* Connection = Controller ? Controller->GetNetConnection() : nullptr;

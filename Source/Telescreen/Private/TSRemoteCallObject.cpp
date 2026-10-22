@@ -329,7 +329,7 @@ void UTSRemoteCallObject::Server_StreamChunk_Implementation(ATSBuildableScreen* 
 	{
 		return;
 	}
-	TSNetRate::Raise(Screen->GetWorld(), TSNetRate::StreamRate);
+	TSNetRate::Raise(Screen->GetWorld(), TSNetRate::RateFor(Screen->GetStreamLimits().MaxKbps));
 	for (const TWeakObjectPtr<APlayerController>& Watcher : Screen->GetWatchers())
 	{
 		if (!Watcher.IsValid())
@@ -377,7 +377,7 @@ void UTSRemoteCallObject::Server_SetWatching_Implementation(ATSBuildableScreen* 
 	}
 	if (bWatching)
 	{
-		TSNetRate::Raise(Screen->GetWorld(), TSNetRate::StreamRate);
+		TSNetRate::Raise(Screen->GetWorld(), TSNetRate::RateFor(Screen->GetStreamLimits().MaxKbps));
 	}
 	Screen->Server_SetWatcher(Viewer, bWatching);
 }

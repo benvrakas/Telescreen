@@ -48,6 +48,11 @@ public:
 	static const FString MaxStreamKbpsKey;
 	static const FString StreamKbpsKey;
 	static const FString StreamFpsKey;
+	static const FString StreamHeightKey;
+	static const FString StreamEncoderKey;
+	static const FString BrowserHeightKey;
+	static const FString MaxStreamHeightKey;
+	static const FString MaxStreamFpsKey;
 	static const FString ReceiveStreamsKey;
 	static const FString CurtainKeyKey;
 	static const FString StreamDisclaimerKey;

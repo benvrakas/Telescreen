@@ -1,4 +1,4 @@
-# Telescreen 0.1.0 beta 9: tester guide
+# Telescreen 0.1.0 beta 10: tester guide
 
 Thanks for testing! This is an early build. Please read "What works" first, so you know what to try and what is
 deliberately missing.
@@ -23,30 +23,35 @@ exist) but isn't needed for this test.
 
 - **Screens.** AWESOME Shop, Signs: **Telescreen Set** (25 FICSIT Coupons) unlocks the **Small Telescreen** (8 m x
   4 m) and **Large Telescreen** (16 m x 8 m), built like billboards. They can be rescaled with scaling mods.
-- **Synced videos.** Use a screen: paste a YouTube, Twitch or Vimeo link, **Play now** or **Add to queue**. Everyone
-  in the session sees and hears the same video at the same moment, with 3D sound from the screen. Pause, seek (-10 s /
-  +10 s), next, stop, a shared queue showing who added what, picture fit (letterbox / fill / stretch), screen names.
-- **Shared browser.** Screen panel, **Browser** tab, **Open the browser**. The first time, a dialog asks you to
-  confirm that others see everything in it. The browser's window then opens by itself: click and type in it; F8 or
-  holding Esc returns to the game, F8 opens it again. **Everyone near the screen sees and hears it**, streamed from
-  your PC through the game's connection (no ports to open). Web games that lock the mouse work.
-- **Shared window.** Screen panel, **Share a window** tab: your open windows are listed; **Share this window** shows
-  that one window of your PC (a video player, a game, a VM window...) on the screen with its own sound. It may stay behind the game but not be minimised. In the
-  screen window (F8) clicks and keys are sent to it; most normal apps accept them, games and VMs usually don't. By
-  default only the host and trusted players may share windows (see host settings).
+- **The screen panel** (use a screen): the screen's live picture, what it shows, **My volume** and **Show on HUD** on
+  the left; the tabs in the window's header pick the page on the right.
+- **Videos tab.** Paste a YouTube, Twitch or Vimeo link, **Play now** or **Add to queue**. Everyone in the session
+  sees and hears the same video at the same moment, with 3D sound from the screen. Seek bar, pause, next, stop, a
+  shared queue showing who added what (click an entry to play it). Playing a video on a screen that shows a browser,
+  window or desktop switches it back to videos.
+- **Browser tab.** **Open the browser** (a first-time notice asks you to confirm that others see everything in it).
+  Its window opens by itself: click and type in it; F8 or holding Esc returns to the game, F8 opens it again. Words in
+  the address box are searched (search engine in the settings). **Everyone near the screen sees and hears it**,
+  streamed from your PC through the game's connection. Web games that lock the mouse work.
+- **Share a window tab.** Your open windows are listed; click one to show it on the screen with its own sound. It may
+  stay behind the game but not be minimised. By default only the world host and trusted players may share windows.
+- **Remote desktop tab (VNC).** Address and password, **Connect** (or **Save** it for later). Mouse and keyboard go
+  to the computer in its window (F8); QEMU VMs send their sound. By default only the world host may use it.
+- **Viewer control.** While you share, the panel lists who watches; give one of them the mouse, or mouse and typing,
+  for 15 minutes (within the world host's limits). F10 takes it back. Viewers can click the picture to point at
+  something for everyone.
 - **Privacy.** While you share, a red line at the top of your HUD says what you share and how many watch. **F10**
   blanks it for everyone (you keep seeing it), F10 again shows it.
-- **Show on HUD.** A small picture-in-picture of a screen in a corner of your HUD, with its sound everywhere. F9 lists
-  all screens.
-- **Host settings** (Mods menu, Telescreen, When hosting): who can use the browser and share windows (everyone /
-  trusted players / only the host), a trusted players list, whether players can take over a screen in use, how many
-  screens may be in use at once, the stream rate cap, allowed video sites. The host (and admins on dedicated servers)
-  get a "Stop it (host)" button on screens other players use.
+- **Show on HUD** and **F9** (all screens).
+- **Settings** (Mods menu, Telescreen). *When you share*: stream resolution, bitrate, frame rate, encoder, browser
+  page size, start page, search engine. *Rules for this world (world host)*: who may use each mode, trusted players,
+  viewer control limits, stream limits (bitrate, resolution, frame rate), allowed video sites. The world host gets a
+  "Stop it (world host)" button on screens others use.
 
 ## What does not exist yet
 
-Remote desktops (RDP/VNC), direct connections between players (streams always go through the host), giving other
-players control of your browser, the in-game host settings panel. Don't look for them.
+RDP (VNC works), direct connections between players (streams always go through the world host), an in-game panel for
+the world host's rules, clicking the 3D screen directly. Don't look for them.
 
 ## Please test (multiplayer)
 
@@ -63,7 +68,7 @@ Host a world with one friend joining (listen server). Everybody does the same ch
 6. **Curtain:** the one sharing presses F10: the other sees "They paused the stream"; F10 again brings it back.
 7. **Window:** the host shares a window (e.g. a video player or a music app). The friend sees and hears it. The
    friend tries too: by default they get "Only trusted players can share a window"; the host adds the friend's name
-   to Trusted players (Mods menu, Telescreen, When hosting) and the friend tries again.
+   to Trusted players (Mods menu, Telescreen, Rules for this world) and the friend tries again.
 8. Walk 150+ m away: the screen stops playing on your PC and resumes when you come back (for streams, the sharer's
    HUD line drops to 0 watching).
 9. Show on HUD (panel button): picture and sound follow you, also for a shared browser.
@@ -71,6 +76,9 @@ Host a world with one friend joining (listen server). Everybody does the same ch
 11. Leave and rejoin; close the game while sharing (the helper should stop with it; check Task Manager for a leftover
     `TelescreenHost.exe` afterwards, there should be none).
 12. While sharing, does movement or building lag for the one sharing or the one watching? Tell us your upload speed.
+13. **New in beta 10:** do the panel's header tabs (with icons) switch pages? Is the panel a good size on your screen?
+    Change the stream resolution (e.g. 480 and 1080) while sharing: the viewer's picture should get softer / sharper
+    after a second. The world host lowers "Highest stream resolution" to 480: the sharer's stream follows.
 
 ## If something breaks: send these
 
@@ -84,8 +92,8 @@ Host a world with one friend joining (listen server). Everybody does the same ch
   Diagnostics, "Mirror picture left-right" / "Flip picture upside down". Please tell us which one fixed it.
 - The first video on a PC takes 5-10 seconds to start (YouTube lookup).
 - Streams go through the host's upload; a slow upload lowers quality (the stream adapts) and each lost packet
-  freezes the picture until the next full frame. Lower "Stream quality (kbps)" in Mods menu, Telescreen, Browser and
-  window, if it freezes often.
+  freezes the picture until the next full frame. Lower "Stream bitrate (kbps)" (Mods menu, Telescreen, When you
+  share) if it freezes often.
 - A shared window's sound needs Windows 11 or a recent Windows 10; you hear the window yourself as usual, others hear
   it from the screen.
 - Only one picture-in-picture at a time; the window can't be dragged or resized yet.

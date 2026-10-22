@@ -6,6 +6,11 @@
 
 extern "C"
 {
+#include <libswscale/swscale.h>
+}
+
+extern "C"
+{
 #include <libavcodec/avcodec.h>
 #include <libavutil/channel_layout.h>
 }
@@ -84,6 +89,7 @@ FStreamSenderSession::~FStreamSenderSession()
 	avcodec_free_context(&AudioCodec);
 	av_frame_free(&AudioFrame);
 	av_packet_free(&AudioPacket);
+	sws_freeContext(Scaler);
 	LOG_INFO("session %u: stream sender closed", Params.SessionId);
 }
 
@@ -135,6 +141,7 @@ void FStreamSenderSession::RunVideo()
 	FStreamEncoder Encoder;
 	int EncWidth = 0, EncHeight = 0, EncKbps = 0;
 	std::vector<uint8_t> Frame;
+	int FrameWidth = 0, FrameHeight = 0;
 	const double Interval = 1.0 / std::max(1, Params.Fps);
 	double NextFrame = NowSeconds(), NextReport = NowSeconds() + 1.0, LastKey = 0.0;
 	uint64_t Bytes = 0;
@@ -149,21 +156,38 @@ void FStreamSenderSession::RunVideo()
 			continue;
 		}
 		NextFrame = std::max(NextFrame + Interval, Now - Interval);
-		int Width = 0, Height = 0;
 		{
 			std::lock_guard<std::mutex> Lock(FrameMutex);
 			if (!bFresh && Frame.empty()) continue;
 			if (bFresh)
 			{
 				Frame.swap(Latest);
-				Width = LatestWidth;
-				Height = LatestHeight;
+				FrameWidth = LatestWidth;
+				FrameHeight = LatestHeight;
 				bFresh = false;
 			}
-			else
+		}
+		int Width = FrameWidth, Height = FrameHeight;
+		// Scaled to the stream resolution (the sharer's setting within the world host's limit).
+		const uint8_t* Pixels = Frame.data();
+		// Odd widths go through the scaler too, so the encoder's rows line up.
+		const bool bTooTall = Params.MaxHeight > 0 && Height > Params.MaxHeight;
+		if (bTooTall || (Width & 1))
+		{
+			const int OutHeight = std::max(2, (bTooTall ? Params.MaxHeight : Height) & ~1);
+			const int OutWidth = std::max(2, int(int64_t(Width) * OutHeight / Height) & ~1);
+			Scaler = sws_getCachedContext(Scaler, Width, Height, AV_PIX_FMT_BGRA, OutWidth, OutHeight, AV_PIX_FMT_BGRA, SWS_AREA, nullptr, nullptr, nullptr);
+			if (Scaler)
 			{
-				Width = EncWidth;
-				Height = EncHeight;
+				Scaled.resize(size_t(OutWidth) * OutHeight * 4);
+				const uint8_t* Src[1] = {Frame.data()};
+				const int SrcStride[1] = {Width * 4};
+				uint8_t* Dst[1] = {Scaled.data()};
+				const int DstStride[1] = {OutWidth * 4};
+				sws_scale(Scaler, Src, SrcStride, 0, Height, Dst, DstStride);
+				Pixels = Scaled.data();
+				Width = OutWidth;
+				Height = OutHeight;
 			}
 		}
 		Width &= ~1;
@@ -193,7 +217,7 @@ void FStreamSenderSession::RunVideo()
 		const bool bKey = KeyframeWanted.exchange(false) || Now - LastKey > 4.0;
 		if (bKey) LastKey = Now;
 		std::vector<FEncodedPacket> Packets;
-		Encoder.Encode(Frame.data(), int64_t((Now - StartedAt) * 1000.0), bKey, Packets);
+		Encoder.Encode(Pixels, int64_t((Now - StartedAt) * 1000.0), bKey, Packets);
 		for (FEncodedPacket& Encoded : Packets)
 		{
 			FStreamPacket Packet;

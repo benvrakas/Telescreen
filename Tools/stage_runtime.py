@@ -39,7 +39,16 @@ COMPONENTS = {
             *[(os.path.join(FFMPEG, 'bin', f'{dll}.dll'), f'{dll}.dll')
               for dll in ('avformat-62', 'avcodec-62', 'avutil-60', 'swscale-9', 'swresample-6')],
             (os.path.join(FFMPEG, 'LICENSE.txt'), 'LICENSE-FFmpeg.txt'),
+            (os.path.join(MOD, 'Helper', 'third_party', 'miniz', 'LICENSE'), 'LICENSE-miniz.txt'),
         ],
+        'texts': {
+            'SOURCE.txt': "TelescreenHost.exe: Telescreen's helper, built from the mod's Helper/ sources.\n"
+                          'It includes miniz 3.0.2 (MIT, see LICENSE-miniz.txt): https://github.com/richgel999/miniz\n'
+                          'FFmpeg n8.1.3, LGPL v3 (built with --enable-version3), shared build by BtbN/FFmpeg-Builds; the DLLs are\n'
+                          'unmodified and can be replaced with another build of the same version.\n'
+                          'FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/n8.1.3\n'
+                          'Build scripts and release: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-23-14-55\n',
+        },
     },
     'fetcher': {
         'version': 'yt-dlp-2026.08.19+quickjs-ng-0.17.0',
@@ -51,6 +60,8 @@ COMPONENTS = {
         'texts': {
             'LICENSE-yt-dlp.txt': 'yt-dlp is released into the public domain under the Unlicense: https://unlicense.org/\n'
                                   'Source: https://github.com/yt-dlp/yt-dlp\n',
+            'SOURCE.txt': 'yt-dlp 2026.08.19 (Unlicense): https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19\n'
+                          'QuickJS-ng 0.17.0 (MIT, see LICENSE-QuickJS.txt): https://github.com/quickjs-ng/quickjs\n',
         },
     },
     'browser': {
@@ -62,6 +73,11 @@ COMPONENTS = {
             (os.path.join(CEF, 'LICENSE.txt'), 'LICENSE-CEF.txt'),
             (os.path.join(CEF, 'CREDITS.html'), 'CREDITS-Chromium.html'),
         ],
+        'texts': {
+            'SOURCE.txt': 'Chromium Embedded Framework 152.0.15 with Chromium 152.0.7977.169, minimal distribution, unmodified.\n'
+                          'CEF (BSD, see LICENSE-CEF.txt): https://bitbucket.org/chromiumembedded/cef\n'
+                          'Chromium and its third-party components: see CREDITS-Chromium.html. https://www.chromium.org\n',
+        },
     },
 }
 

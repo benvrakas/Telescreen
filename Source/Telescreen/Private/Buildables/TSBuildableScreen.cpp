@@ -57,6 +57,7 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mCurtain);
 	DOREPLIFETIME(ATSBuildableScreen, mViewerStates);
 	DOREPLIFETIME(ATSBuildableScreen, mGrants);
+	DOREPLIFETIME(ATSBuildableScreen, mStreamLimits);
 }
 
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
@@ -334,6 +335,7 @@ void ATSBuildableScreen::Server_TakeControl(APlayerState* Requester, ETSScreenMo
 	SyncViewers();
 	mCurtain = false;
 	mGrants.Reset();
+	RefreshStreamLimits();
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s took control (mode %d, %s)%s"), *GetName(), *mControllerName, int32(Mode), *mSourceUrl,
 		Previous.IsEmpty() || Previous == mControllerName ? TEXT("") : *FString::Printf(TEXT(" from %s"), *Previous));
 	FlushNetDormancy();
@@ -533,6 +535,21 @@ bool ATSBuildableScreen::Server_AllowStreamBytes(int32 Bytes)
 	return true;
 }
 
+bool ATSBuildableScreen::RefreshStreamLimits()
+{
+	FTSStreamLimits Limits;
+	Limits.MaxKbps = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamKbpsKey, 8000), 500, 100000);
+	Limits.MaxHeight = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamHeightKey, 1080), 240, 2160);
+	Limits.MaxFps = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamFpsKey, 60), 10, 60);
+	if (Limits == mStreamLimits)
+	{
+		return false;
+	}
+	mStreamLimits = Limits;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stream limits %d kbps, %d lines, %d fps"), *GetName(), Limits.MaxKbps, Limits.MaxHeight, Limits.MaxFps);
+	return true;
+}
+
 void ATSBuildableScreen::CheckController()
 {
 	if (mWatchers.RemoveAll([](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid(); }) > 0)
@@ -545,6 +562,11 @@ void ATSBuildableScreen::CheckController()
 	if (mMode != ETSScreenMode::SyncedMedia && !IsValid(mController))
 	{
 		Server_ReleaseControl(TEXT("controller left"));
+	}
+	if (mMode != ETSScreenMode::SyncedMedia && RefreshStreamLimits())
+	{
+		FlushNetDormancy();
+		ForceNetUpdate();
 	}
 	const double Now = GetServerTime();
 	if (mGrants.RemoveAll([Now](const FTSInputGrant& Grant) { return Grant.ExpiresAt <= Now; }) > 0)

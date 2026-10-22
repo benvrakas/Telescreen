@@ -44,6 +44,7 @@ namespace
 		bool SelfTestVnc = false;
 		std::string VncPassword;
 		double LossPercent = 0.0;
+		int StreamHeight = 0;
 		FEncodeBenchArgs Bench;
 		bool bBench = false;
 		double Seconds = 12.0, Start = 0.0, SeekAt = -1.0, SeekTo = 0.0, PauseAt = -1.0, ResumeAt = -1.0;
@@ -58,6 +59,7 @@ namespace
 			if (Key == L"--pipe") Args.Pipe = Value;
 			else if (Key == L"--log") Args.Log = Value;
 			else if (Key == L"--ytdlp") Args.YtDlp = Value;
+			else if (Key == L"--stream-height") Args.StreamHeight = _wtoi(Value.c_str());
 			else if (Key == L"--jsruntime") Args.JsRuntime = Value;
 			else if (Key == L"--browserdir") Args.BrowserDir = Value;
 			else if (Key == L"--browserdata") Args.BrowserData = Value;
@@ -415,7 +417,10 @@ namespace
 				Params.BitrateKbps = int(std::clamp<uint32_t>(R.U32(), 200, 50000));
 				Params.bAllowSoftware = R.U8() != 0;
 				Params.Prefer = R.Str();
+				Params.MaxHeight = int(std::clamp<uint32_t>(R.U32(), 0, 4320));
 				if (!R.Ok) break;
+				LOG_INFO("session %u: stream sender %d fps %d kbps, up to %d lines, encoder '%s'", Params.SessionId, Params.Fps, Params.BitrateKbps,
+					Params.MaxHeight, Params.Prefer.c_str());
 				std::lock_guard<std::mutex> Lock(SessionsMutex);
 				auto Existing = Sessions.find(Params.SessionId);
 				if (Existing != Sessions.end())
@@ -677,6 +682,7 @@ namespace
 		SenderParams.BitrateKbps = Args.Bench.Settings.BitrateKbps;
 		SenderParams.Prefer = Args.Bench.Settings.Prefer;
 		SenderParams.bAllowSoftware = Args.Bench.Settings.bAllowSoftware;
+		SenderParams.MaxHeight = Args.StreamHeight;
 		auto Sender = std::make_unique<FStreamSenderSession>(SenderParams, SenderEvents, Deliver);
 
 		// Consume audio like the game's mixer and ask for a keyframe after losses, like the mod.

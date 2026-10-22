@@ -43,6 +43,8 @@ struct FSenderParams
 	int AudioKbps = 96;
 	bool bAllowSoftware = false;
 	std::string Prefer;
+	// Frames taller than this are scaled down (keeping the shape) before encoding; 0 keeps the source size.
+	int MaxHeight = 0;
 };
 
 // Encodes another session's frames and audio for a live stream and hands the packets to the mod.
@@ -74,6 +76,10 @@ private:
 	std::vector<uint8_t> Latest;
 	int LatestWidth = 0, LatestHeight = 0;
 	bool bFresh = false;
+
+	// Video thread only: scaling to the stream resolution.
+	struct SwsContext* Scaler = nullptr;
+	std::vector<uint8_t> Scaled;
 
 	std::mutex AudioMutex;
 	AVCodecContext* AudioCodec = nullptr;

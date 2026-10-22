@@ -5,9 +5,11 @@
 #include "Components/Button.h"
 #include "Components/EditableText.h"
 #include "Components/EditableTextBox.h"
+#include "Components/CanvasPanel.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/ScrollBox.h"
+#include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -23,6 +25,7 @@ namespace
 	const TCHAR* TabButtonClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/Widget_SlidingTabs_Button.Widget_SlidingTabs_Button_C");
 	const TCHAR* InputBoxClass = TEXT("/Game/FactoryGame/Interface/UI/Menu/Widget_InputBox.Widget_InputBox_C");
 	const TCHAR* ScrollBoxClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/Widget_Scrollbox.Widget_Scrollbox_C");
+	const TCHAR* ListButtonClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/Widget_ListButton.Widget_ListButton_C");
 
 	UClass* LoadWidgetClass(const TCHAR* Path)
 	{
@@ -127,6 +130,60 @@ namespace
 		return Property ? Property->GetObjectPropertyValue_InContainer(Object) : nullptr;
 	}
 
+	void BindDispatcher(UObject* Object, FName Dispatcher, UObject* Handler, FName Function)
+	{
+		FMulticastDelegateProperty* Property = Object && Handler && !Function.IsNone() ? FindFProperty<FMulticastDelegateProperty>(Object->GetClass(), Dispatcher) : nullptr;
+		if (!Property)
+		{
+			if (Object)
+			{
+				UE_LOG(LogTelescreen, Warning, TEXT("UI: %s has no event %s"), *Object->GetClass()->GetName(), *Dispatcher.ToString());
+			}
+			return;
+		}
+		FScriptDelegate Delegate;
+		Delegate.BindUFunction(Handler, Function);
+		Property->AddDelegate(Delegate, Object);
+	}
+
+	// Sets each parameter in order: ints to int properties, bools to bool properties.
+	bool CallIntBool(UObject* Object, FName Name, int32 Int, bool Bool)
+	{
+		return Call(Object, Name, [&](UFunction* Function, uint8* Params)
+		{
+			for (TFieldIterator<FProperty> It(Function); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+			{
+				if (FIntProperty* AsInt = CastField<FIntProperty>(*It))
+				{
+					AsInt->SetPropertyValue_InContainer(Params, Int);
+				}
+				else if (FBoolProperty* AsBool = CastField<FBoolProperty>(*It))
+				{
+					AsBool->SetPropertyValue_InContainer(Params, Bool);
+				}
+			}
+		});
+	}
+
+	void SetVisibilityProperty(UObject* Object, FName Name, ESlateVisibility Value)
+	{
+		FProperty* Property = Object ? FindFProperty<FProperty>(Object->GetClass(), Name) : nullptr;
+		if (FEnumProperty* AsEnum = CastField<FEnumProperty>(Property))
+		{
+			AsEnum->GetUnderlyingProperty()->SetIntPropertyValue(AsEnum->ContainerPtrToValuePtr<void>(Object), int64(Value));
+		}
+		else if (FByteProperty* AsByte = CastField<FByteProperty>(Property))
+		{
+			AsByte->SetPropertyValue_InContainer(Object, uint8(Value));
+		}
+	}
+
+	// The generated header tab buttons of a vanilla window (children of its tabs container's canvas).
+	UPanelWidget* TabButtonsPanel(UWidget* Window)
+	{
+		return Cast<UPanelWidget>(GetObjectProperty(GetObjectProperty(Window, TEXT("Widget_TabsContainer")), TEXT("mContainer")));
+	}
+
 	void BindClick(UButton* Button, UObject* Handler, FName Function)
 	{
 		if (Button && Handler && !Function.IsNone())
@@ -210,6 +267,84 @@ void TSVanillaUI::SetWindowTitle(UWidget* Window, const FText& Title)
 	{
 		SetTextProperty(AsUser, TEXT("mTitleText"), Title);
 		CallText(AsUser, TEXT("SetTitle"), Title);
+	}
+}
+
+bool TSVanillaUI::SetWindowTabs(UWidget* Window, TArrayView<const FText> Names, TArrayView<const TCHAR* const> Icons, UObject* Handler, FName ClickFunction,
+	FName GeneratedFunction)
+{
+	UUserWidget* AsUser = Cast<UUserWidget>(Window);
+	FArrayProperty* Tabs = AsUser ? FindFProperty<FArrayProperty>(AsUser->GetClass(), TEXT("mTabs")) : nullptr;
+	FStructProperty* Inner = Tabs ? CastField<FStructProperty>(Tabs->Inner) : nullptr;
+	if (!Inner)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("UI: the vanilla window has no header tabs; using tab buttons"));
+		return false;
+	}
+	FTextProperty* TextMember = nullptr;
+	FObjectPropertyBase* TextureMember = nullptr;
+	for (TFieldIterator<FProperty> It(Inner->Struct); It; ++It)
+	{
+		if (!TextMember && It->GetName().StartsWith(TEXT("Text")))
+		{
+			TextMember = CastField<FTextProperty>(*It);
+		}
+		if (!TextureMember && It->GetName().StartsWith(TEXT("Texture")))
+		{
+			TextureMember = CastField<FObjectPropertyBase>(*It);
+		}
+	}
+	if (!TextMember)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("UI: the window's tab entries have no text member; using tab buttons"));
+		return false;
+	}
+	FScriptArrayHelper Array(Tabs, Tabs->ContainerPtrToValuePtr<void>(AsUser));
+	Array.EmptyValues();
+	for (int32 I = 0; I < Names.Num(); ++I)
+	{
+		uint8* Entry = Array.GetRawPtr(Array.AddValue());
+		TextMember->SetPropertyValue_InContainer(Entry, Names[I]);
+		if (TextureMember && Icons.IsValidIndex(I) && Icons[I])
+		{
+			UTexture* Icon = LoadObject<UTexture>(nullptr, Icons[I]);
+			if (!Icon)
+			{
+				UE_LOG(LogTelescreen, Warning, TEXT("UI: tab icon %s not found"), Icons[I]);
+			}
+			TextureMember->SetObjectPropertyValue_InContainer(Entry, Icon);
+		}
+	}
+	BindDispatcher(AsUser, TEXT("OnTabButtonClicked"), Handler, ClickFunction);
+	if (UObject* Container = GetObjectProperty(AsUser, TEXT("Widget_TabsContainer")))
+	{
+		BindDispatcher(Container, TEXT("OnButtonClicked"), Handler, ClickFunction);
+		BindDispatcher(Container, TEXT("OnTabsGenerated"), Handler, GeneratedFunction);
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("UI: %d header tabs set on the window"), Names.Num());
+	return true;
+}
+
+bool TSVanillaUI::SelectWindowTab(UWidget* Window, int32 Index)
+{
+	UPanelWidget* Panel = TabButtonsPanel(Window);
+	for (int32 I = 0; Panel && I < Panel->GetChildrenCount(); ++I)
+	{
+		UWidget* Button = Panel->GetChildAt(I);
+		FIntProperty* Target = Button ? FindFProperty<FIntProperty>(Button->GetClass(), TEXT("mTargetIndex")) : nullptr;
+		if (Target && Target->GetPropertyValue_InContainer(Button) == Index && Button->GetVisibility() != ESlateVisibility::Collapsed)
+		{
+			return Call(Button, TEXT("SimulateClick"), [](UFunction*, uint8*) {});
+		}
+	}
+	return false;
+}
+
+void TSVanillaUI::SetWindowTabVisible(UWidget* Window, int32 Index, bool bVisible)
+{
+	if (UUserWidget* AsUser = Cast<UUserWidget>(Window))
+	{
+		CallIntBool(AsUser, TEXT("SetTabVisibility"), Index, bVisible);
 	}
 }
 
@@ -373,6 +508,46 @@ void TSVanillaUI::SetInputPassword(UWidget* InputBox, bool bPassword)
 	{
 		Inner->SetIsPassword(bPassword);
 	}
+}
+
+UWidget* TSVanillaUI::MakeListButton(UWidgetTree* Tree, const FText& Title, const FText& Description, bool bSelected, UObject* Handler, FName Function)
+{
+	if (UUserWidget* Button = MakeVanilla(Tree, ListButtonClass))
+	{
+		if (UButton* Inner = Cast<UButton>(GetObjectProperty(Button, TEXT("mRecipeButton"))))
+		{
+			SetTextProperty(Button, TEXT("mTitle"), Title);
+			SetTextProperty(Button, TEXT("mDescription"), Description);
+			SetVisibilityProperty(Button, TEXT("DescVisibility"), Description.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+			SetVisibilityProperty(Button, TEXT("iconVisibility"), ESlateVisibility::Collapsed);
+			SetBoolProperty(Button, TEXT("mIsSelected"), bSelected);
+			SetBoolProperty(Button, TEXT("mIsDeselectable"), false);
+			BindClick(Inner, Handler, Function);
+			return Button;
+		}
+		UE_LOG(LogTelescreen, Warning, TEXT("UI: the vanilla list button has no mRecipeButton; using a plain button"));
+	}
+	UButton* Plain = Tree->ConstructWidget<UButton>();
+	Plain->SetBackgroundColor(bSelected ? FLinearColor(0.6f, 0.32f, 0.05f) : FLinearColor(0.12f, 0.13f, 0.16f));
+	UVerticalBox* Lines = Tree->ConstructWidget<UVerticalBox>();
+	Lines->AddChildToVerticalBox(MakeText(Tree, Title, 14, FLinearColor::White));
+	if (!Description.IsEmpty())
+	{
+		Lines->AddChildToVerticalBox(MakeText(Tree, Description, 11, FLinearColor(0.65f, 0.7f, 0.76f)));
+	}
+	Plain->AddChild(Lines);
+	BindClick(Plain, Handler, Function);
+	return Plain;
+}
+
+UWidget* TSVanillaUI::MakeDivider(UWidgetTree* Tree)
+{
+	USizeBox* Size = Tree->ConstructWidget<USizeBox>();
+	Size->SetHeightOverride(1.f);
+	UBorder* Line = Tree->ConstructWidget<UBorder>();
+	Line->SetBrushColor(FLinearColor(1.f, 1.f, 1.f, 0.12f));
+	Size->AddChild(Line);
+	return Size;
 }
 
 UWidget* TSVanillaUI::MakeScrollBox(UWidgetTree* Tree, UWidget* Content)

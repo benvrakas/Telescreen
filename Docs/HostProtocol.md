@@ -33,7 +33,7 @@ handles serialize reads and writes on one pipe.
 | BrowserInput | mod → host | u32 session, u8 kind, then by kind: MouseMove: i32 x, i32 y, u32 modifiers; MouseButton: i32 x, i32 y, u8 button (0 left, 1 middle, 2 right), u8 up, u8 click count, u32 modifiers; Wheel: i32 x, i32 y, i32 dx, i32 dy, u32 modifiers; Key: u8 type, i32 Windows key code, i32 native key code, u16 character, u32 modifiers; Text: str; MouseLeave: none; Focus: u8 focused; PointerDelta: i32 dx, i32 dy (raw mouse movement while the page holds the pointer lock) |
 | BrowserCommand | mod → host | u32 session, u8 command, then Navigate: str url; Resize: u32 width, u32 height |
 | OpenLoopback | mod → host | u32 session, u32 source session, u32 fps, u32 kbps, str preferred encoder (M3 test: the source's frames through the stream encoder and decoder) |
-| OpenStreamSender | mod → host | u32 session, u32 source session, u32 fps, u32 kbps, u8 allow software encoding, str preferred encoder |
+| OpenStreamSender | mod → host | u32 session, u32 source session, u32 fps, u32 kbps, u8 allow software encoding, str preferred encoder (empty, a family `av1`/`hevc`/`h264`/`software`, or an FFmpeg encoder name), u32 max height (0: the source size; taller frames are scaled down keeping their shape) |
 | OpenStreamReceiver | mod → host | u32 session |
 | StreamPacket | both | u32 session, u8 kind (0 video, 1 audio), u8 flags (1 keyframe), u32 pts ms, u32 codec (AVCodecID), then the packet bytes to the end of the payload. Host → mod from senders, mod → host for receivers |
 | StreamControl | mod → host | u32 session, u8 command (0 keyframe, 1 bitrate kbps, 2 reset: drop video until the next keyframe), u32 value |

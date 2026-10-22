@@ -132,7 +132,7 @@ distance and the screens-at-once limit, and its sound is 2D by default.
 ### Settings
 
 `UTSConfig` (SML mod configuration, converted to SML's editor classes at start-up like BoomBoxPlus): performance,
-audio, browser and window (including live stream quality and the curtain key), privacy, "When hosting" (who may
+audio, "When you share" (browser, stream resolution, bitrate, frame rate and encoder, the curtain key), privacy, "Rules for this world" (who may
 change videos, allowed sites, longest video, adds per minute, sharing browsers, stream rate cap) and diagnostics (mirror the picture, in case a screen shows it flipped).
 
 ## Live streaming (M4, game connection)
@@ -166,8 +166,16 @@ reachable or forwarded.
   is visible to players nearby; pressing again accepts it (saved in the settings). The curtain (F10 or the panel's
   "Blank for everyone") stops the stream for everyone while the controller keeps using the browser; viewers see
   "They paused the stream". The panel and the window title show the controller how many players are watching.
-- **Settings.** Client: stream quality (kbps), stream frame rate, watch other players' browsers, curtain key. Host:
-  allow sharing browsers, most each stream may use.
+- **Settings.** The sharer (When you share): stream resolution (lines, default 720), bitrate (default 2500 kbps),
+  frame rate (30), encoder (best / prefer AV1 / HEVC / H.264 / software AV1), browser page size (lines the browser
+  draws at, separate from the stream resolution). Viewers: watch other players' streams. The world host (Rules for
+  this world): allow sharing, highest stream bitrate (default 8000 kbps, sound included), highest resolution (1080),
+  highest frame rate (60). The server replicates its limits on each screen (`FTSStreamLimits`, refreshed when a
+  player takes control and every 2 s while shared); the sharer's player encodes at the lower of its own setting and
+  the limit (bitrate: limit minus 200 kbps for sound and chunk overhead). Changing the resolution, frame rate or
+  encoder restarts the sender; a bitrate change applies at once. The helper scales taller frames down with swscale's
+  area filter, keeping their shape (`FSenderParams::MaxHeight`); the send pace and the raised net rates follow the
+  bitrate (`TSNetRate::RateFor`: at least 1.5 MB/s, otherwise twice the stream).
 
 The helper's sender seeds itself with the browser's current frame when it opens (`FrameTaps::SetRefresh`), so a
 viewer joining an unchanging page sees it at once; unchanged pages are re-encoded once per frame interval and get a
@@ -215,11 +223,18 @@ bound to each widget's inner `UButton`):
 | Vanilla widget | Used for | Members used |
 |---|---|---|
 | `Widget_Window_DarkMode` (`UFGWindow`) | window frame, title, close button | `WindowBody` named slot, `mTitleText`, `SetTitle`, `OnClose` |
+| `Widget_Window_DarkMode` header tabs | the panel's tabs (icon and name) | `mTabs` (`FImageAndText {Texture, Text}`, set before construction), `OnTabButtonClicked(ButtonIndex)`, `SetTabVisibility`; its `Widget_TabsContainer`'s `OnButtonClicked`, `OnTabsGenerated` and `mContainer` children (`Widget_SlidingTabs_Button`: `mTargetIndex`, `SimulateClick` to select a tab from code) |
+| `Widget_ListButton` | queue, shareable windows, saved remote desktops | `mTitle`, `mDescription`, `DescVisibility`, `iconVisibility` (collapsed), `mIsSelected` (the playing video), `mRecipeButton` |
 | `Widget_Window_ContentBackground_DarkMode` | panel and dialog background | (layered under the content) |
 | `Widget_StandardButton` | buttons | `mText`, `SetText`, `SetButtonStyle(orange, light, no background)`, `SetIsDisabled`, `mButton` |
-| `Widget_StandardButton` (orange = selected) | tabs | as buttons. `Widget_SlidingTabs_Button` takes its label and width from a `Widget_TabsContainer`, so standalone it shows as an empty box; it is only probed for the bold font |
+| `Widget_StandardButton` (orange = selected) | fallback tabs, shown only if the window makes no header tabs | as buttons. `Widget_SlidingTabs_Button` takes its label and width from a `Widget_TabsContainer`, so standalone it shows as an empty box; it is only probed for the bold font |
 | `Widget_InputBox` | text fields | `mPreviewText`, `SetPreviewText`, `isSearchbar` (off), `mInputBox` (UEditableText) |
 | `Widget_Scrollbox` | scrolling pages and lists | `mScrollableContent` named slot |
+
+The panel is sized to the viewport (about 62% wide, 1000-1400 UI units; pages up to 80% of the height) in two
+columns: the screen's live picture, status, My volume, Show on HUD and the sharing card (controls and viewers) on the
+left, the selected tab's page on the right. Header tab icons are the game's monochrome icons (Play, Explorer,
+Portal, PortalSatellite, Cogwheel).
 
 Plain text uses the game's UI font, read from the input box's and tab button's text blocks. Every maker falls back to
 a plain UMG widget (and logs `UI: vanilla widget ... not found`) if a class is missing after a game update. The

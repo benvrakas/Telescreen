@@ -72,6 +72,24 @@ struct TELESCREEN_API FTSInputGrant
 	double ExpiresAt = 0.0;
 };
 
+// The world host's limits for live streams from a screen, replicated so the sharer's PC encodes within them.
+USTRUCT()
+struct TELESCREEN_API FTSStreamLimits
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 MaxKbps = 8000;
+
+	UPROPERTY()
+	int32 MaxHeight = 1080;
+
+	UPROPERTY()
+	int32 MaxFps = 60;
+
+	bool operator==(const FTSStreamLimits& Other) const { return MaxKbps == Other.MaxKbps && MaxHeight == Other.MaxHeight && MaxFps == Other.MaxFps; }
+};
+
 // One input event from a viewer, relayed by the server to the controller. Positions are 0-65535 across the picture.
 USTRUCT()
 struct TELESCREEN_API FTSViewerInput

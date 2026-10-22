@@ -31,6 +31,11 @@ const FString UTSConfig::AllowStreamingKey = TEXT("AllowStreaming");
 const FString UTSConfig::MaxStreamKbpsKey = TEXT("MaxStreamKbps");
 const FString UTSConfig::StreamKbpsKey = TEXT("StreamKbps");
 const FString UTSConfig::StreamFpsKey = TEXT("StreamFps");
+const FString UTSConfig::StreamHeightKey = TEXT("StreamHeight");
+const FString UTSConfig::StreamEncoderKey = TEXT("StreamEncoder");
+const FString UTSConfig::BrowserHeightKey = TEXT("BrowserHeight");
+const FString UTSConfig::MaxStreamHeightKey = TEXT("MaxStreamHeight");
+const FString UTSConfig::MaxStreamFpsKey = TEXT("MaxStreamFps");
 const FString UTSConfig::ReceiveStreamsKey = TEXT("ReceiveStreams");
 const FString UTSConfig::CurtainKeyKey = TEXT("CurtainKey");
 const FString UTSConfig::StreamDisclaimerKey = TEXT("StreamDisclaimerAccepted");
@@ -177,10 +182,16 @@ UTSConfig::UTSConfig()
 		TEXT("https://duckduckgo.com/?q=%s"));
 	AddBool(BrowserSection, KeepBrowserLoginsKey, LOCTEXT("KeepBrowserLogins", "Keep browser logins"),
 		LOCTEXT("KeepBrowserLoginsTip", "Remember sign-ins and cookies between sessions. Off: every browser starts clean. Anything you're signed in to is visible to players watching the screen."), false);
-	AddInt(BrowserSection, StreamKbpsKey, LOCTEXT("StreamKbps", "Stream quality (kbps)"),
-		LOCTEXT("StreamKbpsTip", "Video bitrate when you share your browser with other players. 2500 is sharp at 720p; lower it if your upload is slow."), 2500);
+	AddInt(BrowserSection, StreamHeightKey, LOCTEXT("StreamHeight", "Stream resolution (lines)"),
+		LOCTEXT("StreamHeightTip", "Height of the picture other players get from your browser, window or remote desktop, e.g. 480, 720 or 1080. Taller pictures are scaled down to it; the world host's limit applies. Higher needs more bitrate to look sharp."), 720);
+	AddInt(BrowserSection, StreamKbpsKey, LOCTEXT("StreamKbps", "Stream bitrate (kbps)"),
+		LOCTEXT("StreamKbpsTip", "Video bitrate of what you share, before it adapts to your connection. About 2500 for 720p, 5000 for 1080p; lower it if your upload is slow. The world host's limit applies."), 2500);
 	AddInt(BrowserSection, StreamFpsKey, LOCTEXT("StreamFps", "Stream frame rate"),
-		LOCTEXT("StreamFpsTip", "Frames per second of the shared browser: 30 or 60."), 30);
+		LOCTEXT("StreamFpsTip", "Frames per second of what you share: 30 or 60. The world host's limit applies."), 30);
+	AddInt(BrowserSection, StreamEncoderKey, LOCTEXT("StreamEncoder", "Stream encoder"),
+		LOCTEXT("StreamEncoderTip", "0: best your graphics card has (AV1, then HEVC, then H.264); 1: prefer AV1; 2: prefer HEVC; 3: prefer H.264; 4: software AV1 (no graphics card encoder, uses the CPU). Every player can watch any of them."), 0);
+	AddInt(BrowserSection, BrowserHeightKey, LOCTEXT("BrowserHeight", "Browser page size (lines)"),
+		LOCTEXT("BrowserHeightTip", "Height the built-in browser draws pages at (its width follows the screen's shape). Bigger shows more of a page in smaller text. Applies to browsers opened after the change."), 720);
 	AddString(BrowserSection, CurtainKeyKey, LOCTEXT("CurtainKey", "Privacy curtain key"),
 		LOCTEXT("CurtainKeyTip", "Blanks your shared browser for everyone (you still see it) and back. Key name, e.g. F10."), TEXT("F10"));
 	AddBool(BrowserSection, StreamDisclaimerKey, LOCTEXT("StreamDisclaimer", "I understand that shared browsers are visible to everyone"),
@@ -230,8 +241,12 @@ UTSConfig::UTSConfig()
 		LOCTEXT("AllowAnySiteTip", "Let players add links from sites that aren't in the list (each player's privacy setting still applies)."), false);
 	AddBool(Hosting, AllowStreamingKey, LOCTEXT("AllowStreaming", "Allow sharing browsers with other players"),
 		LOCTEXT("AllowStreamingTip", "Let a player's browser be streamed to everyone through this world's connection. Off: only the player using it sees it."), true);
-	AddInt(Hosting, MaxStreamKbpsKey, LOCTEXT("MaxStreamKbps", "Most each stream may use (kbps)"),
-		LOCTEXT("MaxStreamKbpsTip", "The server drops stream data above this rate."), 8000);
+	AddInt(Hosting, MaxStreamKbpsKey, LOCTEXT("MaxStreamKbps", "Highest stream bitrate (kbps)"),
+		LOCTEXT("MaxStreamKbpsTip", "Most each shared browser, window or remote desktop may send through this world's connection, sound included. Sharers' PCs keep below it; the server drops data above it."), 8000);
+	AddInt(Hosting, MaxStreamHeightKey, LOCTEXT("MaxStreamHeight", "Highest stream resolution (lines)"),
+		LOCTEXT("MaxStreamHeightTip", "Sharers' streams are scaled down to at most this height, e.g. 720 or 1080."), 1080);
+	AddInt(Hosting, MaxStreamFpsKey, LOCTEXT("MaxStreamFps", "Highest stream frame rate"),
+		LOCTEXT("MaxStreamFpsTip", "Most frames per second a sharer may stream."), 60);
 	AddBool(Hosting, AllowBrowserKey, LOCTEXT("AllowBrowser", "Allow the built-in browser"),
 		LOCTEXT("AllowBrowserTip", "Let players use the built-in browser on screens."), true);
 	AddInt(Hosting, BrowserRoleKey, LOCTEXT("BrowserRole", "Who can use the browser"),
@@ -307,6 +322,11 @@ namespace
 			{UTSConfig::PipWidthKey, {160.f, 1600.f}},
 			{UTSConfig::StreamKbpsKey, {300.f, 20000.f}},
 			{UTSConfig::StreamFpsKey, {10.f, 60.f}},
+			{UTSConfig::StreamHeightKey, {240.f, 2160.f}},
+			{UTSConfig::StreamEncoderKey, {0.f, 4.f}},
+			{UTSConfig::BrowserHeightKey, {360.f, 1440.f}},
+			{UTSConfig::MaxStreamHeightKey, {240.f, 2160.f}},
+			{UTSConfig::MaxStreamFpsKey, {10.f, 60.f}},
 			{UTSConfig::ReceiveStreamsKey, {0.f, 1.f}},
 			{UTSConfig::MaxStreamKbpsKey, {500.f, 100000.f}},
 			{UTSConfig::PipCornerKey, {0.f, 3.f}},

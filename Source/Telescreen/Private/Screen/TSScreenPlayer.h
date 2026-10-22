@@ -208,6 +208,17 @@ private:
 	double NextRateRaise = 0.0;
 	uint32 CurrentKbps = 0;
 	uint32 WantedKbps = 0;
+	// The sharer's stream settings within the world host's limits; the sender reopens when they change.
+	struct FSenderConfig
+	{
+		uint32 Fps = 30;
+		uint32 Kbps = 2500;
+		uint32 Height = 720;
+		FString Encoder;
+	};
+	FSenderConfig ComputeSenderConfig() const;
+	FSenderConfig SenderConfig;
+	double PaceBytesPerSecond() const;
 	double LastCongestion = 0.0;
 	double NextBitrateChange = 0.0;
 	void FlushStreamQueue();

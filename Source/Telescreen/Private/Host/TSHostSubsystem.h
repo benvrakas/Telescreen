@@ -122,7 +122,8 @@ public:
 	void SendBrowserCommand(uint32 Session, TSHostProtocol::ECommand Command, const TArray<uint8>& Body);
 
 	// Live stream, controller side: encodes SourceSession (a browser session); packets arrive as OnHostStreamPacket.
-	uint32 OpenStreamSender(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener);
+	// MaxHeight: taller frames are scaled down (0 keeps the source size). Encoder: empty, "av1", "hevc", "h264" or "software".
+	uint32 OpenStreamSender(uint32 SourceSession, uint32 Fps, uint32 Kbps, uint32 MaxHeight, const FString& Encoder, ITSHostSessionListener* Listener);
 
 	// Live stream, viewer side: decodes packets passed to SendStreamPacket into this session's picture and sound.
 	uint32 OpenStreamReceiver(ITSHostSessionListener* Listener);

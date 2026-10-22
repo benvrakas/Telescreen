@@ -46,9 +46,22 @@ bool FStreamEncoder::Open(const FEncoderSettings& Settings, std::string& Error)
 {
 	Close();
 	std::vector<std::string> Order;
-	if (!Settings.Prefer.empty()) Order.push_back(Settings.Prefer);
-	for (const char* Name : Ladder) Order.push_back(Name);
-	if (Settings.bAllowSoftware) Order.push_back("libsvtav1");
+	const std::string& Prefer = Settings.Prefer;
+	const bool bFamily = Prefer == "av1" || Prefer == "hevc" || Prefer == "h264" || Prefer == "software";
+	if (Prefer == "software") Order.push_back("libsvtav1");
+	else if (!Prefer.empty() && !bFamily) Order.push_back(Prefer);
+	if (bFamily && Prefer != "software")
+	{
+		for (const char* Name : Ladder)
+		{
+			if (std::string(Name).rfind(Prefer + "_", 0) == 0) Order.push_back(Name);
+		}
+	}
+	for (const char* Name : Ladder)
+	{
+		if (std::find(Order.begin(), Order.end(), Name) == Order.end()) Order.push_back(Name);
+	}
+	if ((Settings.bAllowSoftware || Prefer == "software") && std::find(Order.begin(), Order.end(), "libsvtav1") == Order.end()) Order.push_back("libsvtav1");
 	std::string Tried;
 	for (const std::string& Name : Order)
 	{

@@ -639,7 +639,7 @@ uint32 UTSHostSubsystem::OpenBrowser(const FString& Url, uint32 Width, uint32 He
 	return Session;
 }
 
-uint32 UTSHostSubsystem::OpenStreamSender(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener)
+uint32 UTSHostSubsystem::OpenStreamSender(uint32 SourceSession, uint32 Fps, uint32 Kbps, uint32 MaxHeight, const FString& Encoder, ITSHostSessionListener* Listener)
 {
 	if (!EnsureConnected())
 	{
@@ -653,9 +653,11 @@ uint32 UTSHostSubsystem::OpenStreamSender(uint32 SourceSession, uint32 Fps, uint
 	W.U32(Fps);
 	W.U32(Kbps);
 	W.U8(1);
-	W.Str(FString());
+	W.Str(Encoder);
+	W.U32(MaxHeight);
 	Send(EMsg::OpenStreamSender, W.Bytes);
-	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u streams session %u at %u fps, %u kbps"), Session, SourceSession, Fps, Kbps);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u streams session %u at %u fps, %u kbps, up to %u lines, encoder '%s'"), Session, SourceSession, Fps, Kbps, MaxHeight,
+		*Encoder);
 	return Session;
 }
 

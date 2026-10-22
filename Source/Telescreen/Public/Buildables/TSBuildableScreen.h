@@ -74,6 +74,9 @@ public:
 	// The players watching the stream (replicated, for the controller's grant list).
 	const TArray<TObjectPtr<APlayerState>>& GetViewerStates() const { return mViewerStates; }
 
+	// The world host's stream limits (replicated).
+	const FTSStreamLimits& GetStreamLimits() const { return mStreamLimits; }
+
 	// Current input grants (replicated); expired ones are removed on the server.
 	const TArray<FTSInputGrant>& GetGrants() const { return mGrants; }
 
@@ -225,6 +228,11 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	TArray<FTSInputGrant> mGrants;
+
+	UPROPERTY(Replicated)
+	FTSStreamLimits mStreamLimits;
+	// Server: reads the limits from this world's settings; true when they changed.
+	bool RefreshStreamLimits();
 
 	// Recent viewer input times per player (server), for the rate limit.
 	TMap<TWeakObjectPtr<const APlayerState>, TArray<double>> mViewerInputTimes;

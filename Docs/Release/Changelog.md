@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0 beta 10
+
+- **Bigger screen panel** in two columns: the screen's live picture, what it shows, My volume and the sharing card
+  on the left; the page on the right. Tabs are the game window's own header tabs, with icons. The queue, the
+  shareable windows and saved remote desktops are game-style list entries (click one to play, share or connect).
+- **Stream settings** (Mods menu, Telescreen, When you share): stream resolution (default 720 lines, taller pictures
+  are scaled down), bitrate, frame rate, and encoder (best, AV1, HEVC, H.264 or software AV1); browser page size is
+  its own setting now. Changes apply while you share.
+- **World host limits** (Rules for this world): highest stream bitrate, resolution and frame rate. Sharers' PCs keep
+  within them.
+- Streams above about 6 Mbps are no longer held back by a fixed send rate.
+
 ## 0.1.0 beta 9
 
 - Playing a video on a screen that shows a browser, window or remote desktop switches it back to videos (for the

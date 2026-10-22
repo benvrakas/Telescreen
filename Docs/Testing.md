@@ -88,3 +88,17 @@
 5. Dedicated server: same as 1 and 2; the server log has the `Server_Enqueue` and command lines and no helper.
 6. Browser (M2): when a client opens the browser, others see it (M4); Take over moves control; when the controller
    leaves the game, the screen goes back to its videos.
+
+## Stream settings (beta 10)
+
+Outside the game, the helper's stream self-test runs a browser through sender and receiver:
+
+```
+TelescreenHost.exe --selftest-stream https://example.com --browserdir Resources\Runtime\browser --browserdata <dir>
+  [--stream-height 480] [--prefer av1|hevc|h264|software] [--kbps 1500] --seconds 6 --log <file>
+```
+
+Verified 2026-10-22: `--stream-height 480 --prefer h264` encodes the 1280x720 browser as h264_nvenc 852x480 at 30 fps
+(166 packets, none dropped); `--prefer hevc` picks hevc_nvenc. In game: change Stream resolution / bitrate / encoder
+while sharing (the sharer's log shows "stream settings changed; restarting the stream"); the world host lowers the
+highest resolution and the sharer's stream follows within a few seconds.

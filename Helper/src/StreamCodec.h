@@ -23,7 +23,8 @@ struct FEncoderSettings
 	int Height = 720;
 	int Fps = 30;
 	int BitrateKbps = 3000;
-	// Empty: best available. Otherwise an FFmpeg encoder name to try first (e.g. "hevc_nvenc").
+	// Empty: best available. "av1", "hevc", "h264" or "software" (SVT-AV1): that family first. Otherwise an FFmpeg
+	// encoder name to try first (e.g. "hevc_nvenc").
 	std::string Prefer;
 	bool bAllowSoftware = false;
 	// Seconds between keyframes (keyframes can also be forced per frame).

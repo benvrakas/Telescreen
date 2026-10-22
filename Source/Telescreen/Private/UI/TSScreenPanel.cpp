@@ -1,10 +1,12 @@
 #include "UI/TSScreenPanel.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Buildables/TSBuildableScreen.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
@@ -14,6 +16,8 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
+#include "Components/WrapBox.h"
+#include "Components/WrapBoxSlot.h"
 #include "EngineUtils.h"
 #include "FGHUD.h"
 #include "GameFramework/PlayerController.h"
@@ -123,6 +127,11 @@ UWidget* UTSScreenPanel::MakeButton(const FText& Label, ETSPanelAction Action, i
 		bPrimary ? TSVanillaUI::EButtonStyle::Primary : TSVanillaUI::EButtonStyle::Normal);
 }
 
+UWidget* UTSScreenPanel::MakeListButton(const FText& Title, const FText& Description, bool bSelected, ETSPanelAction Action, int32 Index)
+{
+	return TSVanillaUI::MakeListButton(WidgetTree, Title, Description, bSelected, MakeHandler(Action, Index), GET_FUNCTION_NAME_CHECKED(UTSPanelAction, HandleClicked));
+}
+
 UWidget* UTSScreenPanel::MakeInput(const FText& Hint, ETSPanelAction OnEnter)
 {
 	return TSVanillaUI::MakeInputBox(WidgetTree, Hint, MakeHandler(OnEnter, INDEX_NONE), GET_FUNCTION_NAME_CHECKED(UTSPanelAction, HandleCommitted));
@@ -197,106 +206,141 @@ void UTSScreenPanel::BuildTree()
 		}
 		return Slot;
 	};
+	auto Heading = [this](const FText& Text) { return MakeText(Text, 14, Accent, true); };
+	auto MakeSlider = [this](float Min, float Max)
+	{
+		USlider* Slider = WidgetTree->ConstructWidget<USlider>();
+		Slider->SetMinValue(Min);
+		Slider->SetMaxValue(Max);
+		Slider->SetSliderBarColor(FLinearColor(0.2f, 0.22f, 0.26f));
+		Slider->SetSliderHandleColor(Accent);
+		return Slider;
+	};
 
-	// The vanilla window frame (title = screen name, close button) around the content background; the confirm dialog
-	// overlays the content.
+	// The vanilla window frame (title = screen name, header tabs, close button) around the content background; the
+	// confirm dialog overlays the content. Sizes follow the viewport (NativeConstruct).
 	UOverlay* Layers = WidgetTree->ConstructWidget<UOverlay>();
-	UVerticalBox* Root = MakeVBox();
-	Layers->AddChildToOverlay(Root);
-	USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
-	Size->SetWidthOverride(900.f);
+	UHorizontalBox* Columns = MakeHBox();
+	Layers->AddChildToOverlay(Columns);
+	PanelSize = WidgetTree->ConstructWidget<USizeBox>();
+	PanelSize->SetWidthOverride(1180.f);
 	Window = TSVanillaUI::MakeWindow(WidgetTree, LOCTEXT("PanelTitle", "Telescreen"), TSVanillaUI::MakeContentBackground(WidgetTree, Layers), this,
 		GET_FUNCTION_NAME_CHECKED(UTSScreenPanel, OnWindowClosed));
-	Size->AddChild(Window);
-	WidgetTree->RootWidget = Size;
+	PanelSize->AddChild(Window);
+	WidgetTree->RootWidget = PanelSize;
 
-	// Header: what the screen shows, Show on HUD; the sharing bar; server notices.
-	UHorizontalBox* Header = MakeHBox();
-	StatusText = MakeText(FText::GetEmpty(), 17, FLinearColor::White, true);
-	AddToHBox(Header, StatusText, true);
-	PipButton = MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip);
-	AddToHBox(Header, MakeText(LOCTEXT("MyVolume", "My volume"), 13, Muted));
-	VolumeSlider = WidgetTree->ConstructWidget<USlider>();
-	VolumeSlider->SetMinValue(0.f);
-	VolumeSlider->SetMaxValue(2.f);
+	// Left column: the screen's picture, what it shows, my volume, and the sharing card.
+	UVerticalBox* Left = MakeVBox();
+	USizeBox* LeftSize = WidgetTree->ConstructWidget<USizeBox>();
+	LeftSize->SetWidthOverride(LeftColumnWidth);
+	LeftSize->AddChild(Left);
+	UHorizontalBoxSlot* LeftSlot = Columns->AddChildToHorizontalBox(LeftSize);
+	LeftSlot->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
+	LeftSlot->SetVerticalAlignment(VAlign_Top);
+
+	PreviewSize = WidgetTree->ConstructWidget<USizeBox>();
+	PreviewSize->SetWidthOverride(LeftColumnWidth);
+	PreviewSize->SetHeightOverride(LeftColumnWidth * 9.f / 16.f);
+	UBorder* PreviewFrame = WidgetTree->ConstructWidget<UBorder>();
+	PreviewFrame->SetBrushColor(FLinearColor::Black);
+	PreviewFrame->SetPadding(FMargin(0.f));
+	PreviewImage = WidgetTree->ConstructWidget<UImage>();
+	PreviewFrame->AddChild(PreviewImage);
+	PreviewSize->AddChild(PreviewFrame);
+	AddRow(Left, PreviewSize, 0.f);
+
+	StatusText = MakeText(FText::GetEmpty(), 16, FLinearColor::White, true);
+	AddRow(Left, StatusText, 10.f);
+	TimeText = MakeText(FText::GetEmpty(), 13, Muted);
+	AddRow(Left, TimeText, 2.f);
+
+	UHorizontalBox* VolumeRow = MakeHBox();
+	AddToHBox(VolumeRow, MakeText(LOCTEXT("MyVolume", "My volume"), 13, Muted));
+	VolumeSlider = MakeSlider(0.f, 2.f);
 	VolumeSlider->SetStepSize(0.05f);
-	VolumeSlider->SetSliderBarColor(FLinearColor(0.2f, 0.22f, 0.26f));
-	VolumeSlider->SetSliderHandleColor(Accent);
 	VolumeSlider->OnValueChanged.AddDynamic(this, &UTSScreenPanel::OnVolumeChanged);
 	VolumeSlider->OnMouseCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnVolumeEnd);
 	VolumeSlider->OnControllerCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnVolumeEnd);
-	USizeBox* VolumeSize = WidgetTree->ConstructWidget<USizeBox>();
-	VolumeSize->SetWidthOverride(140.f);
-	VolumeSize->AddChild(VolumeSlider);
-	AddToHBox(Header, VolumeSize);
+	AddToHBox(VolumeRow, VolumeSlider, true);
 	VolumeText = MakeText(FText::GetEmpty(), 13);
 	VolumeText->SetAutoWrapText(false);
 	USizeBox* VolumeTextSize = WidgetTree->ConstructWidget<USizeBox>();
-	VolumeTextSize->SetWidthOverride(48.f);
+	VolumeTextSize->SetWidthOverride(44.f);
 	VolumeTextSize->AddChild(VolumeText);
-	AddToHBox(Header, VolumeTextSize);
-	AddToHBox(Header, PipButton);
-	AddRow(Root, Header, 0.f);
-	TimeText = MakeText(FText::GetEmpty(), 13, Muted);
-	AddRow(Root, TimeText, 2.f);
+	AddToHBox(VolumeRow, VolumeTextSize);
+	AddRow(Left, VolumeRow, 10.f);
+	PipButton = MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip);
+	AddRow(Left, PipButton, 6.f);
 
+	// Sharing card: the sharer's controls, or what a viewer can do.
 	UVerticalBox* Sharing = MakeVBox();
+	AddRow(Sharing, TSVanillaUI::MakeDivider(WidgetTree), 0.f);
+	AddRow(Sharing, Heading(LOCTEXT("SharingHeader", "Sharing")), 10.f);
 	SharingText = MakeText(FText::GetEmpty(), 13, Muted);
-	AddRow(Sharing, SharingText, 0.f);
-	UHorizontalBox* SharingButtons = MakeHBox();
+	AddRow(Sharing, SharingText, 4.f);
 	OpenWindowButton = MakeButton(LOCTEXT("OpenWindow", "Use it in a window"), ETSPanelAction::OpenWindow, INDEX_NONE, true);
-	AddToHBox(SharingButtons, OpenWindowButton);
+	AddRow(Sharing, OpenWindowButton, 8.f);
 	CurtainButton = MakeButton(LOCTEXT("CurtainOn", "Blank for everyone"), ETSPanelAction::CurtainToggle);
-	AddToHBox(SharingButtons, CurtainButton);
-	StopSharingButton = MakeButton(LOCTEXT("StopSharing", "Stop"), ETSPanelAction::StopSharing);
-	AddToHBox(SharingButtons, StopSharingButton);
+	AddRow(Sharing, CurtainButton, 4.f);
 	TakeOverButton = MakeButton(LOCTEXT("TakeOver", "Use the browser myself"), ETSPanelAction::BrowserTakeOver);
-	AddToHBox(SharingButtons, TakeOverButton);
+	AddRow(Sharing, TakeOverButton, 4.f);
+	StopSharingButton = MakeButton(LOCTEXT("StopSharing", "Stop"), ETSPanelAction::StopSharing);
+	AddRow(Sharing, StopSharingButton, 12.f);
 	HostStopButton = MakeButton(LOCTEXT("HostStop", "Stop it (world host)"), ETSPanelAction::HostStop);
-	AddToHBox(SharingButtons, HostStopButton);
-	AddRow(Sharing, SharingButtons, 6.f);
+	AddRow(Sharing, HostStopButton, 12.f);
+	ViewersHeader = Heading(LOCTEXT("ViewersHeader", "Viewers"));
+	AddRow(Sharing, ViewersHeader, 12.f);
 	ViewersBox = MakeVBox();
-	AddRow(Sharing, ViewersBox, 6.f);
+	AddRow(Sharing, ViewersBox, 4.f);
 	SharingBar = Sharing;
-	AddRow(Root, Sharing, 8.f);
+	AddRow(Left, Sharing, 14.f);
 
-	// Tabs.
-	UHorizontalBox* TabRow = MakeHBox();
+	// Right column: tabs (in the window header; buttons here if the window has none), notices, the tab page.
+	UVerticalBox* Right = MakeVBox();
+	UHorizontalBoxSlot* RightSlot = Columns->AddChildToHorizontalBox(Right);
+	RightSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+
 	const FText TabNames[] = {LOCTEXT("TabVideos", "Videos"), LOCTEXT("TabBrowser", "Browser"), LOCTEXT("TabWindow", "Share a window"),
 		LOCTEXT("TabRemote", "Remote desktop"), LOCTEXT("TabScreen", "Screen")};
+	static const TCHAR* const TabIcons[] = {TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Play.TXUI_MIcon_Play"),
+		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Explorer.TXUI_MIcon_Explorer"),
+		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Portal.TXUI_MIcon_Portal"),
+		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_PortalSatellite.TXUI_MIcon_PortalSatellite"),
+		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Cogwheel.TXUI_MIcon_Cogwheel")};
+	TSVanillaUI::SetWindowTabs(Window, TabNames, TabIcons, this, GET_FUNCTION_NAME_CHECKED(UTSScreenPanel, OnHeaderTab),
+		GET_FUNCTION_NAME_CHECKED(UTSScreenPanel, OnHeaderTabsGenerated));
+	UHorizontalBox* Tabs = MakeHBox();
 	for (int32 I = 0; I < UE_ARRAY_COUNT(TabNames); ++I)
 	{
 		UWidget* Tab = TSVanillaUI::MakeTab(WidgetTree, TabNames[I], MakeHandler(ETSPanelAction::Tab, I), GET_FUNCTION_NAME_CHECKED(UTSPanelAction, HandleClicked));
 		TabButtons.Add(Tab);
-		AddToHBox(TabRow, Tab);
+		AddToHBox(Tabs, Tab);
 	}
-	AddRow(Root, TabRow, 14.f);
+	TabRow = Tabs;
+	AddRow(Right, Tabs, 0.f);
 	NoticeText = MakeText(FText::GetEmpty(), 13, Muted);
-	AddRow(Root, NoticeText, 6.f);
+	AddRow(Right, NoticeText, 0.f);
 
 	Pages = WidgetTree->ConstructWidget<UWidgetSwitcher>();
-	USizeBox* PagesSize = WidgetTree->ConstructWidget<USizeBox>();
-	PagesSize->SetMaxDesiredHeight(500.f);
+	PagesSize = WidgetTree->ConstructWidget<USizeBox>();
+	PagesSize->SetMaxDesiredHeight(620.f);
 	PagesSize->AddChild(TSVanillaUI::MakeScrollBox(WidgetTree, Pages));
-	AddRow(Root, PagesSize, 6.f);
+	AddRow(Right, PagesSize, 6.f);
 
 	// Videos.
 	{
 		UVerticalBox* Page = MakeVBox();
+		AddRow(Page, Heading(LOCTEXT("PlaybackHeader", "Playback")), 0.f);
 		UHorizontalBox* Transport = MakeHBox();
 		AddToHBox(Transport, MakeButton(LOCTEXT("PlayPause", "Play / Pause"), ETSPanelAction::PlayPause, INDEX_NONE, true));
 		AddToHBox(Transport, MakeButton(LOCTEXT("Next", "Next"), ETSPanelAction::Next));
 		AddToHBox(Transport, MakeButton(LOCTEXT("Stop", "Stop"), ETSPanelAction::Stop));
-		AddRow(Page, Transport, 0.f);
+		AddRow(Page, Transport, 6.f);
 		UHorizontalBox* Seek = MakeHBox();
 		SeekPositionText = MakeText(FText::FromString(TEXT("0:00")), 13, Muted);
 		SeekPositionText->SetAutoWrapText(false);
 		AddToHBox(Seek, SeekPositionText);
-		SeekSlider = WidgetTree->ConstructWidget<USlider>();
-		SeekSlider->SetMinValue(0.f);
-		SeekSlider->SetMaxValue(1.f);
-		SeekSlider->SetSliderBarColor(FLinearColor(0.2f, 0.22f, 0.26f));
-		SeekSlider->SetSliderHandleColor(Accent);
+		SeekSlider = MakeSlider(0.f, 1.f);
 		SeekSlider->OnMouseCaptureBegin.AddDynamic(this, &UTSScreenPanel::OnSeekBegin);
 		SeekSlider->OnControllerCaptureBegin.AddDynamic(this, &UTSScreenPanel::OnSeekBegin);
 		SeekSlider->OnValueChanged.AddDynamic(this, &UTSScreenPanel::OnSeekChanged);
@@ -308,7 +352,8 @@ void UTSScreenPanel::BuildTree()
 		AddToHBox(Seek, SeekDurationText);
 		SeekRow = Seek;
 		AddRow(Page, Seek, 8.f);
-		AddRow(Page, MakeText(LOCTEXT("AddHeader", "Add a video"), 14, Accent, true), 14.f);
+		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
+		AddRow(Page, Heading(LOCTEXT("AddHeader", "Add a video")), 10.f);
 		UHorizontalBox* AddBox = MakeHBox();
 		LinkBox = MakeInput(LOCTEXT("LinkHint", "Paste a YouTube, Twitch or Vimeo link, or a video file path"), ETSPanelAction::PlayNow);
 		AddToHBox(AddBox, LinkBox, true);
@@ -318,10 +363,11 @@ void UTSScreenPanel::BuildTree()
 		LoadAnywayButton = MakeButton(LOCTEXT("LoadAnyway", "Load it anyway on this PC"), ETSPanelAction::LoadAnyway);
 		Show(LoadAnywayButton, false);
 		AddRow(Page, LoadAnywayButton, 4.f);
+		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
 		UHorizontalBox* QueueHeader = MakeHBox();
-		AddToHBox(QueueHeader, MakeText(LOCTEXT("QueueHeader", "Queue"), 14, Accent, true), true);
+		AddToHBox(QueueHeader, Heading(LOCTEXT("QueueHeader", "Queue")), true);
 		AddToHBox(QueueHeader, MakeButton(LOCTEXT("ClearQueue", "Clear"), ETSPanelAction::ClearQueue));
-		AddRow(Page, QueueHeader, 14.f);
+		AddRow(Page, QueueHeader, 10.f);
 		QueueBox = MakeVBox();
 		AddRow(Page, QueueBox, 4.f);
 		Pages->AddChild(Page);
@@ -330,27 +376,28 @@ void UTSScreenPanel::BuildTree()
 	// Browser.
 	{
 		UVerticalBox* Page = MakeVBox();
+		AddRow(Page, Heading(LOCTEXT("BrowserHeader", "Built-in browser")), 0.f);
+		BrowserNote = MakeText(FText::GetEmpty(), 13, Muted);
+		AddRow(Page, BrowserNote, 4.f);
 		UHorizontalBox* UrlRow = MakeHBox();
-		BrowserUrlBox = MakeInput(LOCTEXT("BrowserUrlHint", "Web address, or leave empty for your start page"), ETSPanelAction::BrowserGo);
+		BrowserUrlBox = MakeInput(LOCTEXT("BrowserUrlHint", "Web address or search, or leave empty for your start page"), ETSPanelAction::BrowserGo);
 		AddToHBox(UrlRow, BrowserUrlBox, true);
 		BrowserOpenButton = MakeButton(LOCTEXT("BrowserOpen", "Open the browser"), ETSPanelAction::BrowserOpen, INDEX_NONE, true);
 		AddToHBox(UrlRow, BrowserOpenButton);
+		AddRow(Page, UrlRow, 10.f);
 		UHorizontalBox* NavRow = MakeHBox();
 		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserGo", "Go"), ETSPanelAction::BrowserGo, INDEX_NONE, true));
 		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserBack", "Back"), ETSPanelAction::BrowserBack));
 		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserForward", "Forward"), ETSPanelAction::BrowserForward));
 		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserReload", "Reload"), ETSPanelAction::BrowserReload));
 		BrowserNavRow = NavRow;
-		AddToHBox(UrlRow, NavRow);
-		AddRow(Page, UrlRow, 0.f);
-		BrowserNote = MakeText(FText::GetEmpty(), 12, Muted);
-		AddRow(Page, BrowserNote, 6.f);
+		AddRow(Page, NavRow, 6.f);
 		UHorizontalBox* Loopback = MakeHBox();
 		LoopbackText = MakeText(FText::GetEmpty(), 12, Muted);
 		AddToHBox(Loopback, LoopbackText, true);
 		AddToHBox(Loopback, MakeButton(LOCTEXT("LoopbackToggle", "Stream test"), ETSPanelAction::LoopbackToggle));
 		LoopbackRow = Loopback;
-		AddRow(Page, Loopback, 10.f);
+		AddRow(Page, Loopback, 14.f);
 		Pages->AddChild(Page);
 	}
 
@@ -358,10 +405,11 @@ void UTSScreenPanel::BuildTree()
 	{
 		UVerticalBox* Page = MakeVBox();
 		UHorizontalBox* Top = MakeHBox();
-		WindowNote = MakeText(FText::GetEmpty(), 13, Muted);
-		AddToHBox(Top, WindowNote, true);
+		AddToHBox(Top, Heading(LOCTEXT("WindowHeader", "Share a window from your PC")), true);
 		AddToHBox(Top, MakeButton(LOCTEXT("WindowRefresh", "Refresh list"), ETSPanelAction::WindowRefresh));
 		AddRow(Page, Top, 0.f);
+		WindowNote = MakeText(FText::GetEmpty(), 13, Muted);
+		AddRow(Page, WindowNote, 4.f);
 		WindowListBox = MakeVBox();
 		AddRow(Page, WindowListBox, 8.f);
 		Pages->AddChild(Page);
@@ -370,8 +418,9 @@ void UTSScreenPanel::BuildTree()
 	// Remote desktop.
 	{
 		UVerticalBox* Page = MakeVBox();
+		AddRow(Page, Heading(LOCTEXT("RemoteHeader", "Remote desktop (VNC)")), 0.f);
 		RemoteNote = MakeText(FText::GetEmpty(), 13, Muted);
-		AddRow(Page, RemoteNote, 0.f);
+		AddRow(Page, RemoteNote, 4.f);
 		UHorizontalBox* ConnectRow = MakeHBox();
 		RemoteAddressBox = MakeInput(LOCTEXT("RemoteAddressHint", "VNC address, e.g. 192.168.1.20:5901 or myvm:1"), ETSPanelAction::RemoteConnect);
 		AddToHBox(ConnectRow, RemoteAddressBox, true);
@@ -382,10 +431,13 @@ void UTSScreenPanel::BuildTree()
 		PasswordSize->SetWidthOverride(200.f);
 		PasswordSize->AddChild(RemotePasswordBox);
 		AddToHBox(ConnectRow, PasswordSize);
-		AddToHBox(ConnectRow, MakeButton(LOCTEXT("RemoteConnect", "Connect"), ETSPanelAction::RemoteConnect, INDEX_NONE, true));
-		AddToHBox(ConnectRow, MakeButton(LOCTEXT("RemoteSave", "Save"), ETSPanelAction::RemoteSave));
-		AddRow(Page, ConnectRow, 8.f);
-		AddRow(Page, MakeText(LOCTEXT("RemoteSavedHeader", "Saved connections (this PC only)"), 14, Accent, true), 14.f);
+		AddRow(Page, ConnectRow, 10.f);
+		UHorizontalBox* ConnectButtons = MakeHBox();
+		AddToHBox(ConnectButtons, MakeButton(LOCTEXT("RemoteConnect", "Connect"), ETSPanelAction::RemoteConnect, INDEX_NONE, true));
+		AddToHBox(ConnectButtons, MakeButton(LOCTEXT("RemoteSave", "Save"), ETSPanelAction::RemoteSave));
+		AddRow(Page, ConnectButtons, 6.f);
+		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
+		AddRow(Page, Heading(LOCTEXT("RemoteSavedHeader", "Saved connections (this PC only)")), 10.f);
 		RemoteListBox = MakeVBox();
 		AddRow(Page, RemoteListBox, 4.f);
 		Pages->AddChild(Page);
@@ -394,20 +446,26 @@ void UTSScreenPanel::BuildTree()
 	// Screen.
 	{
 		UVerticalBox* Page = MakeVBox();
-		AddRow(Page, MakeText(LOCTEXT("NameHeader", "Name"), 14, Accent, true), 0.f);
+		AddRow(Page, Heading(LOCTEXT("NameHeader", "Name")), 0.f);
 		UHorizontalBox* NameRow = MakeHBox();
 		NameBox = MakeInput(LOCTEXT("NameHint", "Screen name, e.g. Main Hall"), ETSPanelAction::SaveName);
 		AddToHBox(NameRow, NameBox, true);
 		AddToHBox(NameRow, MakeButton(LOCTEXT("SaveName", "Save name"), ETSPanelAction::SaveName));
 		AddRow(Page, NameRow);
-		AddRow(Page, MakeText(LOCTEXT("FitHeader", "Picture fit (videos and shared windows)"), 14, Accent, true), 14.f);
-		UHorizontalBox* AspectRow = MakeHBox();
+		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
+		AddRow(Page, Heading(LOCTEXT("FitHeader", "Picture fit (videos and shared windows)")), 10.f);
 		AspectText = MakeText(FText::GetEmpty(), 13, Muted);
-		AddToHBox(AspectRow, AspectText, true);
+		AddRow(Page, AspectText, 4.f);
+		UHorizontalBox* AspectRow = MakeHBox();
 		AddToHBox(AspectRow, MakeButton(LOCTEXT("Letterbox", "Letterbox"), ETSPanelAction::AspectLetterbox));
 		AddToHBox(AspectRow, MakeButton(LOCTEXT("Fill", "Fill"), ETSPanelAction::AspectFill));
 		AddToHBox(AspectRow, MakeButton(LOCTEXT("Stretch", "Stretch"), ETSPanelAction::AspectStretch));
 		AddRow(Page, AspectRow);
+		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
+		AddRow(Page, Heading(LOCTEXT("SettingsHeader", "More settings")), 10.f);
+		AddRow(Page, MakeText(LOCTEXT("SettingsNote",
+			"Stream resolution, bitrate, frame rate and encoder, browser page size, keys and privacy are in Mods > Telescreen. The world host's rules "
+			"(who may share, stream limits) are there too, under \"Rules for this world\"."), 13, Muted), 4.f);
 		Pages->AddChild(Page);
 	}
 
@@ -417,7 +475,7 @@ void UTSScreenPanel::BuildTree()
 	Shade->SetHorizontalAlignment(HAlign_Center);
 	Shade->SetVerticalAlignment(VAlign_Center);
 	USizeBox* DialogSize = WidgetTree->ConstructWidget<USizeBox>();
-	DialogSize->SetWidthOverride(560.f);
+	DialogSize->SetWidthOverride(600.f);
 	UVerticalBox* DialogBox = MakeVBox();
 	ConfirmTitle = MakeText(FText::GetEmpty(), 18, Accent, true);
 	AddRow(DialogBox, ConfirmTitle, 0.f);
@@ -434,6 +492,41 @@ void UTSScreenPanel::BuildTree()
 	ShadeSlot->SetVerticalAlignment(VAlign_Fill);
 	ConfirmLayer = Shade;
 	Show(ConfirmLayer, false);
+}
+
+void UTSScreenPanel::FitToViewport()
+{
+	// About 62% of the viewport wide (1000-1400) and up to 80% tall, in UI units.
+	const float Scale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(this), 0.1f);
+	const FVector2D Viewport = UWidgetLayoutLibrary::GetViewportSize(this) / Scale;
+	if (Viewport.X < 100.0 || Viewport.Y < 100.0)
+	{
+		return;
+	}
+	const float Width = FMath::Clamp(float(Viewport.X) * 0.62f, 1000.f, FMath::Max(1000.f, FMath::Min(1400.f, float(Viewport.X) - 40.f)));
+	PanelSize->SetWidthOverride(Width);
+	PagesSize->SetMaxDesiredHeight(FMath::Clamp(float(Viewport.Y) * 0.8f - 190.f, 320.f, 900.f));
+	UE_LOG(LogTelescreen, Verbose, TEXT("Screen panel: %.0f wide for a %.0fx%.0f viewport"), Width, Viewport.X, Viewport.Y);
+}
+
+void UTSScreenPanel::OnHeaderTab(int32 ButtonIndex)
+{
+	if (ButtonIndex >= 0 && ButtonIndex <= int32(ETab::Screen) && ETab(ButtonIndex) != CurrentTab)
+	{
+		SelectTab(ETab(ButtonIndex), false);
+	}
+}
+
+void UTSScreenPanel::OnHeaderTabsGenerated()
+{
+	if (bHeaderTabs)
+	{
+		return;
+	}
+	bHeaderTabs = true;
+	Show(TabRow, false);
+	TSVanillaUI::SelectWindowTab(Window, int32(CurrentTab));
+	UE_LOG(LogTelescreen, Log, TEXT("Screen panel: using the window's header tabs"));
 }
 
 ATSBuildableScreen* UTSScreenPanel::GetScreen() const
@@ -454,6 +547,7 @@ void UTSScreenPanel::NativeConstruct()
 		VolumeText->SetText(FText::Format(LOCTEXT("VolumePercent", "{0}%"), FText::AsNumber(FMath::RoundToInt(MyVolume * 100.f))));
 	}
 	NoticeHandle = UTSRemoteCallObject::OnNotice.AddWeakLambda(this, [this](const FText& Text) { SetNotice(Text, true); });
+	FitToViewport();
 	// Open on the tab for what the screen does now.
 	const ETSScreenMode Mode = Screen ? Screen->GetMode() : ETSScreenMode::SyncedMedia;
 	SelectTab(Mode == ETSScreenMode::Browser		 ? ETab::Browser
@@ -513,10 +607,14 @@ void UTSScreenPanel::Close()
 	}
 }
 
-void UTSScreenPanel::SelectTab(ETab Tab)
+void UTSScreenPanel::SelectTab(ETab Tab, bool bSyncHeader)
 {
 	CurrentTab = Tab;
 	Pages->SetActiveWidgetIndex(int32(Tab));
+	if (bSyncHeader && bHeaderTabs && !TSVanillaUI::SelectWindowTab(Window, int32(Tab)))
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Screen panel: header tab %d not found"), int32(Tab));
+	}
 	for (int32 I = 0; I < TabButtons.Num(); ++I)
 	{
 		TSVanillaUI::SetTabActive(TabButtons[I], I == int32(Tab));
@@ -616,6 +714,16 @@ void UTSScreenPanel::RefreshTimes()
 		break;
 	}
 	StatusText->SetText(Status);
+	UTexture* Picture = Player ? Player->GetDisplayTexture() : nullptr;
+	if (Picture != ShownPreview)
+	{
+		ShownPreview = Picture;
+		PreviewImage->SetBrushResourceObject(Picture);
+		PreviewImage->SetColorAndOpacity(Picture ? FLinearColor::White : FLinearColor::Transparent);
+	}
+	const FVector2D WorldSize = Screen->GetScreenWorldSize();
+	const float Aspect = WorldSize.Y > 1.0 ? FMath::Clamp(float(WorldSize.X / WorldSize.Y), 0.5f, 6.f) : 16.f / 9.f;
+	PreviewSize->SetHeightOverride(FMath::Clamp(LeftColumnWidth / Aspect, 80.f, 300.f));
 	// The seek bar follows playback unless it is being dragged; live streams have nothing to seek.
 	const bool bSeekable = Item && Item->Duration > 0.f && !Item->bIsLive;
 	SeekRow->SetVisibility(bSeekable ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -701,6 +809,7 @@ void UTSScreenPanel::RefreshSharing()
 	}
 	Show(OpenWindowButton, bMine || (bShared && Player && Player->IsReceivingStream()));
 	Show(ViewersBox, bMine);
+	Show(ViewersHeader, bMine && Screen->GetViewerStates().Num() > 0);
 	if (bMine)
 	{
 		RebuildViewers();
@@ -721,6 +830,11 @@ void UTSScreenPanel::RefreshSharing()
 	{
 		Show(TabButtons[int32(ETab::Window)], bWindowsAvailable);
 		Show(TabButtons[int32(ETab::RemoteDesktop)], bWindowsAvailable);
+	}
+	if (bHeaderTabs && !bWindowsAvailable)
+	{
+		TSVanillaUI::SetWindowTabVisible(Window, int32(ETab::Window), false);
+		TSVanillaUI::SetWindowTabVisible(Window, int32(ETab::RemoteDesktop), false);
 	}
 	if (bRemoteMode && bMine)
 	{
@@ -841,21 +955,20 @@ void UTSScreenPanel::RebuildViewers()
 			Label = FText::Format(LOCTEXT("ViewerRowGranted", "{0}: {1} ({2} min left)"), FText::FromString(Viewer->GetPlayerName()), Scope,
 				FText::AsNumber(FMath::Max(1, FMath::CeilToInt((Grant->ExpiresAt - Screen->GetServerTime()) / 60.0))));
 		}
-		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(MakeText(Label, 13));
-		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		TextSlot->SetVerticalAlignment(VAlign_Center);
-		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantPointer", "Let them use the mouse"), ETSPanelAction::GrantPointer, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
-		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantTyping", "Mouse and typing"), ETSPanelAction::GrantTyping, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		ViewersBox->AddChildToVerticalBox(MakeText(Label, 13))->SetPadding(FMargin(0.f, 6.f, 0.f, 2.f));
+		UWrapBox* Buttons = WidgetTree->ConstructWidget<UWrapBox>();
+		Buttons->SetInnerSlotPadding(FVector2D(6.f, 4.f));
+		Buttons->AddChildToWrapBox(MakeButton(LOCTEXT("GrantPointer", "Mouse"), ETSPanelAction::GrantPointer, I));
+		Buttons->AddChildToWrapBox(MakeButton(LOCTEXT("GrantTyping", "Mouse and typing"), ETSPanelAction::GrantTyping, I));
 		if (Screen->GetMode() == ETSScreenMode::Browser)
 		{
-			Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantFull", "Everything"), ETSPanelAction::GrantFull, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+			Buttons->AddChildToWrapBox(MakeButton(LOCTEXT("GrantFull", "Everything"), ETSPanelAction::GrantFull, I));
 		}
 		if (Grant)
 		{
-			Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantRevoke", "Revoke"), ETSPanelAction::GrantRevoke, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+			Buttons->AddChildToWrapBox(MakeButton(LOCTEXT("GrantRevoke", "Revoke"), ETSPanelAction::GrantRevoke, I));
 		}
-		ViewersBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 2.f));
+		ViewersBox->AddChildToVerticalBox(Buttons);
 	}
 }
 
@@ -901,19 +1014,9 @@ void UTSScreenPanel::ShowWindowList()
 	for (int32 I = 0; I < Windows.Num(); ++I)
 	{
 		const FTSWindowInfo& Info = Windows[I];
-		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-		UVerticalBox* Labels = WidgetTree->ConstructWidget<UVerticalBox>();
-		Labels->AddChildToVerticalBox(MakeText(FText::FromString(Info.Title), 14));
-		if (!Info.Exe.IsEmpty())
-		{
-			Labels->AddChildToVerticalBox(MakeText(FText::FromString(Info.Exe), 11, Muted));
-		}
-		UHorizontalBoxSlot* LabelSlot = Row->AddChildToHorizontalBox(Labels);
-		LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		LabelSlot->SetVerticalAlignment(VAlign_Center);
-		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("WindowShare", "Share this window"), ETSPanelAction::WindowShare, I, true))
-			->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
-		WindowListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 3.f));
+		const FText Description = Info.Exe.IsEmpty() ? LOCTEXT("WindowRowShare", "Click to share") : FText::Format(LOCTEXT("WindowRowExe", "{0}   Click to share"),
+			FText::FromString(Info.Exe));
+		WindowListBox->AddChildToVerticalBox(MakeListButton(FText::FromString(Info.Title), Description, false, ETSPanelAction::WindowShare, I))->SetPadding(FMargin(0.f, 2.f));
 	}
 	RefreshSharing();
 }
@@ -1050,14 +1153,13 @@ void UTSScreenPanel::ShowSavedRemotes()
 	for (int32 I = 0; I < SavedRemotes.Num(); ++I)
 	{
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-		const FText Label = FText::Format(LOCTEXT("RemoteRow", "{0}{1}"), FText::FromString(SavedRemotes[I].GetAddress()),
-			SavedRemotes[I].Password.IsEmpty() ? FText::GetEmpty() : LOCTEXT("RemoteRowPassword", "   (password saved)"));
-		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(MakeText(Label, 14));
-		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		TextSlot->SetVerticalAlignment(VAlign_Center);
-		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("RemoteRowConnect", "Connect"), ETSPanelAction::RemoteSavedConnect, I, true))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		const FText Description = SavedRemotes[I].Password.IsEmpty() ? LOCTEXT("RemoteRowNoPassword", "Click to connect") : LOCTEXT("RemoteRowPassword", "Password saved   Click to connect");
+		UHorizontalBoxSlot* ItemSlot = Row->AddChildToHorizontalBox(MakeListButton(FText::FromString(SavedRemotes[I].GetAddress()), Description, false,
+			ETSPanelAction::RemoteSavedConnect, I));
+		ItemSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		ItemSlot->SetVerticalAlignment(VAlign_Center);
 		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("RemoteRowRemove", "Remove"), ETSPanelAction::RemoteSavedRemove, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
-		RemoteListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 3.f));
+		RemoteListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 2.f));
 	}
 }
 
@@ -1080,16 +1182,32 @@ void UTSScreenPanel::RebuildQueue()
 		const FTSMediaItem& Item = State.Queue[I];
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
 		const bool bCurrent = I == State.CurrentIndex;
-		FText Label = FText::Format(LOCTEXT("QueueRow", "{0}. {1}"), FText::AsNumber(I + 1), FText::FromString(Item.GetDisplayTitle()));
-		if (Item.Duration > 0.f)
+		const FText Title = FText::Format(LOCTEXT("QueueRow", "{0}. {1}"), FText::AsNumber(I + 1), FText::FromString(Item.GetDisplayTitle()));
+		TArray<FString> Details;
+		if (bCurrent)
 		{
-			Label = FText::Format(LOCTEXT("QueueRowTime", "{0}  ({1})"), Label, FormatTime(Item.Duration));
+			Details.Add(LOCTEXT("QueueRowNow", "Playing").ToString());
 		}
-		UTextBlock* Text = MakeText(Label, 13, bCurrent ? Accent : FLinearColor::White);
-		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(Text);
-		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		TextSlot->SetVerticalAlignment(VAlign_Center);
-		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("PlayRow", "Play"), ETSPanelAction::PlayIndex, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		if (Item.bIsLive)
+		{
+			Details.Add(LOCTEXT("QueueRowLive", "Live").ToString());
+		}
+		else if (Item.Duration > 0.f)
+		{
+			Details.Add(FormatTime(Item.Duration).ToString());
+		}
+		if (!Item.AddedBy.IsEmpty())
+		{
+			Details.Add(FText::Format(LOCTEXT("QueueRowBy", "added by {0}"), FText::FromString(Item.AddedBy)).ToString());
+		}
+		if (!bCurrent)
+		{
+			Details.Add(LOCTEXT("QueueRowPlay", "Click to play").ToString());
+		}
+		UHorizontalBoxSlot* ItemSlot = Row->AddChildToHorizontalBox(MakeListButton(Title, FText::FromString(FString::Join(Details, TEXT("   "))), bCurrent,
+			ETSPanelAction::PlayIndex, I));
+		ItemSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		ItemSlot->SetVerticalAlignment(VAlign_Center);
 		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("RemoveRow", "Remove"), ETSPanelAction::RemoveIndex, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
 		QueueBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 2.f));
 	}

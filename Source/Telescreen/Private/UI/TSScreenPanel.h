@@ -2,12 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Host/TSHostSubsystem.h"
+#include "Screen/TSRemoteConnections.h"
 #include "TSTypes.h"
 #include "UI/FGInteractWidget.h"
 #include "TSScreenPanel.generated.h"
 
 class ATSBuildableScreen;
 class UEditableTextBox;
+class UImage;
+class UTexture;
+class USizeBox;
 class USlider;
 class UTextBlock;
 class UVerticalBox;
@@ -81,9 +85,10 @@ public:
 	void HandleCommitted(const FText& Text, ETextCommit::Type Method);
 };
 
-// The window that opens when a player uses a Telescreen. A header says what the screen shows (with the sharing
-// controls while someone shares), and tabs hold the rest: Videos (playback, adding links, the queue), Browser, Share
-// a window, Screen (name, picture fit). First-time sharing notices are a confirm dialog over the panel.
+// The window that opens when a player uses a Telescreen, sized to the viewport. The left column shows the screen's
+// picture, what it shows, my volume and, while someone shares, the sharing card (controls, viewers); the window's
+// header tabs pick the right column's page: Videos (playback, adding links, the queue), Browser, Share a window,
+// Remote desktop, Screen (name, picture fit). First-time sharing notices are a confirm dialog over the panel.
 UCLASS()
 class UTSScreenPanel : public UFGInteractWidget
 {
@@ -103,6 +108,12 @@ public:
 	// The vanilla window frame's close button.
 	UFUNCTION()
 	void OnWindowClosed();
+
+	// The window's header tabs: a click, and the buttons being made (our own tab row then hides).
+	UFUNCTION()
+	void OnHeaderTab(int32 ButtonIndex);
+	UFUNCTION()
+	void OnHeaderTabsGenerated();
 
 	// Seek bar: dragging previews the time; letting go seeks everyone there.
 	UFUNCTION()
@@ -147,7 +158,9 @@ private:
 	void SetNotice(const FText& Text, bool bError = false);
 	void AddLink(bool bPlayNow);
 	void Close();
-	void SelectTab(ETab Tab);
+	// bSyncHeader: also make the window's header tab match (not when the header tab was clicked).
+	void SelectTab(ETab Tab, bool bSyncHeader = true);
+	void FitToViewport();
 	void RequestWindowList();
 	void ShowWindowList();
 	void AskConfirm(EConfirm Kind, int32 Index);
@@ -155,15 +168,28 @@ private:
 
 	UTSPanelAction* MakeHandler(ETSPanelAction Action, int32 Index);
 	UWidget* MakeButton(const FText& Label, ETSPanelAction Action, int32 Index = INDEX_NONE, bool bPrimary = false);
+	UWidget* MakeListButton(const FText& Title, const FText& Description, bool bSelected, ETSPanelAction Action, int32 Index);
 	UWidget* MakeInput(const FText& Hint, ETSPanelAction OnEnter);
 	UTextBlock* MakeText(const FText& Text, int32 Size, const FLinearColor& Color = FLinearColor::White, bool bBold = false);
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTSPanelAction>> Actions;
 
-	// Header.
+	static constexpr float LeftColumnWidth = 360.f;
+
+	// Frame and left column.
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> Window;
+	UPROPERTY(Transient)
+	TObjectPtr<USizeBox> PanelSize;
+	UPROPERTY(Transient)
+	TObjectPtr<USizeBox> PagesSize;
+	UPROPERTY(Transient)
+	TObjectPtr<USizeBox> PreviewSize;
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> PreviewImage;
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture> ShownPreview;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> PipButton;
 	UPROPERTY(Transient)
@@ -173,7 +199,7 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> NoticeText;
 
-	// Sharing bar (header): the controller's controls, or what a viewer can do.
+	// Sharing card (left column): the controller's controls, or what a viewer can do.
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> SharingBar;
 	UPROPERTY(Transient)
@@ -190,12 +216,17 @@ private:
 	TObjectPtr<UWidget> HostStopButton;
 	// The controller's viewers and what each may do.
 	UPROPERTY(Transient)
+	TObjectPtr<UWidget> ViewersHeader;
+	UPROPERTY(Transient)
 	TObjectPtr<UVerticalBox> ViewersBox;
 	FString ShownViewers;
 	void RebuildViewers();
 	ETSInputScope PendingGrantScope = ETSInputScope::None;
 
-	// Tabs.
+	// Tabs: the window's header tabs, or our own row of tab buttons when the window has none.
+	bool bHeaderTabs = false;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> TabRow;
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UWidget>> TabButtons;
 	UPROPERTY(Transient)
@@ -213,7 +244,7 @@ private:
 	TObjectPtr<UWidget> SeekRow;
 	bool bSeeking = false;
 
-	// My volume (header).
+	// My volume (left column).
 	UPROPERTY(Transient)
 	TObjectPtr<USlider> VolumeSlider;
 	UPROPERTY(Transient)
@@ -256,7 +287,7 @@ private:
 	TObjectPtr<UTextBlock> RemoteNote;
 	UPROPERTY(Transient)
 	TObjectPtr<UVerticalBox> RemoteListBox;
-	TArray<struct FTSRemoteConnection> SavedRemotes;
+	TArray<FTSRemoteConnection> SavedRemotes;
 	bool bRemoteListLoaded = false;
 	void ShowSavedRemotes();
 	// Starts showing Connection on this screen (after the first-use notice).

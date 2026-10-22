@@ -56,7 +56,7 @@ in the console.
   shows `Network saturated` drops.
 - Window sharing: `session N: sharing window ...`, `capture started at WxH`, `window video WxH`, `capturing the sound
   of pid P` (or `no window sound (process loopback 0x...)`), `window minimised/restored`, `the shared window closed`.
-- Stream freezes often: lower "Stream quality (kbps)" on the controller's PC; each lost packet waits for a keyframe.
+- Stream freezes often: lower "Stream bitrate (kbps)" (When you share) on the sharer's PC, or its "Stream resolution (lines)"; each lost packet waits for a keyframe.
 - A built screen is only a post, or `began play ... (billboard MISSING ...)`: the instance didn't get the vanilla
   assets. Native actors copy only constructor defaults from their class default object (Unreal's post-construct
   property list), so assets put on the class default at start-up must be copied in `PostInitProperties`
