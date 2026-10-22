@@ -73,6 +73,12 @@ Two halves: replicated state that the server owns, and per-client playback that 
 yt-dlp on the adding player's PC (title, duration) before being sent to the server; dedicated servers never run
 yt-dlp.
 
+### HUD picture
+
+"Show on HUD" in the panel pins one screen to a HUD corner (`UTSPipWidget`, a hit-test-invisible viewport widget
+showing the screen's current texture). A pinned screen ignores the play distance and the screens-at-once limit, and
+its sound is 2D by default so it can be heard anywhere. This is the first piece of the plan's pop-out window.
+
 ### Settings
 
 `UTSConfig` (SML mod configuration, converted to SML's editor classes at start-up like BoomBoxPlus): performance,

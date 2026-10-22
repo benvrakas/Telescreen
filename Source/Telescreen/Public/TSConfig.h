@@ -43,6 +43,9 @@ public:
 	static const FString AllowAnySiteKey;
 	static const FString MaxVideoMinutesKey;
 	static const FString QueueAddsPerMinuteKey;
+	static const FString PipWidthKey;
+	static const FString PipCornerKey;
+	static const FString PipAudio2DKey;
 	static const FString MirrorXKey;
 	static const FString MirrorYKey;
 

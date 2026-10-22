@@ -31,6 +31,7 @@ enum class ETSPanelAction : uint8
 	AspectFill,
 	AspectStretch,
 	LoadAnyway,
+	TogglePip,
 };
 
 // Routes one button's click to its panel with the button's action and queue index.
@@ -101,6 +102,8 @@ private:
 	TObjectPtr<UWidget> LoadAnywayButton;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> AspectText;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> PipButtonText;
 
 	FDelegateHandle ScreenChangedHandle;
 	FDelegateHandle NoticeHandle;

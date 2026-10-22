@@ -26,6 +26,9 @@ const FString UTSConfig::AllowedSitesKey = TEXT("AllowedSites");
 const FString UTSConfig::AllowAnySiteKey = TEXT("AllowAnySite");
 const FString UTSConfig::MaxVideoMinutesKey = TEXT("MaxVideoMinutes");
 const FString UTSConfig::QueueAddsPerMinuteKey = TEXT("QueueAddsPerMinute");
+const FString UTSConfig::PipWidthKey = TEXT("PipWidth");
+const FString UTSConfig::PipCornerKey = TEXT("PipCorner");
+const FString UTSConfig::PipAudio2DKey = TEXT("PipAudio2D");
 const FString UTSConfig::MirrorXKey = TEXT("MirrorX");
 const FString UTSConfig::MirrorYKey = TEXT("MirrorY");
 
@@ -133,6 +136,14 @@ UTSConfig::UTSConfig()
 	AddBool(Sound, MuteInBackgroundKey, LOCTEXT("MuteInBackground", "Mute when the game is in the background"),
 		LOCTEXT("MuteInBackgroundTip", "Silence screens while you're in another window. Videos keep playing in sync."), true);
 
+	UConfigPropertySection* Pip = AddSection(TEXT("HudPicture"), LOCTEXT("HudPicture", "Picture on the HUD"));
+	AddFloat(Pip, PipWidthKey, LOCTEXT("PipWidth", "Width"),
+		LOCTEXT("PipWidthTip", "Width of a screen shown on the HUD (\"Show on HUD\" in the screen's panel)."), 420.f);
+	AddInt(Pip, PipCornerKey, LOCTEXT("PipCorner", "Corner"),
+		LOCTEXT("PipCornerTip", "0: bottom right; 1: bottom left; 2: top right; 3: top left."), 0);
+	AddBool(Pip, PipAudio2DKey, LOCTEXT("PipAudio2D", "Hear it everywhere"),
+		LOCTEXT("PipAudio2DTip", "While a screen is on the HUD, play its sound at full volume wherever you are, instead of from the screen."), true);
+
 	UConfigPropertySection* Privacy = AddSection(TEXT("Privacy"), LOCTEXT("Privacy", "Privacy"));
 	AddInt(Privacy, AutoLoadKey, LOCTEXT("AutoLoad", "Load videos other players add"),
 		LOCTEXT("AutoLoadTip", "Loading a video contacts its website from your PC. 0: only from the allowed sites below; 1: from any site; 2: never (you see the title only)."),
@@ -193,6 +204,8 @@ namespace
 			{UTSConfig::VolumeKey, {0.f, 1.f}},
 			{UTSConfig::AudioRangeKey, {0.1f, 10.f}},
 			{UTSConfig::AutoLoadKey, {0.f, 2.f}},
+			{UTSConfig::PipWidthKey, {160.f, 1600.f}},
+			{UTSConfig::PipCornerKey, {0.f, 3.f}},
 			{UTSConfig::QueuePolicyKey, {0.f, 1.f}},
 			{UTSConfig::MaxVideoMinutesKey, {0.f, 100000.f}},
 			{UTSConfig::QueueAddsPerMinuteKey, {1.f, 1000.f}},

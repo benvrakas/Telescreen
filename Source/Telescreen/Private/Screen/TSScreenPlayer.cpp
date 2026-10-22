@@ -17,6 +17,7 @@
 #include "Screen/TSStreamingSoundWave.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
+#include "UI/TSPipWidget.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -147,6 +148,11 @@ void UTSScreenPlayer::BeginPlay()
 
 void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (bPinned)
+	{
+		bPinned = false;
+		UTSPipWidget::Unpin();
+	}
 	CloseSession();
 	GPlayers.RemoveAll([this](const TWeakObjectPtr<UTSScreenPlayer>& P) { return !P.IsValid() || P.Get() == this; });
 	if (ATSBuildableScreen* Screen = GetScreen())
@@ -371,6 +377,11 @@ void UTSScreenPlayer::RankActivity()
 		OutDistance = FVector::Dist(Viewer, S->GetActorLocation());
 		return OutDistance <= MaxDistance;
 	};
+	if (bPinned)
+	{
+		bActive = Screen->GetMediaState().GetCurrent() != nullptr;
+		return;
+	}
 	double MyDistance = 0.0;
 	if (!Wants(this, MyDistance))
 	{
@@ -381,7 +392,8 @@ void UTSScreenPlayer::RankActivity()
 	for (const TWeakObjectPtr<UTSScreenPlayer>& Other : GPlayers)
 	{
 		double Distance = 0.0;
-		if (Other.IsValid() && Other.Get() != this && Other->GetWorld() == GetWorld() && Wants(Other.Get(), Distance) && Distance < MyDistance)
+		if (Other.IsValid() && Other.Get() != this && !Other->bPinned && Other->GetWorld() == GetWorld() && Wants(Other.Get(), Distance) &&
+			Distance < MyDistance)
 		{
 			++Closer;
 		}
@@ -453,6 +465,39 @@ void UTSScreenPlayer::PumpVideo()
 	}
 }
 
+void UTSScreenPlayer::SetPinned(bool bInPinned)
+{
+	if (bPinned == bInPinned)
+	{
+		return;
+	}
+	bPinned = bInPinned;
+	ApplyAudioMode();
+	RankActivity();
+	Reconcile();
+	if (!bShowingVideo)
+	{
+		ShowStatus();
+	}
+}
+
+UTexture* UTSScreenPlayer::GetDisplayTexture() const
+{
+	return bShowingVideo && VideoTexture ? static_cast<UTexture*>(VideoTexture) : static_cast<UTexture*>(StatusTarget);
+}
+
+void UTSScreenPlayer::ApplyAudioMode()
+{
+	if (!Audio)
+	{
+		return;
+	}
+	const bool b2D = bPinned && UTSConfig::GetBool(this, UTSConfig::PipAudio2DKey, true);
+	Audio->bAllowSpatialization = !b2D;
+	Audio->AttenuationOverrides.bAttenuate = !b2D;
+	Audio->AttenuationOverrides.bSpatialize = !b2D;
+}
+
 void UTSScreenPlayer::UpdateAudio()
 {
 	if (!Audio)
@@ -511,6 +556,7 @@ void UTSScreenPlayer::OnHostAudio(uint32 SampleRate, uint32 Channels, uint32 Cap
 	Audio->AttenuationOverrides.DistanceAlgorithm = EAttenuationDistanceModel::Logarithmic;
 	Audio->SetWorldLocation(Screen->GetActorLocation());
 	Audio->SetSound(Wave);
+	ApplyAudioMode();
 	UpdateAudio();
 	Audio->Play();
 	UE_LOG(LogTelescreen, Log, TEXT("%s: audio %u Hz x%u, heard up to %.0f m"), *Screen->GetName(), SampleRate, Channels,

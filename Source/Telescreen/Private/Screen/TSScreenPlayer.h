@@ -11,6 +11,7 @@ class UAudioComponent;
 class UCanvas;
 class UCanvasRenderTarget2D;
 class UTexture2D;
+class UTexture;
 class UTSStreamingSoundWave;
 
 // Plays a screen's synced media on this client: helper session, video texture, 3D audio, status text. Not on dedicated
@@ -41,6 +42,13 @@ public:
 	// Unblocks the current item on this PC although the privacy setting would skip it.
 	void LoadAnyway();
 
+	// Keeps the screen playing regardless of distance and switches its audio for the HUD picture.
+	void SetPinned(bool bInPinned);
+	bool IsPinned() const { return bPinned; }
+
+	// The texture the screen shows now: the video, or the status card.
+	UTexture* GetDisplayTexture() const;
+
 private:
 	ATSBuildableScreen* GetScreen() const;
 	void OnScreenChanged();
@@ -49,6 +57,7 @@ private:
 	void CloseSession();
 	void PumpVideo();
 	void UpdateAudio();
+	void ApplyAudioMode();
 	void RankActivity();
 	bool ShouldLoad(const struct FTSMediaItem& Item, FText& OutReason) const;
 
@@ -80,6 +89,7 @@ private:
 
 	TSHostProtocol::ESessionState HostState = TSHostProtocol::ESessionState::Resolving;
 	bool bActive = false;
+	bool bPinned = false;
 	double NextSync = 0.0;
 	double NextRank = 0.0;
 	double NextAudioUpdate = 0.0;

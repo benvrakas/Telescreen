@@ -14,9 +14,12 @@
 6. Paste `https://www.youtube.com/watch?v=aqz-KE-bpKQ`, Play now: "Looking up the link..." then "Added ...". The screen
    shows Loading..., then the video with sound from the screen (louder close, fading with distance).
 7. Play / Pause, -10 s / +10 s, Next, Stop, queue Play / Remove / Clear, Letterbox / Fill / Stretch, Save name.
-8. Walk past the play distance (150 m): the screen pauses on your PC and shows its status; walking back resumes in sync.
-9. Save, reload: the queue and position come back (playing items continue from the saved position).
-10. Rescale a screen with Infinite Nudge: the picture keeps the right shape (letterbox bars change).
+8. "Show on HUD": a small picture of the screen appears in the bottom-right corner without taking the mouse; its
+   sound plays everywhere; it keeps playing when you walk away. "Remove from HUD" (or dismantling the screen) removes it.
+   Size, corner and 2D/3D sound are in the Mods menu, Telescreen, Picture on the HUD.
+9. Walk past the play distance (150 m): the screen pauses on your PC and shows its status; walking back resumes in sync.
+10. Save, reload: the queue and position come back (playing items continue from the saved position).
+11. Rescale a screen with Infinite Nudge: the picture keeps the right shape (letterbox bars change).
 
 ## M1 multiplayer
 

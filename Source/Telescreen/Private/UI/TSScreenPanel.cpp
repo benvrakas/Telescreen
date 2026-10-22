@@ -19,6 +19,7 @@
 #include "Telescreen.h"
 #include "TSRemoteCallObject.h"
 #include "UI/FGGameUI.h"
+#include "UI/TSPipWidget.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -153,6 +154,9 @@ void UTSScreenPanel::BuildTree()
 	AddToHBox(Transport, MakeButton(LOCTEXT("Forward10", "+10 s"), ETSPanelAction::Forward10));
 	AddToHBox(Transport, MakeButton(LOCTEXT("Next", "Next"), ETSPanelAction::Next));
 	AddToHBox(Transport, MakeButton(LOCTEXT("Stop", "Stop"), ETSPanelAction::Stop));
+	UButton* PipButton = Cast<UButton>(MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip));
+	PipButtonText = PipButton ? Cast<UTextBlock>(PipButton->GetChildAt(0)) : nullptr;
+	AddToHBox(Transport, PipButton);
 	AddRow(Root, Transport, 8.f);
 
 	AddRow(Root, MakeText(LOCTEXT("AddHeader", "Add a video"), 14, Accent), 16.f);
@@ -268,6 +272,10 @@ void UTSScreenPanel::Refresh()
 	NowPlayingText->SetText(Item ? FText::Format(LOCTEXT("NowPlaying", "Now playing: {0}"), FText::FromString(Item->GetDisplayTitle()))
 								 : LOCTEXT("NothingPlaying", "Nothing playing"));
 	AspectText->SetText(FText::Format(LOCTEXT("AspectNow", "Picture fit: {0}"), AspectName(Screen->GetAspectMode())));
+	if (PipButtonText)
+	{
+		PipButtonText->SetText(UTSPipWidget::IsPinned(Screen) ? LOCTEXT("RemoveFromHud", "Remove from HUD") : LOCTEXT("ShowOnHud", "Show on HUD"));
+	}
 	if (State.Revision != ShownRevision)
 	{
 		ShownRevision = State.Revision;
@@ -418,6 +426,12 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	if (Action == ETSPanelAction::Close)
 	{
 		Close();
+		return;
+	}
+	if (Action == ETSPanelAction::TogglePip)
+	{
+		UTSPipWidget::Toggle(Screen);
+		Refresh();
 		return;
 	}
 	if (!Screen || !RCO)
