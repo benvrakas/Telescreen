@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0 beta 5
+
+- The screen panel and the screens list (F9) use the game's own window frame, buttons, tabs, text fields and scroll
+  boxes, and the game's font.
+- Enter in a text field runs its action (play the link, open or go to the address, save the name).
+
 ## 0.1.0 beta 4
 
 - The screen panel has tabs: Videos, Browser, Share a window, Screen. The header says what the screen shows and

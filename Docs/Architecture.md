@@ -203,3 +203,28 @@ Other limits: taking over a screen in use (on/off), screens in use at once in th
 player controls one screen (taking another releases the first). The host and admins can stop any screen's browser or
 window from the panel. All checks run on the server (`UTSRemoteCallObject::MayUseMode`); RPC validation only rejects
 messages the mod never sends, because a failed validation disconnects the player.
+
+## UI built from the game's widgets
+
+The screen panel and the screens list are C++ widgets whose trees are built from the game's own Blueprint widgets,
+through `TSVanillaUI` (reflection: Blueprint functions called with `ProcessEvent`, properties set by name, clicks
+bound to each widget's inner `UButton`):
+
+| Vanilla widget | Used for | Members used |
+|---|---|---|
+| `Widget_Window_DarkMode` (`UFGWindow`) | window frame, title, close button | `WindowBody` named slot, `mTitleText`, `SetTitle`, `OnClose` |
+| `Widget_Window_ContentBackground_DarkMode` | panel and dialog background | (layered under the content) |
+| `Widget_StandardButton` | buttons | `mText`, `SetText`, `SetButtonStyle(orange, light, no background)`, `SetIsDisabled`, `mButton` |
+| `Widget_SlidingTabs_Button` | tabs | `mTitle`, `SetTitle`, `SetActive`, `mOverrideButtonFunction`, `mButton` |
+| `Widget_InputBox` | text fields | `mPreviewText`, `SetPreviewText`, `mInputBox` (UEditableText) |
+| `Widget_Scrollbox` | scrolling pages and lists | `mScrollableContent` named slot |
+
+Plain text uses the game's UI font, read from the input box's and tab button's text blocks. Every maker falls back to
+a plain UMG widget (and logs `UI: vanilla widget ... not found`) if a class is missing after a game update. The
+members were read with the `TSDumpWidgets` editor commandlet (`Private/Editor/TSDumpWidgetsCommandlet.cpp`):
+
+```
+UnrealEditor-Cmd FactoryGame.uproject -run=TSDumpWidgets -out=<file> -classes=/Game/.../Widget_X.Widget_X_C,...
+```
+
+(In Git Bash set `MSYS_NO_PATHCONV=1`, or the first `/Game/...` path gets rewritten.)

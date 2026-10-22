@@ -7,7 +7,6 @@
 #include "TSScreenPanel.generated.h"
 
 class ATSBuildableScreen;
-class UEditableTextBox;
 class UTextBlock;
 class UVerticalBox;
 class UWidgetSwitcher;
@@ -66,6 +65,10 @@ public:
 
 	UFUNCTION()
 	void HandleClicked();
+
+	// Enter in a text field runs the field's action.
+	UFUNCTION()
+	void HandleCommitted(const FText& Text, ETextCommit::Type Method);
 };
 
 // The window that opens when a player uses a Telescreen. A header says what the screen shows (with the sharing
@@ -86,6 +89,10 @@ public:
 	virtual void OnEscapePressed_Implementation() override;
 
 	void HandleAction(ETSPanelAction Action, int32 Index);
+
+	// The vanilla window frame's close button.
+	UFUNCTION()
+	void OnWindowClosed();
 
 private:
 	enum class ETab : uint8
@@ -119,18 +126,19 @@ private:
 	void AskConfirm(EConfirm Kind, int32 Index);
 	void RunConfirmed(EConfirm Kind, int32 Index);
 
-	UWidget* MakeButton(const FText& Label, ETSPanelAction Action, int32 Index = INDEX_NONE, const FLinearColor& Color = FLinearColor(0.12f, 0.13f, 0.16f));
-	UTextBlock* MakeText(const FText& Text, int32 Size, const FLinearColor& Color = FLinearColor::White);
-	static UTextBlock* ButtonLabel(UWidget* Button);
+	UTSPanelAction* MakeHandler(ETSPanelAction Action, int32 Index);
+	UWidget* MakeButton(const FText& Label, ETSPanelAction Action, int32 Index = INDEX_NONE, bool bPrimary = false);
+	UWidget* MakeInput(const FText& Hint, ETSPanelAction OnEnter);
+	UTextBlock* MakeText(const FText& Text, int32 Size, const FLinearColor& Color = FLinearColor::White, bool bBold = false);
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTSPanelAction>> Actions;
 
 	// Header.
 	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> TitleText;
+	TObjectPtr<UWidget> Window;
 	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> PipButtonText;
+	TObjectPtr<UWidget> PipButton;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> StatusText;
 	UPROPERTY(Transient)
@@ -163,7 +171,7 @@ private:
 
 	// Videos page.
 	UPROPERTY(Transient)
-	TObjectPtr<UEditableTextBox> LinkBox;
+	TObjectPtr<UWidget> LinkBox;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LoadAnywayButton;
 	UPROPERTY(Transient)
@@ -171,7 +179,7 @@ private:
 
 	// Browser page.
 	UPROPERTY(Transient)
-	TObjectPtr<UEditableTextBox> BrowserUrlBox;
+	TObjectPtr<UWidget> BrowserUrlBox;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> BrowserOpenButton;
 	UPROPERTY(Transient)
@@ -193,7 +201,7 @@ private:
 
 	// Screen page.
 	UPROPERTY(Transient)
-	TObjectPtr<UEditableTextBox> NameBox;
+	TObjectPtr<UWidget> NameBox;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> AspectText;
 
@@ -214,5 +222,6 @@ private:
 	FDelegateHandle ScreenChangedHandle;
 	FDelegateHandle NoticeHandle;
 	int32 ShownRevision = -1;
+	FText ShownTitle;
 	float TimeRefresh = 0.f;
 };

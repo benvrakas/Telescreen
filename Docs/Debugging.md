@@ -61,4 +61,7 @@ in the console.
   assets. Native actors copy only constructor defaults from their class default object (Unreal's post-construct
   property list), so assets put on the class default at start-up must be copied in `PostInitProperties`
   (`CopyAssetsFromClassDefault`).
+- Panel looks plain (grey buttons, no window frame): a vanilla widget class didn't load; the log says which
+  (`UI: vanilla widget ... not found` or `UI: ... has no function ...`). Re-run `TSDumpWidgets` against the current
+  game version and update `TSVanillaUI.cpp`.
 - Not in the AWESOME Shop: look for the schematic line (`cost entries 1, shop subcategories 1, unlocks 1`).

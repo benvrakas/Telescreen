@@ -44,6 +44,10 @@ public:
 	void HandleAction(ATSBuildableScreen* Screen, uint8 Action);
 	void CloseList();
 
+	// The vanilla window frame's close button.
+	UFUNCTION()
+	void OnWindowClosed();
+
 private:
 	void BuildTree();
 	void Rebuild();

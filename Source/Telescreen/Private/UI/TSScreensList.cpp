@@ -17,6 +17,7 @@
 #include "TSConfig.h"
 #include "TSRemoteCallObject.h"
 #include "UI/TSScreenWindow.h"
+#include "UI/TSVanillaUI.h"
 #include "UI/TSStreamIndicator.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
@@ -32,14 +33,10 @@ namespace
 		ActionWindow,
 	};
 
-	UTextBlock* NewText(UWidgetTree* Tree, const FText& Text, int32 Size, const FLinearColor& Color = FLinearColor::White)
+	UTextBlock* NewText(UWidgetTree* Tree, const FText& Text, int32 Size, const FLinearColor& Color = FLinearColor::White, bool bBold = false)
 	{
-		UTextBlock* Block = Tree->ConstructWidget<UTextBlock>();
-		Block->SetText(Text);
-		FSlateFontInfo Font = Block->GetFont();
-		Font.Size = Size;
-		Block->SetFont(Font);
-		Block->SetColorAndOpacity(FSlateColor(Color));
+		UTextBlock* Block = TSVanillaUI::MakeText(Tree, Text, Size, Color, bBold);
+		Block->SetAutoWrapText(false);
 		return Block;
 	}
 }
@@ -104,41 +101,29 @@ bool UTSScreensList::Initialize()
 
 UWidget* UTSScreensList::MakeButton(const FText& Label, ATSBuildableScreen* Screen, uint8 Action)
 {
-	UButton* Button = WidgetTree->ConstructWidget<UButton>();
-	Button->SetBackgroundColor(FLinearColor(0.12f, 0.13f, 0.16f));
-	Button->AddChild(NewText(WidgetTree, Label, 13));
 	UTSScreensListAction* Handler = NewObject<UTSScreensListAction>(this);
 	Handler->List = this;
 	Handler->Screen = Screen;
 	Handler->Action = Action;
-	Button->OnClicked.AddDynamic(Handler, &UTSScreensListAction::HandleClicked);
 	Actions.Add(Handler);
-	return Button;
+	return TSVanillaUI::MakeButton(WidgetTree, Label, Handler, GET_FUNCTION_NAME_CHECKED(UTSScreensListAction, HandleClicked));
+}
+
+void UTSScreensList::OnWindowClosed()
+{
+	CloseList();
 }
 
 void UTSScreensList::BuildTree()
 {
 	USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
-	Size->SetWidthOverride(760.f);
-	Size->SetMaxDesiredHeight(640.f);
-	UBorder* Background = WidgetTree->ConstructWidget<UBorder>();
-	Background->SetBrushColor(FLinearColor(0.025f, 0.03f, 0.045f, 0.97f));
-	Background->SetPadding(FMargin(20.f));
-	Size->AddChild(Background);
-	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
-	Background->AddChild(Root);
-
-	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>();
-	UHorizontalBoxSlot* TitleSlot = Header->AddChildToHorizontalBox(NewText(WidgetTree, LOCTEXT("ScreensTitle", "Screens"), 24));
-	TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	Header->AddChildToHorizontalBox(MakeButton(LOCTEXT("CloseList", "Close"), nullptr, ActionClose));
-	Root->AddChildToVerticalBox(Header);
-
-	UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>();
+	Size->SetWidthOverride(780.f);
+	USizeBox* ListSize = WidgetTree->ConstructWidget<USizeBox>();
+	ListSize->SetMaxDesiredHeight(560.f);
 	Rows = WidgetTree->ConstructWidget<UVerticalBox>();
-	Scroll->AddChild(Rows);
-	Root->AddChildToVerticalBox(Scroll)->SetPadding(FMargin(0.f, 12.f, 0.f, 0.f));
-
+	ListSize->AddChild(TSVanillaUI::MakeScrollBox(WidgetTree, Rows));
+	Size->AddChild(TSVanillaUI::MakeWindow(WidgetTree, LOCTEXT("ScreensTitle", "Screens"), TSVanillaUI::MakeContentBackground(WidgetTree, ListSize), this,
+		GET_FUNCTION_NAME_CHECKED(UTSScreensList, OnWindowClosed)));
 	WidgetTree->RootWidget = Size;
 }
 
@@ -181,7 +166,7 @@ void UTSScreensList::Rebuild()
 
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
 		UVerticalBox* Labels = WidgetTree->ConstructWidget<UVerticalBox>();
-		Labels->AddChildToVerticalBox(NewText(WidgetTree, FText::Format(LOCTEXT("ListName", "{0}  ({1} m)"), Screen->GetDisplayName(), FText::AsNumber(Meters)), 15));
+		Labels->AddChildToVerticalBox(NewText(WidgetTree, FText::Format(LOCTEXT("ListName", "{0}  ({1} m)"), Screen->GetDisplayName(), FText::AsNumber(Meters)), 15, FLinearColor::White, true));
 		Labels->AddChildToVerticalBox(NewText(WidgetTree, What, 12, FLinearColor(0.65f, 0.7f, 0.76f)));
 		UHorizontalBoxSlot* LabelSlot = Row->AddChildToHorizontalBox(Labels);
 		LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
