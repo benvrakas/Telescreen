@@ -65,6 +65,7 @@ enum class ETSPanelAction : uint8
 	ConfirmCancel,
 	PickFile,
 	SubtitleMode,
+	RemoteTrustCertificate,
 	SubtitleTrack,
 	ChangeVideosFolder,
 	OpenVideosFolder,
@@ -227,6 +228,10 @@ private:
 	TObjectPtr<UWidget> ViewersHeader;
 	UPROPERTY(Transient)
 	TObjectPtr<UVerticalBox> ViewersBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> ControlLogHeader;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ControlLogText;
 	FString ShownViewers;
 	void RebuildViewers();
 	ETSInputScope PendingGrantScope = ETSInputScope::None;
@@ -307,6 +312,14 @@ private:
 	TObjectPtr<UWidget> RemoteAddressBox;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> RemotePasswordBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> RemoteUserBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> RemoteSecurityText;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> TrustCertificateButton;
+	// The address, password and user name fields as a connection (false without an address).
+	bool ReadRemoteFields(FTSRemoteConnection& Out);
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> RemoteNote;
 	UPROPERTY(Transient)

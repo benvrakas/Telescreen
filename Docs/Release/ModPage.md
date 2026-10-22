@@ -39,10 +39,12 @@ player. If you play it with friends, please tell me how it went, with your logs 
 - **Share a window** from your PC (a video player, a music app, a game) with its own sound. Only that window is
   shared, never your desktop.
 - **Remote desktop (VNC)**: show a virtual machine's console (QEMU/KVM, Proxmox) or any VNC server on a screen, with
-  mouse and keyboard in its window and the VM's sound (QEMU). Saved connections stay on your PC, passwords encrypted
-  for your Windows user.
+  mouse and keyboard in its window and the VM's sound (QEMU). **Encrypted** (TLS) with servers that offer VeNCrypt with
+  a certificate; the certificate is remembered on the first connection and a different one is refused. Saved
+  connections stay on your PC, passwords encrypted for your Windows user.
 - **Let others help**: the player sharing can give a watching player the mouse, or mouse and typing, for a limited
-  time. Viewers' pointers show on the screen, and anyone watching can click to point at something for everyone.
+  time. Viewers' pointers show on the screen, and anyone watching can click to point at something for everyone. A
+  control log in the panel lists who got control and when; control of a remote computer is confirmed every time.
 - **Sound through the game's audio engine**, like the game's own sounds: rooms, reverb and the game's volume sliders
   apply. Works alongside BoomBoxPlus. Each screen has a volume for everyone and your own **My volume**.
 - **Picture-in-picture** of any screen on your HUD, with sound that follows you. **F9** lists every screen.
@@ -68,8 +70,9 @@ player. If you play it with friends, please tell me how it went, with your logs 
   viewer may be given, how many screens may be in use, stream limits, and whether players may connect directly. The
   host can stop any screen's sharing.
 - **The player sharing** (the browser, window or remote desktop runs on their PC) chooses what to share, can blank it
-  for everyone at any time (**F10**), and decides who may control it, within the host's rules. Other players only get
-  the picture and sound: never their other windows, their VNC addresses or passwords.
+  for everyone at any time (**F10**, which also takes all control back), and decides who may control it, within the
+  host's rules. Other players only get the picture and sound: never their other windows, their VNC addresses or
+  passwords.
 
 ## Requirements
 
@@ -90,7 +93,12 @@ player. If you play it with friends, please tell me how it went, with your logs 
 - Videos are fetched by each player's own PC from the video site. Videos added by others load automatically only from
   sites on your allowed list (Mods > Telescreen > Privacy).
 - Shared browsers, windows and desktops are visible to every player near the screen, including anything signed in.
-  A notice explains this the first time. Plain VNC isn't encrypted: use it on your own network.
+  A notice explains this the first time.
+- **Remote desktops:** Telescreen encrypts the connection when the VNC server offers VeNCrypt with an X.509
+  certificate (QEMU `tls-creds-x509`, Proxmox, TigerVNC `X509Vnc`), and the panel shows whether a connection is
+  encrypted. Plain VNC isn't: use it on your own network or the same PC. "Only connect to encrypted remote desktops"
+  (Mods > Telescreen > When you share) refuses plain servers. VNC's own password login only uses the first 8
+  characters of a password.
 - What players show on screens comes from them and from third-party sites; Telescreen doesn't check it. Hosts can
   limit who may share.
 - Downloading or streaming from YouTube may be against its terms of service; use it responsibly.
@@ -107,6 +115,7 @@ player. If you play it with friends, please tell me how it went, with your logs 
 - Not yet tested with more than one player (see above).
 - Subtitles: picture-based tracks (Blu-ray PGS, DVD) aren't supported, only text; a player watching a video streamed
   from another player gets no subtitles.
+- Remote desktops: anonymous TLS (TigerVNC's default `TLSVnc`) isn't supported, only TLS with a certificate.
 - The browser's process sandbox is off. RDP isn't supported yet (VNC is).
 
 ## Reporting problems
@@ -152,10 +161,12 @@ world host, except live streams when direct connections are on (below; off by de
   screen receive the picture and sound through the game and don't connect to those pages. Logins and cookies are
   forgotten when the browser closes unless "Keep browser logins" is on (then kept in
   `%LOCALAPPDATA%\FactoryGame\Saved\Telescreen\Browser`). Extensions are disabled.
-- **VNC servers** (Remote desktop tab): only the address you enter, from your PC, while your screen shows it. Plain
-  VNC isn't encrypted; use it on your own network. Saved connections are stored locally in
+- **VNC servers** (Remote desktop tab): only the address you enter, from your PC, while your screen shows it.
+  Encrypted with TLS when the server offers VeNCrypt with a certificate; plain VNC isn't encrypted, so use that on
+  your own network. Saved connections are stored locally in
   `%LOCALAPPDATA%\FactoryGame\Saved\Telescreen\RemoteConnections.json`, passwords encrypted for your Windows user;
-  only a random token, never the address or password, is sent to the other players.
+  the certificates seen are remembered in `VncCertificates.json` next to it. Only a random token, never the address
+  or password, is sent to the other players.
 - **Shared windows** are captured on your PC and sent only through the game's connection; no other service is
   contacted.
 - **Your video files** are read from your PC only. When another player can't play a video that plays on your PC, your

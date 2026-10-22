@@ -49,6 +49,18 @@ remote desktop. Nothing of it leaves the PC except the encoded picture and sound
   - everything: all keys except Windows keys, Alt+Tab, Alt+F4, Alt+D, F6, F11, F12, Ctrl+W/T/N/L/S/P/O,
     Ctrl+C/X/V and Ctrl/Shift+Insert (the clipboard), Ctrl+Shift+I/J (developer tools). Pointer lock deltas never come
     from viewers.
+- **Encrypted remote desktops:** VeNCrypt (security type 19) with an X.509 certificate (subtypes X509None, X509Vnc,
+  X509Plain) over Windows' TLS (SChannel, TLS 1.2/1.3). Windows' certificate store isn't used (VNC servers have their
+  own certificates); the certificate's SHA-256 is pinned per address on the first connection (trust on first use,
+  `VncCertificates.json`) and a different one is refused until the sharer presses "Trust the new certificate". The
+  panel says whether a connection is encrypted. "Only connect to encrypted remote desktops" refuses servers without
+  VeNCrypt. Plain VNC is still allowed by default (QEMU and most servers default to it).
+- **VNC passwords:** VNC's own authentication (DES challenge) only uses the first 8 characters; the panel says so when
+  a longer password is used. Inside TLS the challenge can't be watched; X509Plain (user name and password) sends the
+  whole password inside TLS.
+- **Control log:** every grant, revoke, expiry, take-back (F10, a new source) and the start and end of sharing is
+  listed with its time (replicated, last 12, shown to the sharer and the world host). Giving control of a remote
+  desktop asks every time; the other notices once.
 - **Secrets stay local:** remote desktop addresses and passwords never replicate (the screen carries a random token);
   saved connections encrypt passwords with Windows DPAPI for the current user. Window titles of the picker never leave
   the PC.
@@ -83,5 +95,4 @@ Off by default; both the sharer and the viewer must turn them on, and the world 
 
 ## Not done yet
 
-CEF's process sandbox; VeNCrypt (TLS) for VNC; per-grant logs in the panel (the server log has every grant and
-revoke).
+CEF's process sandbox; anonymous TLS for VNC (TigerVNC's TLSVnc; Windows' TLS has no anonymous ciphers).

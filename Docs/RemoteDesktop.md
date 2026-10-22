@@ -10,10 +10,15 @@ modes, the controller's helper sends the picture and sound to the other players 
 Our own RFB client: libvncclient is GPL, and the mod ships no GPL code.
 
 - **Protocol:** RFB 3.3, 3.7 and 3.8 (the lower of the server's version and 3.8).
-- **Security:** None, and VNC Authentication (the 16-byte challenge DES-encrypted in ECB mode with the password,
-  whose bytes are bit-reversed; DES from Windows CNG, `bcrypt.lib`). With a password the client picks VNC
-  Authentication when offered, otherwise None. Other types (VeNCrypt, RA2, Apple ARD...) are refused with the list
-  the server offered. VeNCrypt with TLS is planned; plain VNC isn't encrypted.
+- **Security:** None, VNC Authentication (the 16-byte challenge DES-encrypted in ECB mode with the password, whose
+  bytes are bit-reversed; DES from Windows CNG, `bcrypt.lib`), and VeNCrypt (19). VeNCrypt is used when it is the
+  server's only choice or the sharer requires encryption (servers offering it next to None/VNC usually only have
+  anonymous TLS): version 0.2, then X509Plain (262, with a user name), X509Vnc (261, with a password) or X509None
+  (260); the anonymous subtypes (257-259) are refused with an explanation, as SChannel has no anonymous ciphers. TLS is
+  `Helper/src/Tls.cpp` (SChannel, `SCH_CREDENTIALS`, manual certificate validation); the certificate's SHA-256 is
+  compared with the pin the mod sends (empty on the first connection) and reported back (`RemoteSecurity`), and
+  after the handshake every read and write goes through TLS. Other types (RA2, Apple ARD...) are refused with the
+  list the server offered.
 - **Pixel format:** 32 bpp, depth 24, little endian, true colour, 8 bits per channel at shifts 16/8/0, so pixels
   arrive as BGRX, the helper's frame format.
 - **Encodings,** in preference order: ZRLE (16), Hextile (5), CopyRect (1), Raw (0); pseudo-encodings DesktopSize
@@ -60,6 +65,11 @@ up to ~20 fps while the desktop drew, the full desktop decoded correctly. That t
 - Fixed: ZRLE rectangles that expand past one 64 KB inflate chunk after the last input byte lost their tail (the
   inflater still held output), so decoding failed and the session ended as if the server had closed it. The loop now
   drains pending output, and decode failures say so instead of "the server closed the connection".
+
+Encrypted, tested 2026-10-22 against QEMU 11.1 (`-object tls-creds-x509,...,verify-peer=no -vnc
+127.0.0.1:2,tls-creds=tls0,password-secret=pw`, a test CA and server certificate from OpenSSL): TLS 1.3, X509Vnc,
+the fingerprint matching OpenSSL's, the desktop decoding; a pinned certificate passes, a different pin is refused, a
+wrong password is refused, and "require encryption" refuses the plain VM.
 
 ## RDP
 

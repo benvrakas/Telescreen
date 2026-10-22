@@ -81,6 +81,9 @@ public:
 	// The world host's stream limits (replicated).
 	const FTSStreamLimits& GetStreamLimits() const { return mStreamLimits; }
 
+	// Who gave, lost or was refused control of the shared source, and when (newest last; replicated, at most 12).
+	const TArray<FString>& GetControlLog() const { return mControlLog; }
+
 	// Current input grants (replicated); expired ones are removed on the server.
 	const TArray<FTSInputGrant>& GetGrants() const { return mGrants; }
 
@@ -269,6 +272,10 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	TArray<FTSInputGrant> mGrants;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	TArray<FString> mControlLog;
+	void AddControlLog(const FString& Line);
 
 	UPROPERTY(Replicated)
 	FTSStreamLimits mStreamLimits;

@@ -24,6 +24,11 @@ struct FVncParams
 	// The desktop size to ask the server for (ExtendedDesktopSize), e.g. the screen's shape; 0 asks for nothing.
 	uint32_t WantWidth = 0;
 	uint32_t WantHeight = 0;
+	// VeNCrypt: the user name some servers ask for with the password, the certificate fingerprint seen last time
+	// (empty: none yet; trust on first use), and whether to refuse servers that don't encrypt.
+	std::string Username;
+	std::string PinnedFingerprint;
+	bool bRequireTls = false;
 };
 
 // A VNC (RFB) client: connects to a VNC server (QEMU/Proxmox consoles, TigerVNC, x11vnc...), shows its desktop in the
@@ -53,6 +58,9 @@ private:
 	bool DecodeCursor(int HotX, int HotY, int W, int H);
 	bool HandleQemuMessage();
 	bool HandleExtendedDesktopSize(int Reason, int Status, int W, int H);
+	// VeNCrypt (security type 19): TLS with a certificate, then none, VNC or user-and-password authentication.
+	bool NegotiateVeNCrypt(int& OutAuth, std::string& Error);
+	bool VncAuthenticate(std::string& Error);
 	void Resize(int W, int H);
 	void Fill(int X, int Y, int W, int H, uint32_t Pixel);
 	void RequestUpdate(bool bIncremental);
@@ -89,6 +97,9 @@ private:
 	// Pointer state sent with every PointerEvent (framebuffer pixels, RFB button mask).
 	std::atomic<int> PointerX{0}, PointerY{0};
 	std::atomic<uint8_t> Buttons{0};
+
+	// TLS once VeNCrypt set it up; every read and write goes through it then.
+	std::unique_ptr<class FTlsClient> Tls;
 
 	// ExtendedDesktopSize: the server's first screen, and whether the wanted size was asked for already.
 	uint32_t ScreenId = 0, ScreenFlags = 0;

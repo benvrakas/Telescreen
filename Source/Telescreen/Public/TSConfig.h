@@ -52,6 +52,7 @@ public:
 	static const FString StreamEncoderKey;
 	static const FString BrowserHeightKey;
 	static const FString RemoteMatchScreenKey;
+	static const FString RemoteRequireTlsKey;
 	static const FString VideosFolderKey;
 	static const FString SubtitleModeKey;
 	static const FString DirectKey;

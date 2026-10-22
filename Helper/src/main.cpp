@@ -45,6 +45,8 @@ namespace
 		bool SelfTestVnc = false;
 		bool SelfTestDirect = false;
 		std::string VncPassword;
+		bool VncRequireTls = false;
+		std::string VncPin;
 		double LossPercent = 0.0;
 		int StreamHeight = 0;
 		int VncWantWidth = 0, VncWantHeight = 0;
@@ -67,6 +69,8 @@ namespace
 			else if (Key == L"--stream-height") Args.StreamHeight = _wtoi(Value.c_str());
 			else if (Key == L"--subtitles") Args.SubtitleTrack = _wtoi(Value.c_str());
 			else if (Key == L"--subtitle-language") Args.SubtitleLanguage = Narrow(Value);
+			else if (Key == L"--vnc-require-tls") Args.VncRequireTls = Value == L"1";
+			else if (Key == L"--vnc-pin") Args.VncPin = Narrow(Value);
 			else if (Key == L"--vnc-size") swscanf_s(Value.c_str(), L"%dx%d", &Args.VncWantWidth, &Args.VncWantHeight);
 			else if (Key == L"--jsruntime") Args.JsRuntime = Value;
 			else if (Key == L"--browserdir") Args.BrowserDir = Value;
@@ -236,6 +240,16 @@ namespace
 				Pipe.Send(uint16_t(EMsg::SubtitleCues), W.Bytes);
 				Sent += Count;
 			} while (Sent < Cues.size());
+		};
+
+		Events.OnRemoteSecurity = [&Pipe](uint32_t Session, const std::string& Protocol, const std::string& Fingerprint, bool Changed)
+		{
+			FPayloadWriter W;
+			W.U32(Session);
+			W.Str(Protocol);
+			W.Str(Fingerprint);
+			W.U8(Changed ? 1 : 0);
+			Pipe.Send(uint16_t(EMsg::RemoteSecurity), W.Bytes);
 		};
 
 		Events.OnBrowserState = [&Pipe](uint32_t Session, const std::string& Url, const std::string& Title, bool Loading, bool CanGoBack,
@@ -469,6 +483,9 @@ namespace
 				Params.bAudio = R.U8() != 0;
 				Params.WantWidth = std::min<uint32_t>(R.U32(), 8192);
 				Params.WantHeight = std::min<uint32_t>(R.U32(), 8192);
+				Params.Username = R.Str();
+				Params.PinnedFingerprint = R.Str();
+				Params.bRequireTls = R.U8() != 0;
 				if (!R.Ok) break;
 				std::lock_guard<std::mutex> Lock(SessionsMutex);
 				auto Existing = Sessions.find(Params.SessionId);
@@ -621,6 +638,8 @@ namespace
 		Params.Host = Colon == std::string::npos ? Args.SelfTest : Args.SelfTest.substr(0, Colon);
 		Params.Port = Colon == std::string::npos ? 5900 : uint16_t(std::atoi(Args.SelfTest.c_str() + Colon + 1));
 		Params.Password = Args.VncPassword;
+		Params.bRequireTls = Args.VncRequireTls;
+		Params.PinnedFingerprint = Args.VncPin;
 		Params.WantWidth = uint32_t(std::max(0, Args.VncWantWidth));
 		Params.WantHeight = uint32_t(std::max(0, Args.VncWantHeight));
 		std::atomic<int> Frames{0};

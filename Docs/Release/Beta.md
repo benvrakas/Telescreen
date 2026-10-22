@@ -94,6 +94,9 @@ Host a world with one friend joining (listen server). Everybody does the same ch
 16. **Direct connections:** both turn them on (Mods menu, Telescreen, Direct connections); one shares the browser.
     The viewer's stream line should start with "direct" after a few seconds. Turn it off on one side: the stream
     should continue through the host. Tell us whether it connected, and whether either of you has UPnP on the router.
+17. **Remote desktop control:** the host (who shows a remote desktop) gives the friend the mouse: the dialog asks every
+    time, and the panel's Control log lists the grant, then "control ran out" or the F10 take-back. With a VNC server
+    that has a certificate (QEMU tls-creds-x509, Proxmox), the Remote desktop tab says "Encrypted (TLS ...)".
 
 ## If something breaks: send these
 

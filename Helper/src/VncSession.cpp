@@ -1,4 +1,5 @@
 #include "VncSession.h"
+#include "Tls.h"
 #include "Taps.h"
 
 #include <winsock2.h>
@@ -182,7 +183,8 @@ bool FVncSession::ReadExact(void* Data, size_t Size)
 	uint8_t* Out = static_cast<uint8_t*>(Data);
 	while (Size > 0 && !Stopping)
 	{
-		const int Got = recv(SOCKET(Socket), reinterpret_cast<char*>(Out), int(std::min<size_t>(Size, 1 << 20)), 0);
+		const int Got = Tls ? Tls->Recv(Out, int(std::min<size_t>(Size, 1 << 20)))
+							: recv(SOCKET(Socket), reinterpret_cast<char*>(Out), int(std::min<size_t>(Size, 1 << 20)), 0);
 		if (Got <= 0) return false;
 		Out += Got;
 		Size -= size_t(Got);
@@ -206,6 +208,7 @@ bool FVncSession::Send(const void* Data, size_t Size)
 {
 	if (Trace()) LOG_INFO("session %u: trace: client message %u (%zu bytes)", Params.SessionId, Size ? static_cast<const uint8_t*>(Data)[0] : 0, Size);
 	std::lock_guard<std::mutex> Lock(SendMutex);
+	if (Tls) return Tls->SendAll(static_cast<const uint8_t*>(Data), Size);
 	const char* In = static_cast<const char*>(Data);
 	while (Size > 0)
 	{
@@ -310,28 +313,30 @@ bool FVncSession::Handshake(std::string& Error)
 		if (!ReadExact(Types.data(), Count)) return false;
 		const bool bHasNone = std::find(Types.begin(), Types.end(), 1) != Types.end();
 		const bool bHasVnc = std::find(Types.begin(), Types.end(), 2) != Types.end();
-		Security = !Params.Password.empty() && bHasVnc ? 2 : bHasNone ? 1 : bHasVnc ? 2 : 0;
+		const bool bHasVeNCrypt = std::find(Types.begin(), Types.end(), 19) != Types.end();
+		// Encrypted when the server offers it and nothing else, or when encryption is required; servers offering
+		// both often only have anonymous TLS, which Windows' TLS can't do.
+		if (bHasVeNCrypt && (Params.bRequireTls || (!bHasNone && !bHasVnc))) Security = 19;
+		else if (Params.bRequireTls) Security = 0;
+		else Security = !Params.Password.empty() && bHasVnc ? 2 : bHasNone ? 1 : bHasVnc ? 2 : 0;
 		if (Security == 0)
 		{
 			std::string Offered;
 			for (uint8_t T : Types) Offered += (Offered.empty() ? "" : ", ") + std::to_string(T);
-			Error = "the server needs a login Telescreen doesn't support yet (security types " + Offered + "; supported: none, VNC password)";
+			Error = Params.bRequireTls ? "the server doesn't offer encryption (VeNCrypt), and your settings require it (security types " + Offered + ")"
+									   : "the server needs a login Telescreen doesn't support yet (security types " + Offered + "; supported: none, VNC password, VeNCrypt with X.509)";
 			return false;
 		}
 		if (!Send(&Security, 1)) return false;
 	}
-	if (Security == 2)
+	if (Security == 19)
 	{
-		uint8_t Challenge[16];
-		if (!ReadExact(Challenge, 16)) return false;
-		if (!DesEncryptChallenge(Params.Password, Challenge))
-		{
-			Error = "couldn't encrypt the password";
-			return false;
-		}
-		if (!Send(Challenge, 16)) return false;
+		int Auth = 0;
+		if (!NegotiateVeNCrypt(Auth, Error)) return false;
+		if (Auth == 2 && !VncAuthenticate(Error)) return false;
 	}
-	if (Security == 2 || Use == 8)
+	if (Security == 2 && !VncAuthenticate(Error)) return false;
+	if (Security == 2 || Security == 19 || Use == 8)
 	{
 		uint8_t Result[4];
 		if (!ReadExact(Result, 4)) return false;
@@ -348,7 +353,8 @@ bool FVncSession::Handshake(std::string& Error)
 			return false;
 		}
 	}
-	LOG_INFO("session %u: security %s accepted", Params.SessionId, Security == 2 ? "VNC password" : "none");
+	LOG_INFO("session %u: security %s accepted", Params.SessionId, Security == 19 ? "VeNCrypt (TLS)" : Security == 2 ? "VNC password" : "none");
+	if (!Tls && Events.OnRemoteSecurity) Events.OnRemoteSecurity(Params.SessionId, std::string(), std::string(), false);
 
 	const uint8_t Shared = 1;
 	if (!Send(&Shared, 1)) return false;
@@ -415,7 +421,8 @@ void FVncSession::Run()
 		FD_ZERO(&Read);
 		FD_SET(SOCKET(Socket), &Read);
 		timeval Wait{0, 20000};
-		const int Ready = select(0, &Read, nullptr, nullptr, &Wait);
+		// Decrypted bytes already waiting don't show on the socket.
+		const int Ready = Tls && Tls->HasBuffered() ? 1 : select(0, &Read, nullptr, nullptr, &Wait);
 		if (Ready < 0) break;
 		if (Ready == 0)
 		{
@@ -748,6 +755,100 @@ bool FVncSession::DecodeCursor(int HotX, int HotY, int W, int H)
 	CursorHotX = HotX;
 	CursorHotY = HotY;
 	bDirty = true;
+	return true;
+}
+
+bool FVncSession::VncAuthenticate(std::string& Error)
+{
+	uint8_t Challenge[16];
+	if (!ReadExact(Challenge, 16)) return false;
+	if (!DesEncryptChallenge(Params.Password, Challenge))
+	{
+		Error = "couldn't encrypt the password";
+		return false;
+	}
+	return Send(Challenge, 16);
+}
+
+bool FVncSession::NegotiateVeNCrypt(int& OutAuth, std::string& Error)
+{
+	// Version 0.2 both ways, then the server's subtypes.
+	uint8_t Version[2];
+	if (!ReadExact(Version, 2)) return false;
+	const uint8_t Mine[2] = {0, 2};
+	if (Version[0] != 0 || Version[1] < 2 || !Send(Mine, 2))
+	{
+		Error = "the server's VeNCrypt version " + std::to_string(Version[0]) + "." + std::to_string(Version[1]) + " isn't supported";
+		return false;
+	}
+	uint8_t Ack = 1;
+	if (!ReadExact(&Ack, 1) || Ack != 0)
+	{
+		Error = "the server refused VeNCrypt 0.2";
+		return false;
+	}
+	uint8_t Count = 0;
+	if (!ReadExact(&Count, 1) || Count == 0)
+	{
+		Error = "the server offered no VeNCrypt methods";
+		return false;
+	}
+	std::vector<uint32_t> Subtypes;
+	for (int I = 0; I < Count; ++I)
+	{
+		uint8_t Raw[4];
+		if (!ReadExact(Raw, 4)) return false;
+		Subtypes.push_back(BE32(Raw));
+	}
+	auto Has = [&Subtypes](uint32_t T) { return std::find(Subtypes.begin(), Subtypes.end(), T) != Subtypes.end(); };
+	// X.509 only (260 none, 261 VNC password, 262 user and password): anonymous TLS (257-259) isn't in Windows' TLS.
+	uint32_t Chosen = 0;
+	if (!Params.Username.empty() && Has(262)) Chosen = 262;
+	else if (!Params.Password.empty() && Has(261)) Chosen = 261;
+	else if (Has(260)) Chosen = 260;
+	else if (Has(261)) Chosen = 261;
+	else if (Has(262)) Chosen = 262;
+	if (Chosen == 0)
+	{
+		std::string Offered;
+		for (uint32_t T : Subtypes) Offered += (Offered.empty() ? "" : ", ") + std::to_string(T);
+		const bool bAnonymous = Has(257) || Has(258) || Has(259);
+		Error = bAnonymous ? "the server only offers anonymous TLS, which Windows can't do; give it an X.509 certificate (QEMU: tls-creds-x509; TigerVNC: "
+							 "-SecurityTypes X509Vnc)"
+						   : "the server's VeNCrypt methods aren't supported (" + Offered + ")";
+		return false;
+	}
+	uint8_t Pick[4] = {uint8_t(Chosen >> 24), uint8_t(Chosen >> 16), uint8_t(Chosen >> 8), uint8_t(Chosen)};
+	if (!Send(Pick, 4)) return false;
+	uint8_t Accepted = 0;
+	if (!ReadExact(&Accepted, 1) || Accepted != 1)
+	{
+		Error = "the server refused that VeNCrypt method";
+		return false;
+	}
+	auto Client = std::make_unique<FTlsClient>();
+	if (!Client->Handshake(Socket, Params.Host, Error)) return false;
+	const std::string Fingerprint = Client->GetFingerprint();
+	const bool bChanged = !Params.PinnedFingerprint.empty() && Params.PinnedFingerprint != Fingerprint;
+	LOG_INFO("session %u: %s, certificate SHA-256 %s%s", Params.SessionId, Client->GetProtocol().c_str(), Fingerprint.c_str(),
+		bChanged ? " (CHANGED since the last connection)" : Params.PinnedFingerprint.empty() ? " (first connection)" : " (as before)");
+	if (Events.OnRemoteSecurity) Events.OnRemoteSecurity(Params.SessionId, Client->GetProtocol(), Fingerprint, bChanged);
+	if (bChanged)
+	{
+		Error = "the server's certificate changed since the last connection; if you expected that, trust the new one in the Remote desktop tab";
+		return false;
+	}
+	Tls = std::move(Client);
+	if (Chosen == 262)
+	{
+		std::vector<uint8_t> Login;
+		PutBE32(Login, uint32_t(Params.Username.size()));
+		PutBE32(Login, uint32_t(Params.Password.size()));
+		Login.insert(Login.end(), Params.Username.begin(), Params.Username.end());
+		Login.insert(Login.end(), Params.Password.begin(), Params.Password.end());
+		if (!Send(Login.data(), Login.size())) return false;
+	}
+	OutAuth = Chosen == 261 ? 2 : Chosen == 262 ? 3 : 1;
 	return true;
 }
 

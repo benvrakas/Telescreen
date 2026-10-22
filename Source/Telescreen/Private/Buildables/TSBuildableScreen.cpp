@@ -58,6 +58,7 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mCurtain);
 	DOREPLIFETIME(ATSBuildableScreen, mViewerStates);
 	DOREPLIFETIME(ATSBuildableScreen, mGrants);
+	DOREPLIFETIME(ATSBuildableScreen, mControlLog);
 	DOREPLIFETIME(ATSBuildableScreen, mStreamLimits);
 	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamer);
 	DOREPLIFETIME(ATSBuildableScreen, mRelayedViewerCount);
@@ -318,6 +319,15 @@ void ATSBuildableScreen::OnRep_Control()
 	OnScreenChanged.Broadcast();
 }
 
+void ATSBuildableScreen::AddControlLog(const FString& Line)
+{
+	mControlLog.Add(FDateTime::Now().ToString(TEXT("%H:%M ")) + Line.Left(160));
+	while (mControlLog.Num() > 12)
+	{
+		mControlLog.RemoveAt(0);
+	}
+}
+
 bool ATSBuildableScreen::IsLocalMediaStreamer() const
 {
 	const APlayerController* Local = UGameplayStatics::GetPlayerController(this, 0);
@@ -452,6 +462,9 @@ void ATSBuildableScreen::Server_TakeControl(APlayerState* Requester, ETSScreenMo
 	SyncViewers();
 	mCurtain = false;
 	mGrants.Reset();
+	mControlLog.Reset();
+	AddControlLog(FString::Printf(TEXT("%s started sharing %s"), *mControllerName,
+		Mode == ETSScreenMode::Window ? TEXT("a window") : Mode == ETSScreenMode::RemoteDesktop ? TEXT("a remote desktop") : TEXT("the browser")));
 	mMediaStreamer = nullptr;
 	mMediaStreamerName.Reset();
 	mMediaReports.Reset();
@@ -471,6 +484,7 @@ void ATSBuildableScreen::Server_ReleaseControl(const TCHAR* Reason)
 		return;
 	}
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s released control (%s)"), *GetName(), *mControllerName, Reason);
+	AddControlLog(FString::Printf(TEXT("Sharing ended (%s)"), Reason));
 	mMode = ETSScreenMode::SyncedMedia;
 	mController = nullptr;
 	mControllerName.Reset();
@@ -618,6 +632,10 @@ void ATSBuildableScreen::Server_SetGrant(APlayerState* Player, ETSInputScope Sco
 	}
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s %s input (%s, %d min)"), *GetName(), *mControllerName, Granted == ETSInputScope::None ? TEXT("revoked") : TEXT("granted"),
 		*Player->GetPlayerName(), *UEnum::GetValueAsString(Granted), Minutes);
+	const TCHAR* What = Granted == ETSInputScope::Pointer ? TEXT("the mouse") : Granted == ETSInputScope::Typing ? TEXT("mouse and typing")
+																			   : TEXT("mouse and keyboard");
+	AddControlLog(Granted == ETSInputScope::None ? FString::Printf(TEXT("%s took control back from %s"), *mControllerName, *Player->GetPlayerName())
+												 : FString::Printf(TEXT("%s gave %s %s for %d min"), *mControllerName, *Player->GetPlayerName(), What, FMath::Clamp(Minutes, 1, 120)));
 	FlushNetDormancy();
 	ForceNetUpdate();
 	OnScreenChanged.Broadcast();
@@ -630,6 +648,7 @@ void ATSBuildableScreen::Server_RevokeGrants(const TCHAR* Reason)
 		return;
 	}
 	UE_LOG(LogTelescreen, Log, TEXT("%s: all input grants revoked (%s)"), *GetName(), Reason);
+	AddControlLog(FString::Printf(TEXT("All control taken back (%s)"), Reason));
 	mGrants.Reset();
 	FlushNetDormancy();
 	ForceNetUpdate();
@@ -719,6 +738,13 @@ void ATSBuildableScreen::CheckController()
 		ForceNetUpdate();
 	}
 	const double Now = GetServerTime();
+	for (const FTSInputGrant& Grant : mGrants)
+	{
+		if (Grant.ExpiresAt <= Now)
+		{
+			AddControlLog(FString::Printf(TEXT("%s's control ran out"), *Grant.PlayerName));
+		}
+	}
 	if (mGrants.RemoveAll([Now](const FTSInputGrant& Grant) { return Grant.ExpiresAt <= Now; }) > 0)
 	{
 		UE_LOG(LogTelescreen, Log, TEXT("%s: an input grant expired"), *GetName());

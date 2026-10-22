@@ -17,6 +17,13 @@ First public release (everything from the betas below). Not yet tested in multip
   the sharer's and each viewer's PC, encrypted (AES-GCM), instead of through the world host. STUN for the public
   address, UPnP or a forwarded port when needed, the world host's connection as the fallback. The world host can
   turn them off ("Allow direct connections between players").
+- **Encrypted remote desktops**: VeNCrypt with TLS (Windows' own TLS) when the VNC server has an X.509 certificate;
+  the certificate is remembered on the first connection and a changed one is refused until you trust it ("Trust the
+  new certificate"). The panel shows whether the connection is encrypted; "Only connect to encrypted remote desktops"
+  refuses plain VNC. Optional user name for servers that ask for one.
+- **Control log** in the sharing card (for the sharer and the world host): who got control, for how long, when it
+  ran out or was taken back. Giving a viewer control of a remote computer is confirmed every time.
+- A warning that VNC's password login only uses the first 8 characters.
 - Fix: long links and file paths were cut short by the game's text field (about 80 characters), so long local file
   paths couldn't be found. Text fields now take up to 2048 characters.
 

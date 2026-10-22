@@ -380,6 +380,10 @@ void UTSScreenPanel::BuildTree()
 	AddRow(Sharing, ViewersHeader, 12.f);
 	ViewersBox = MakeVBox();
 	AddRow(Sharing, ViewersBox, 4.f);
+	ControlLogHeader = Heading(LOCTEXT("ControlLogHeader", "Control log"));
+	AddRow(Sharing, ControlLogHeader, 12.f);
+	ControlLogText = MakeText(FText::GetEmpty(), 12, Muted);
+	AddRow(Sharing, ControlLogText, 4.f);
 	SharingBar = Sharing;
 	AddRow(Left, Sharing, 14.f);
 
@@ -527,13 +531,24 @@ void UTSScreenPanel::BuildTree()
 		UHorizontalBox* ConnectRow = MakeHBox();
 		RemoteAddressBox = MakeInput(LOCTEXT("RemoteAddressHint", "VNC address, e.g. 192.168.1.20:5901 or myvm:1"), ETSPanelAction::RemoteConnect);
 		AddToHBox(ConnectRow, RemoteAddressBox, true);
+		RemoteUserBox = MakeInput(LOCTEXT("RemoteUserHint", "User (if asked)"), ETSPanelAction::RemoteConnect);
+		USizeBox* UserSize = WidgetTree->ConstructWidget<USizeBox>();
+		UserSize->SetWidthOverride(150.f);
+		UserSize->AddChild(RemoteUserBox);
+		AddToHBox(ConnectRow, UserSize);
 		RemotePasswordBox = MakeInput(LOCTEXT("RemotePasswordHint", "Password, if any"), ETSPanelAction::RemoteConnect);
 		TSVanillaUI::SetInputPassword(RemotePasswordBox, true);
 		USizeBox* PasswordSize = WidgetTree->ConstructWidget<USizeBox>();
-		PasswordSize->SetWidthOverride(240.f);
+		PasswordSize->SetWidthOverride(200.f);
 		PasswordSize->AddChild(RemotePasswordBox);
 		AddToHBox(ConnectRow, PasswordSize);
 		AddRow(Page, ConnectRow, 10.f);
+		UHorizontalBox* SecurityRow = MakeHBox();
+		RemoteSecurityText = MakeText(FText::GetEmpty(), 12, Muted);
+		AddToHBox(SecurityRow, RemoteSecurityText, true);
+		TrustCertificateButton = MakeButton(LOCTEXT("TrustCertificate", "Trust the new certificate"), ETSPanelAction::RemoteTrustCertificate);
+		AddToHBox(SecurityRow, TrustCertificateButton);
+		AddRow(Page, SecurityRow, 6.f);
 		UHorizontalBox* ConnectButtons = MakeHBox();
 		AddToHBox(ConnectButtons, MakeButton(LOCTEXT("RemoteConnect", "Connect"), ETSPanelAction::RemoteConnect, INDEX_NONE, true));
 		AddToHBox(ConnectButtons, MakeButton(LOCTEXT("RemoteSave", "Save"), ETSPanelAction::RemoteSave));
@@ -945,7 +960,27 @@ void UTSScreenPanel::RefreshSharing()
 	{
 		RemoteNote->SetText(LOCTEXT("RemoteIdle",
 			"Show a computer's desktop on this screen over VNC: a VM console (QEMU/KVM, Proxmox), TigerVNC, x11vnc, a Raspberry Pi... "
-			"The address and password stay on your PC. Plain VNC isn't encrypted: use it on your own network."));
+			"The address and password stay on your PC. Encrypted when the server offers VeNCrypt with a certificate (its certificate is "
+			"remembered); plain VNC isn't encrypted: use that on your own network."));
+	}
+	const FText Security = Player ? Player->GetRemoteSecurity() : FText::GetEmpty();
+	RemoteSecurityText->SetText(Security);
+	Show(RemoteSecurityText, !Security.IsEmpty());
+	Show(TrustCertificateButton, Player && Player->HasChangedCertificate());
+
+	// Control log: for the sharer and the world host.
+	const TArray<FString>& Log = Screen->GetControlLog();
+	const bool bShowLog = bShared && (bMine || bHostTools) && Log.Num() > 0;
+	Show(ControlLogHeader, bShowLog);
+	Show(ControlLogText, bShowLog);
+	if (bShowLog)
+	{
+		TArray<FString> Lines;
+		for (int32 I = Log.Num() - 1; I >= 0 && Lines.Num() < 6; --I)
+		{
+			Lines.Add(Log[I]);
+		}
+		ControlLogText->SetText(FText::FromString(FString::Join(Lines, TEXT("\n"))));
 	}
 
 	// Browser page.
@@ -1127,7 +1162,10 @@ void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
 							 : Kind == EConfirm::ConnectRemote ? UTSConfig::RemoteDisclaimerKey
 							 : Kind == EConfirm::Grant		   ? UTSConfig::GrantDisclaimerKey
 															   : UTSConfig::StreamDisclaimerKey;
-	if (UTSConfig::GetBool(this, NoticeKey, false))
+	// Control of a whole computer is confirmed every time; the other notices once.
+	const ATSBuildableScreen* AskScreen = GetScreen();
+	const bool bRemoteGrant = Kind == EConfirm::Grant && AskScreen && AskScreen->GetMode() == ETSScreenMode::RemoteDesktop;
+	if (UTSConfig::GetBool(this, NoticeKey, false) && !bRemoteGrant)
 	{
 		RunConfirmed(Kind, Index);
 		return;
@@ -1139,7 +1177,20 @@ void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
 	{
 		const ATSBuildableScreen* Screen = GetScreen();
 		const APlayerState* Viewer = Screen && Screen->GetViewerStates().IsValidIndex(Index) ? Screen->GetViewerStates()[Index].Get() : nullptr;
-		ConfirmTitle->SetText(LOCTEXT("ConfirmGrantTitle", "Give another player control?"));
+		ConfirmTitle->SetText(bRemoteGrant ? LOCTEXT("ConfirmGrantRemoteTitle", "Give another player control of this computer?")
+										   : LOCTEXT("ConfirmGrantTitle", "Give another player control?"));
+		if (bRemoteGrant)
+		{
+			ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmGrantRemoteText",
+				"{0} will be able to click{1} on the remote computer, as you could: open programs, change settings, read files there. Only do "
+				"this with people you trust.\n\nIt ends by itself after {2} minutes; Revoke or {3} ends it at once. Every grant is listed in "
+				"the control log, and this question appears each time for remote desktops."),
+				FText::FromString(Viewer ? Viewer->GetPlayerName() : FString(TEXT("They"))),
+				PendingGrantScope == ETSInputScope::Pointer ? FText::GetEmpty() : LOCTEXT("ConfirmGrantRemoteTyping", " and type"),
+				FText::AsNumber(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::GrantMinutesKey, 15), 1, 120)), CurtainKey));
+			Show(ConfirmLayer, true);
+			return;
+		}
 		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmGrant",
 			"{0} will be able to click{1} in your {2} on your PC. They can do anything you could do there, including in accounts you're signed in "
 			"to. Only do this with people you trust.\n\nIt ends by itself after {3} minutes; Revoke or {4} ends it at once. This question appears "
@@ -1206,7 +1257,7 @@ void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
 		{
 			Connection = SavedRemotes[Index];
 		}
-		else if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), TSVanillaUI::GetInputText(RemotePasswordBox).ToString(), Connection))
+		else if (!ReadRemoteFields(Connection))
 		{
 			SetNotice(LOCTEXT("RemoteNoAddress", "Type the VNC address first, e.g. 192.168.1.20:5901."), true);
 			break;
@@ -1227,6 +1278,16 @@ void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
 	}
 }
 
+bool UTSScreenPanel::ReadRemoteFields(FTSRemoteConnection& Out)
+{
+	if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), TSVanillaUI::GetInputText(RemotePasswordBox).ToString(), Out))
+	{
+		return false;
+	}
+	Out.Username = TSVanillaUI::GetInputText(RemoteUserBox).ToString().TrimStartAndEnd().Left(128);
+	return true;
+}
+
 void UTSScreenPanel::ConnectRemote(const FTSRemoteConnection& Connection)
 {
 	ATSBuildableScreen* Screen = GetScreen();
@@ -1238,7 +1299,11 @@ void UTSScreenPanel::ConnectRemote(const FTSRemoteConnection& Connection)
 	const FString Token = TSRemoteConnections::MakePending(Connection);
 	UE_LOG(LogTelescreen, Log, TEXT("%s: connecting to VNC %s"), *Screen->GetName(), *Connection.GetAddress());
 	RCO->Server_TakeControl(Screen, ETSScreenMode::RemoteDesktop, Token);
-	SetNotice(FText::Format(LOCTEXT("RemoteStarting", "Connecting to {0}..."), FText::FromString(Connection.GetAddress())));
+	// VNC's own password login only uses the first 8 characters (VeNCrypt's user login uses all of it).
+	SetNotice(Connection.Password.Len() > 8 && Connection.Username.IsEmpty()
+		? FText::Format(LOCTEXT("RemoteStartingLongPassword", "Connecting to {0}... Note: VNC passwords only count their first 8 characters."),
+			FText::FromString(Connection.GetAddress()))
+		: FText::Format(LOCTEXT("RemoteStarting", "Connecting to {0}..."), FText::FromString(Connection.GetAddress())));
 }
 
 void UTSScreenPanel::ShowSavedRemotes()
@@ -1427,6 +1492,14 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		RebuildSubtitles();
 		return;
 	}
+	case ETSPanelAction::RemoteTrustCertificate:
+		if (UTSScreenPlayer* Player = Screen ? Screen->GetPlayer() : nullptr)
+		{
+			Player->TrustChangedCertificate();
+			SetNotice(LOCTEXT("CertificateTrusted", "The new certificate is trusted for that address. Connect again."));
+		}
+		RefreshSharing();
+		return;
 	case ETSPanelAction::SubtitleTrack:
 		if (UTSScreenPlayer* Player = Screen ? Screen->GetPlayer() : nullptr)
 		{
@@ -1543,7 +1616,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::RemoteSave:
 	{
 		FTSRemoteConnection Connection;
-		if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), TSVanillaUI::GetInputText(RemotePasswordBox).ToString(), Connection))
+		if (!ReadRemoteFields(Connection))
 		{
 			SetNotice(LOCTEXT("RemoteNoAddressSave", "Type the VNC address first."), true);
 			break;

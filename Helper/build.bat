@@ -11,11 +11,11 @@ if not exist "%CEF%\build\libcef_dll_wrapper\Release\libcef_dll_wrapper.lib" cal
 cl /nologo /std:c++20 /EHsc /O2 /W3 /MD /DUNICODE /D_UNICODE /DWIN32 /D_WINDOWS /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
   /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /Zi /Brepro ^
   /I "%FFMPEG%\include" /I "%CEF%" /I ..\Source\Telescreen\Private ^
-  src\main.cpp src\Common.cpp src\Pipe.cpp src\SharedMemory.cpp src\YtDlp.cpp src\MediaSession.cpp src\Security.cpp src\BrowserSession.cpp src\StreamCodec.cpp src\EncodeBench.cpp src\LoopbackSession.cpp src\Taps.cpp src\StreamSession.cpp src\WindowSession.cpp src\VncSession.cpp src\Json.cpp src\Subtitles.cpp src\Direct.cpp src\Upnp.cpp third_party\miniz\miniz.c ^
+  src\main.cpp src\Common.cpp src\Pipe.cpp src\SharedMemory.cpp src\YtDlp.cpp src\MediaSession.cpp src\Security.cpp src\BrowserSession.cpp src\StreamCodec.cpp src\EncodeBench.cpp src\LoopbackSession.cpp src\Taps.cpp src\StreamSession.cpp src\WindowSession.cpp src\VncSession.cpp src\Json.cpp src\Subtitles.cpp src\Direct.cpp src\Upnp.cpp src\Tls.cpp third_party\miniz\miniz.c ^
   /Fo:out\ /Fd:out\ /Fe:out\TelescreenHost.exe ^
   /link /SUBSYSTEM:CONSOLE /DEBUG /OPT:REF /Brepro /LIBPATH:"%FFMPEG%\lib" ^
   avformat.lib avcodec.lib avutil.lib swscale.lib swresample.lib winmm.lib user32.lib advapi32.lib ^
-  d3d11.lib dxgi.lib dwmapi.lib mmdevapi.lib ole32.lib windowsapp.lib ws2_32.lib bcrypt.lib winhttp.lib iphlpapi.lib ^
+  d3d11.lib dxgi.lib dwmapi.lib mmdevapi.lib ole32.lib windowsapp.lib ws2_32.lib bcrypt.lib winhttp.lib iphlpapi.lib secur32.lib crypt32.lib ^
   "%CEF%\Release\libcef.lib" "%CEF%\build\libcef_dll_wrapper\Release\libcef_dll_wrapper.lib" delayimp.lib /DELAYLOAD:libcef.dll
 if errorlevel 1 exit /b 1
 for %%D in (avformat-62 avcodec-62 avutil-60 swscale-9 swresample-6) do copy /y "%FFMPEG%\bin\%%D.dll" out\ >nul

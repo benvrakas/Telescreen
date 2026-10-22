@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 8;
+	constexpr uint32_t Version = 9;
 
 	enum class EMsg : uint16_t
 	{
@@ -42,6 +42,7 @@ namespace TSHostProtocol
 		DirectAddPeer = 29,
 		DirectRemovePeer = 30,
 		DirectState = 31,
+		RemoteSecurity = 32,
 	};
 
 	// StreamControl commands.

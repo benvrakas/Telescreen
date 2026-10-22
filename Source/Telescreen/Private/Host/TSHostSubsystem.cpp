@@ -555,6 +555,18 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		}
 		break;
 	}
+	case EMsg::RemoteSecurity:
+	{
+		const uint32 Session = R.U32();
+		const FString Protocol = R.Str();
+		const FString Fingerprint = R.Str();
+		const bool bChanged = R.U8() != 0;
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
+		{
+			(*Listener)->OnHostRemoteSecurity(Protocol, Fingerprint, bChanged);
+		}
+		break;
+	}
 	case EMsg::DirectState:
 	{
 		const uint32 Session = R.U32();
@@ -869,7 +881,7 @@ uint32 UTSHostSubsystem::OpenWindow(uint64 Window, bool bCursor, bool bAudio, ui
 }
 
 uint32 UTSHostSubsystem::OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio, uint32 WantWidth,
-	uint32 WantHeight, ITSHostSessionListener* Listener)
+	uint32 WantHeight, const FString& Username, const FString& Pin, bool bRequireTls, ITSHostSessionListener* Listener)
 {
 	if (!EnsureConnected())
 	{
@@ -887,6 +899,9 @@ uint32 UTSHostSubsystem::OpenVnc(const FString& Host, uint16 Port, const FString
 	W.U8(bAudio ? 1 : 0);
 	W.U32(WantWidth);
 	W.U32(WantHeight);
+	W.Str(Username);
+	W.Str(Pin);
+	W.U8(bRequireTls ? 1 : 0);
 	Send(EMsg::OpenVnc, W.Bytes);
 	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u connects to VNC %s:%u (%s password)"), Session, *Host, Port, Password.IsEmpty() ? TEXT("no") : TEXT("with"));
 	return Session;

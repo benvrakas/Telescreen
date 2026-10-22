@@ -24,6 +24,22 @@ namespace
 		return FPaths::ProjectSavedDir() / TEXT("Telescreen") / TEXT("RemoteConnections.json");
 	}
 
+	FString CertificatesPath()
+	{
+		return FPaths::ProjectSavedDir() / TEXT("Telescreen") / TEXT("VncCertificates.json");
+	}
+
+	TSharedPtr<FJsonObject> LoadPins()
+	{
+		FString Json;
+		TSharedPtr<FJsonObject> Root;
+		if (!FFileHelper::LoadFileToString(Json, *CertificatesPath()) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Root) || !Root.IsValid())
+		{
+			Root = MakeShared<FJsonObject>();
+		}
+		return Root;
+	}
+
 	// Encrypts Text for the current Windows user (DPAPI) and returns it as Base64; empty stays empty.
 	FString ProtectText(const FString& Text)
 	{
@@ -145,6 +161,7 @@ TArray<FTSRemoteConnection> TSRemoteConnections::LoadSaved()
 				Connection.Host = (*Object)->GetStringField(TEXT("host"));
 				Connection.Port = uint16(FMath::Clamp(int32((*Object)->GetNumberField(TEXT("port"))), 1, 65535));
 				Connection.Password = UnprotectText((*Object)->GetStringField(TEXT("password")));
+				(*Object)->TryGetStringField(TEXT("username"), Connection.Username);
 			}
 		}
 	}
@@ -160,6 +177,10 @@ void TSRemoteConnections::Save(const TArray<FTSRemoteConnection>& Connections)
 		Object->SetStringField(TEXT("host"), Connection.Host);
 		Object->SetNumberField(TEXT("port"), Connection.Port);
 		Object->SetStringField(TEXT("password"), ProtectText(Connection.Password));
+		if (!Connection.Username.IsEmpty())
+		{
+			Object->SetStringField(TEXT("username"), Connection.Username);
+		}
 		Items.Add(MakeShared<FJsonValueObject>(Object));
 	}
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
@@ -172,4 +193,25 @@ void TSRemoteConnections::Save(const TArray<FTSRemoteConnection>& Connections)
 		return;
 	}
 	UE_LOG(LogTelescreen, Log, TEXT("Remote connections: %d saved"), Connections.Num());
+}
+
+FString TSRemoteConnections::GetPin(const FTSRemoteConnection& Connection)
+{
+	FString Pin;
+	LoadPins()->TryGetStringField(Connection.GetAddress().ToLower(), Pin);
+	return Pin;
+}
+
+void TSRemoteConnections::SetPin(const FTSRemoteConnection& Connection, const FString& Fingerprint)
+{
+	TSharedPtr<FJsonObject> Root = LoadPins();
+	Root->SetStringField(Connection.GetAddress().ToLower(), Fingerprint);
+	FString Json;
+	FJsonSerializer::Serialize(Root.ToSharedRef(), TJsonWriterFactory<>::Create(&Json));
+	if (!FFileHelper::SaveStringToFile(Json, *CertificatesPath()))
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Remote connections: could not write %s"), *CertificatesPath());
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("Remote connections: certificate of %s remembered (%s)"), *Connection.GetAddress(), *Fingerprint);
 }

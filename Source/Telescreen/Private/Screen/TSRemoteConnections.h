@@ -9,6 +9,8 @@ struct FTSRemoteConnection
 	FString Host;
 	uint16 Port = 5900;
 	FString Password;
+	// For servers whose encrypted login asks for a user name too (VeNCrypt X509Plain).
+	FString Username;
 
 	// "host:port" as typed (VNC displays below 100 written as host:1 mean port 5901).
 	FString GetAddress() const { return FString::Printf(TEXT("%s:%u"), *Host, Port); }
@@ -28,4 +30,9 @@ namespace TSRemoteConnections
 	// Saved connections in Saved/Telescreen/RemoteConnections.json; passwords encrypted for this Windows user (DPAPI).
 	TArray<FTSRemoteConnection> LoadSaved();
 	void Save(const TArray<FTSRemoteConnection>& Connections);
+
+	// The certificate fingerprint an encrypted server showed the first time (trust on first use), per address, in
+	// Saved/Telescreen/VncCertificates.json. Empty: none yet.
+	FString GetPin(const FTSRemoteConnection& Connection);
+	void SetPin(const FTSRemoteConnection& Connection, const FString& Fingerprint);
 }

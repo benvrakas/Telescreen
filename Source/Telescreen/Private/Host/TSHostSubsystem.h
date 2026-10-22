@@ -75,6 +75,9 @@ public:
 	virtual void OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues) {}
 	// Stream sessions only: a direct link changed (0 trying, 1 up, 2 down, 3 the receiver lost video and needs a keyframe).
 	virtual void OnHostDirectState(uint32 Link, uint8 State, const FString& Detail) {}
+	// Remote desktop sessions only: how the connection is secured (Protocol empty: not encrypted), the server
+	// certificate's fingerprint, and whether it differs from the pinned one (the connection was refused then).
+	virtual void OnHostRemoteSecurity(const FString& Protocol, const FString& Fingerprint, bool bChanged) {}
 };
 
 // A window on this PC that can be shared (from the helper's list).
@@ -167,8 +170,9 @@ public:
 	void RemoveDirectPeer(uint32 Link);
 
 	// WantWidth x WantHeight: the desktop size to ask the server for (0 x 0: none).
+	// Username, Pin (the certificate fingerprint seen before) and bRequireTls: see the VeNCrypt notes in Docs/RemoteDesktop.md.
 	uint32 OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio, uint32 WantWidth, uint32 WantHeight,
-		ITSHostSessionListener* Listener);
+		const FString& Username, const FString& Pin, bool bRequireTls, ITSHostSessionListener* Listener);
 
 	// Asks the helper for the windows that can be shared; OnDone runs on the game thread (empty if the helper isn't
 	// running).

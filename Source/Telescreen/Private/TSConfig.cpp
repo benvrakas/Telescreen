@@ -35,6 +35,7 @@ const FString UTSConfig::StreamHeightKey = TEXT("StreamHeight");
 const FString UTSConfig::StreamEncoderKey = TEXT("StreamEncoder");
 const FString UTSConfig::BrowserHeightKey = TEXT("BrowserHeight");
 const FString UTSConfig::RemoteMatchScreenKey = TEXT("RemoteMatchScreen");
+const FString UTSConfig::RemoteRequireTlsKey = TEXT("RemoteRequireTls");
 const FString UTSConfig::VideosFolderKey = TEXT("VideosFolder");
 const FString UTSConfig::SubtitleModeKey = TEXT("SubtitleMode");
 const FString UTSConfig::DirectKey = TEXT("DirectStreams");
@@ -224,6 +225,8 @@ UTSConfig::UTSConfig()
 		LOCTEXT("StreamEncoderTip", "0: best your graphics card has (AV1, then HEVC, then H.264); 1: prefer AV1; 2: prefer HEVC; 3: prefer H.264; 4: software AV1 (no graphics card encoder, uses the CPU). Every player can watch any of them."), 0);
 	AddInt(BrowserSection, BrowserHeightKey, LOCTEXT("BrowserHeight", "Browser page size (lines)"),
 		LOCTEXT("BrowserHeightTip", "Height the built-in browser draws pages at (its width follows the screen's shape). Bigger shows more of a page in smaller text. Applies to browsers opened after the change."), 720);
+	AddBool(BrowserSection, RemoteRequireTlsKey, LOCTEXT("RemoteRequireTls", "Only connect to encrypted remote desktops"),
+		LOCTEXT("RemoteRequireTlsTip", "Refuse VNC servers that don't offer VeNCrypt with an X.509 certificate (QEMU tls-creds-x509, Proxmox, TigerVNC X509Vnc). Off: encryption is used when it's the server's only choice."), false);
 	AddBool(BrowserSection, RemoteMatchScreenKey, LOCTEXT("RemoteMatchScreen", "Ask remote desktops for the screen's shape"),
 		LOCTEXT("RemoteMatchScreenTip", "When connecting, ask the VNC server to change its desktop to the screen's shape (at the stream resolution). TigerVNC, x11vnc and QEMU with a virtio display usually follow; others keep their size and show with bars (or use Fill)."), true);
 	AddString(BrowserSection, CurtainKeyKey, LOCTEXT("CurtainKey", "Privacy curtain key"),

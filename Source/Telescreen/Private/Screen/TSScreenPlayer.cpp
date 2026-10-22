@@ -613,7 +613,11 @@ void UTSScreenPlayer::OpenRemoteSession()
 		Want.X = FMath::Min(1920, int32(FMath::RoundToInt(Height * Aspect)) & ~7);
 		Want.Y = int32(FMath::RoundToInt(Want.X / Aspect)) & ~1;
 	}
-	Session = Host->OpenVnc(Connection->Host, Connection->Port, Connection->Password, 1920, 1080, true, Want.X, Want.Y, this);
+	RemoteInUse = *Connection;
+	RemoteSecurity = FText::GetEmpty();
+	ChangedCertificate.Reset();
+	Session = Host->OpenVnc(Connection->Host, Connection->Port, Connection->Password, 1920, 1080, true, Want.X, Want.Y, Connection->Username,
+		TSRemoteConnections::GetPin(*Connection), UTSConfig::GetBool(this, UTSConfig::RemoteRequireTlsKey, false), this);
 	if (Session == 0)
 	{
 		SetStatus(Title, Host->GetUnavailableReason());
@@ -1269,6 +1273,45 @@ void UTSScreenPlayer::OnHostDirectState(uint32 Link, uint8 State, const FString&
 	default:
 		break;
 	}
+}
+
+void UTSScreenPlayer::OnHostRemoteSecurity(const FString& Protocol, const FString& Fingerprint, bool bChanged)
+{
+	if (Protocol.IsEmpty())
+	{
+		RemoteSecurity = LOCTEXT("RemoteNotEncrypted", "Not encrypted (plain VNC): anything between your PC and that computer can see the desktop and your typing.");
+	}
+	else if (bChanged)
+	{
+		ChangedCertificate = Fingerprint;
+		RemoteSecurity = FText::Format(LOCTEXT("RemoteCertChanged", "Refused: {0}'s certificate changed since the last connection (now {1}). Only trust it if you changed it."),
+			FText::FromString(RemoteInUse.GetAddress()), FText::FromString(Fingerprint.Left(23) + TEXT("...")));
+	}
+	else
+	{
+		const bool bFirst = TSRemoteConnections::GetPin(RemoteInUse).IsEmpty();
+		if (bFirst)
+		{
+			TSRemoteConnections::SetPin(RemoteInUse, Fingerprint);
+		}
+		RemoteSecurity = FText::Format(bFirst ? LOCTEXT("RemoteEncryptedFirst", "Encrypted ({0}). First connection: its certificate {1} is remembered; a different one will be refused.")
+											  : LOCTEXT("RemoteEncrypted", "Encrypted ({0}), certificate {1} as before."),
+			FText::FromString(Protocol), FText::FromString(Fingerprint.Left(23) + TEXT("...")));
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: remote desktop %s"), *GetNameSafe(GetOwner()), *RemoteSecurity.ToString());
+	OnBrowserStateChanged.Broadcast();
+}
+
+void UTSScreenPlayer::TrustChangedCertificate()
+{
+	if (ChangedCertificate.IsEmpty())
+	{
+		return;
+	}
+	TSRemoteConnections::SetPin(RemoteInUse, ChangedCertificate);
+	ChangedCertificate.Reset();
+	RemoteSecurity = LOCTEXT("RemoteCertTrusted", "The new certificate is trusted: connect again.");
+	OnBrowserStateChanged.Broadcast();
 }
 
 void UTSScreenPlayer::DropDirect()

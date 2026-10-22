@@ -17,6 +17,9 @@ struct FSessionEvents
 	std::function<void(uint32_t Session, const std::vector<FSubtitleTrack>& Tracks)> OnSubtitleTracks;
 	// Replace: these cues replace the track's earlier ones; otherwise they are added.
 	std::function<void(uint32_t Session, uint32_t Track, bool Replace, const std::vector<FSubtitleCue>& Cues)> OnSubtitleCues;
+	// Remote desktops: how the connection is secured (Protocol empty: not encrypted), the server certificate's
+	// fingerprint, and whether it differs from the pinned one (then the connection was refused).
+	std::function<void(uint32_t Session, const std::string& Protocol, const std::string& Fingerprint, bool Changed)> OnRemoteSecurity;
 };
 
 // One media or browser session; the host routes the mod's messages to it.

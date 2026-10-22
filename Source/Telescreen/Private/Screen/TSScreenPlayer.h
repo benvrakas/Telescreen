@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Host/TSHostSubsystem.h"
+#include "Screen/TSRemoteConnections.h"
 #include "Screen/TSSharedBuffers.h"
 #include "TSTypes.h"
 #include "TSScreenPlayer.generated.h"
@@ -41,6 +42,15 @@ public:
 	virtual void OnHostBrowserState(const FTSBrowserState& State) override;
 	virtual void OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks) override;
 	virtual void OnHostDirectState(uint32 Link, uint8 State, const FString& Detail) override;
+	virtual void OnHostRemoteSecurity(const FString& Protocol, const FString& Fingerprint, bool bChanged) override;
+
+	// The local remote desktop's encryption ("" before it's known), and a certificate that changed since the last
+	// connection (refused until trusted).
+	const FText& GetRemoteSecurity() const { return RemoteSecurity; }
+	bool HasChangedCertificate() const { return !ChangedCertificate.IsEmpty(); }
+	const FString& GetChangedCertificate() const { return ChangedCertificate; }
+	// Accepts the changed certificate for that address; the next connection uses it.
+	void TrustChangedCertificate();
 	// True while this viewer gets the stream over a direct link.
 	bool IsDirect() const { return bDirectUp; }
 	virtual void OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues) override;
@@ -226,6 +236,10 @@ private:
 	FString SubtitleText;
 	double NextSubtitleUpdate = 0.0;
 	uint32 PickSubtitleTrack() const;
+
+	FText RemoteSecurity;
+	FString ChangedCertificate;
+	FTSRemoteConnection RemoteInUse;
 
 	// Direct links: as a viewer, the one link to the sender; as a sender, one per viewer (the helper drops them with
 	// the sender session).
