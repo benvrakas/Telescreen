@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0 beta 8
+
+- Fix: remote desktops (VNC) disconnected after a few seconds of desktop drawing (large pictures were cut short while
+  decoding). Tested through a whole VM boot against QEMU's VNC server.
+
 ## 0.1.0 beta 7
 
 - **Sound through the game's audio engine** (Wwise), as BoomBoxPlus plays its music: rooms, reverb, walls and the
