@@ -27,6 +27,18 @@ namespace TSHostProtocol
 		BrowserCommand = 14,
 		BrowserState = 15,
 		OpenLoopback = 16,
+		OpenStreamSender = 17,
+		OpenStreamReceiver = 18,
+		StreamPacket = 19,
+		StreamControl = 20,
+	};
+
+	// StreamControl commands.
+	enum class EStreamControl : uint8_t
+	{
+		Keyframe = 0,
+		Bitrate = 1,
+		Reset = 2,
 	};
 
 	// BrowserInput kinds.
