@@ -7,6 +7,8 @@
 #include "FGHUD.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+#include "Kismet/GameplayStatics.h"
 #include "Hologram/FGHologram.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
@@ -45,6 +47,10 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mMediaState);
 	DOREPLIFETIME(ATSBuildableScreen, mScreenName);
 	DOREPLIFETIME(ATSBuildableScreen, mAspectMode);
+	DOREPLIFETIME(ATSBuildableScreen, mMode);
+	DOREPLIFETIME(ATSBuildableScreen, mController);
+	DOREPLIFETIME(ATSBuildableScreen, mControllerName);
+	DOREPLIFETIME(ATSBuildableScreen, mSourceUrl);
 }
 
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
@@ -125,6 +131,7 @@ void ATSBuildableScreen::BeginPlay()
 	if (HasAuthority())
 	{
 		ScheduleAdvance();
+		GetWorldTimerManager().SetTimer(mControllerCheckTimer, this, &ATSBuildableScreen::CheckController, 2.0f, true);
 	}
 	if (GetNetMode() == NM_DedicatedServer)
 	{
@@ -150,6 +157,7 @@ void ATSBuildableScreen::BeginPlay()
 void ATSBuildableScreen::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(mAdvanceTimer);
+	GetWorldTimerManager().ClearTimer(mControllerCheckTimer);
 	if (mPlayer)
 	{
 		mPlayer->DestroyComponent();
@@ -248,6 +256,60 @@ void ATSBuildableScreen::OnRep_MediaState()
 void ATSBuildableScreen::OnRep_ScreenSettings()
 {
 	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::OnRep_Control()
+{
+	UE_LOG(LogTelescreen, Log, TEXT("%s: mode %d, controller %s"), *GetName(), int32(mMode), *mControllerName);
+	OnScreenChanged.Broadcast();
+}
+
+bool ATSBuildableScreen::IsLocallyControlled() const
+{
+	const APlayerController* Local = UGameplayStatics::GetPlayerController(this, 0);
+	return mController && Local && Local->PlayerState == mController;
+}
+
+void ATSBuildableScreen::Server_TakeControl(APlayerState* Requester, ETSScreenMode Mode, const FString& Url)
+{
+	if (!HasAuthority() || !Requester)
+	{
+		return;
+	}
+	const FString Previous = mControllerName;
+	mMode = Mode;
+	mController = Requester;
+	mControllerName = Requester->GetPlayerName();
+	mSourceUrl = Url.Left(2048);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s took control (mode %d, %s)%s"), *GetName(), *mControllerName, int32(Mode), *mSourceUrl,
+		Previous.IsEmpty() || Previous == mControllerName ? TEXT("") : *FString::Printf(TEXT(" from %s"), *Previous));
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::Server_ReleaseControl(const TCHAR* Reason)
+{
+	if (!HasAuthority() || mMode == ETSScreenMode::SyncedMedia)
+	{
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s released control (%s)"), *GetName(), *mControllerName, Reason);
+	mMode = ETSScreenMode::SyncedMedia;
+	mController = nullptr;
+	mControllerName.Reset();
+	mSourceUrl.Reset();
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::CheckController()
+{
+	if (mMode != ETSScreenMode::SyncedMedia && !IsValid(mController))
+	{
+		Server_ReleaseControl(TEXT("controller left"));
+	}
 }
 
 void ATSBuildableScreen::CommitMediaState()

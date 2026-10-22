@@ -12,6 +12,7 @@ public:
 	// Component ids, as in Tools/stage_runtime.py.
 	static const TCHAR* Host;
 	static const TCHAR* Fetcher;
+	static const TCHAR* Browser;
 
 	// Starts verifying every component on a background thread; safe to call more than once.
 	void StartVerification();

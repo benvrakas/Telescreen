@@ -32,6 +32,14 @@ enum class ETSPanelAction : uint8
 	AspectStretch,
 	LoadAnyway,
 	TogglePip,
+	BrowserOpen,
+	BrowserGo,
+	BrowserBack,
+	BrowserForward,
+	BrowserReload,
+	BrowserWindow,
+	BrowserStop,
+	BrowserTakeOver,
 };
 
 // Routes one button's click to its panel with the button's action and queue index.
@@ -104,6 +112,25 @@ private:
 	TObjectPtr<UTextBlock> AspectText;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> PipButtonText;
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> BrowserUrlBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> BrowserStartRow;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> BrowserOwnRow;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> BrowserOtherRow;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> BrowserOtherText;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> BrowserNote;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> BrowserUrlRow;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> BrowserOwnActions;
+
+	void RefreshBrowser();
+	FDelegateHandle BrowserStateHandle;
 
 	FDelegateHandle ScreenChangedHandle;
 	FDelegateHandle NoticeHandle;

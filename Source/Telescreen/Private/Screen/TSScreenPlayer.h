@@ -14,8 +14,10 @@ class UTexture2D;
 class UTexture;
 class UTSStreamingSoundWave;
 
-// Plays a screen's synced media on this client: helper session, video texture, 3D audio, status text. Not on dedicated
-// servers.
+DECLARE_MULTICAST_DELEGATE(FTSOnBrowserStateChanged);
+
+// Plays a screen's synced media, or the local controller's browser, on this client: helper session, video texture, 3D
+// audio, status text. Not on dedicated servers.
 UCLASS()
 class UTSScreenPlayer : public UActorComponent, public ITSHostSessionListener
 {
@@ -32,6 +34,7 @@ public:
 	virtual void OnHostAudio(uint32 SampleRate, uint32 Channels, uint32 CapacityFrames, const FString& MappingName) override;
 	virtual void OnHostState(TSHostProtocol::ESessionState State, double Position, double Duration, const FString& Message) override;
 	virtual void OnHostLost() override;
+	virtual void OnHostBrowserState(const FTSBrowserState& State) override;
 
 	// What this client shows instead of the video right now, or empty while the video plays.
 	FText GetLocalStatus() const { return bShowingVideo ? FText::GetEmpty() : StatusLine2; }
@@ -49,11 +52,31 @@ public:
 	// The texture the screen shows now: the video, or the status card.
 	UTexture* GetDisplayTexture() const;
 
+	// True while this client runs the screen's browser (the local player controls it).
+	bool HasBrowser() const { return bBrowserSession && Session != 0; }
+	const FTSBrowserState& GetBrowserState() const { return BrowserState; }
+	FTSOnBrowserStateChanged OnBrowserStateChanged;
+
+	// Browser input. Positions are 0-1 across the picture; Modifiers are TSHostProtocol::Mod* bits.
+	void BrowserMouseMove(const FVector2D& Position, uint32 Modifiers);
+	void BrowserMouseButton(const FVector2D& Position, uint8 Button, bool bUp, int32 ClickCount, uint32 Modifiers);
+	void BrowserWheel(const FVector2D& Position, int32 DeltaX, int32 DeltaY, uint32 Modifiers);
+	void BrowserKey(TSHostProtocol::EKeyType Type, int32 KeyCode, TCHAR Character, uint32 Modifiers);
+	void BrowserText(const FString& Text);
+	void BrowserPointerDelta(int32 DeltaX, int32 DeltaY);
+	void BrowserMouseLeave();
+	void BrowserFocus(bool bFocused);
+	void BrowserNavigate(const FString& Url);
+	void BrowserCommand(TSHostProtocol::ECommand Command);
+
 private:
 	ATSBuildableScreen* GetScreen() const;
 	void OnScreenChanged();
 	void Reconcile();
 	void OpenSession(const struct FTSMediaItem& Item);
+	void OpenBrowserSession();
+	FIntPoint ComputeBrowserSize() const;
+	FIntPoint ToBrowserPixels(const FVector2D& Position) const;
 	void CloseSession();
 	void PumpVideo();
 	void UpdateAudio();
@@ -90,6 +113,9 @@ private:
 	TSHostProtocol::ESessionState HostState = TSHostProtocol::ESessionState::Resolving;
 	bool bActive = false;
 	bool bPinned = false;
+	bool bBrowserSession = false;
+	FTSBrowserState BrowserState;
+	FIntPoint BrowserSize = FIntPoint(1280, 720);
 	double NextSync = 0.0;
 	double NextRank = 0.0;
 	double NextAudioUpdate = 0.0;

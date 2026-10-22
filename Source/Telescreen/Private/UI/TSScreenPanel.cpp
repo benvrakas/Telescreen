@@ -19,7 +19,8 @@
 #include "Telescreen.h"
 #include "TSRemoteCallObject.h"
 #include "UI/FGGameUI.h"
-#include "UI/TSPipWidget.h"
+#include "TSConfig.h"
+#include "UI/TSScreenWindow.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -173,6 +174,42 @@ void UTSScreenPanel::BuildTree()
 	LoadAnywayButton->SetVisibility(ESlateVisibility::Collapsed);
 	AddRow(Root, LoadAnywayButton, 4.f);
 
+	AddRow(Root, MakeText(LOCTEXT("BrowserHeader", "Browser"), 14, Accent), 16.f);
+	UHorizontalBox* UrlRow = MakeHBox();
+	BrowserUrlBox = WidgetTree->ConstructWidget<UEditableTextBox>();
+	BrowserUrlBox->SetHintText(LOCTEXT("BrowserUrlHint", "Web address, or leave empty for your start page"));
+	AddToHBox(UrlRow, BrowserUrlBox, true);
+	UHorizontalBox* StartRow = MakeHBox();
+	AddToHBox(StartRow, MakeButton(LOCTEXT("BrowserOpen", "Open the browser on this screen"), ETSPanelAction::BrowserOpen, INDEX_NONE,
+		FLinearColor(0.25f, 0.15f, 0.05f)));
+	BrowserStartRow = StartRow;
+	AddToHBox(UrlRow, StartRow);
+	UHorizontalBox* NavRow = MakeHBox();
+	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserGo", "Go"), ETSPanelAction::BrowserGo, INDEX_NONE, FLinearColor(0.25f, 0.15f, 0.05f)));
+	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserBack", "Back"), ETSPanelAction::BrowserBack));
+	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserForward", "Forward"), ETSPanelAction::BrowserForward));
+	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserReload", "Reload"), ETSPanelAction::BrowserReload));
+	BrowserOwnRow = NavRow;
+	AddToHBox(UrlRow, NavRow);
+	BrowserUrlRow = UrlRow;
+	AddRow(Root, UrlRow);
+	UHorizontalBox* OwnActions = MakeHBox();
+	AddToHBox(OwnActions, MakeButton(LOCTEXT("BrowserWindow", "Use it in a window"), ETSPanelAction::BrowserWindow, INDEX_NONE,
+		FLinearColor(0.25f, 0.15f, 0.05f)));
+	AddToHBox(OwnActions, MakeButton(LOCTEXT("BrowserStop", "Close the browser"), ETSPanelAction::BrowserStop));
+	AddRow(Root, OwnActions, 4.f);
+	UHorizontalBox* OtherRow = MakeHBox();
+	BrowserOtherText = MakeText(FText::GetEmpty(), 13);
+	AddToHBox(OtherRow, BrowserOtherText, true);
+	AddToHBox(OtherRow, MakeButton(LOCTEXT("BrowserTakeOver", "Take over"), ETSPanelAction::BrowserTakeOver));
+	BrowserOtherRow = OtherRow;
+	AddRow(Root, OtherRow, 4.f);
+	BrowserNote = MakeText(FText::GetEmpty(), 12, Muted);
+	AddRow(Root, BrowserNote, 4.f);
+	// The window/close actions row follows the navigation row's visibility.
+	OwnActions->SetVisibility(ESlateVisibility::Collapsed);
+	BrowserOwnActions = OwnActions;
+
 	UHorizontalBox* QueueHeader = MakeHBox();
 	AddToHBox(QueueHeader, MakeText(LOCTEXT("QueueHeader", "Queue"), 14, Accent), true);
 	AddToHBox(QueueHeader, MakeButton(LOCTEXT("ClearQueue", "Clear"), ETSPanelAction::ClearQueue));
@@ -224,6 +261,10 @@ void UTSScreenPanel::NativeDestruct()
 	if (ATSBuildableScreen* Screen = GetScreen())
 	{
 		Screen->OnScreenChanged.Remove(ScreenChangedHandle);
+		if (UTSScreenPlayer* Player = Screen->GetPlayer())
+		{
+			Player->OnBrowserStateChanged.Remove(BrowserStateHandle);
+		}
 	}
 	UTSRemoteCallObject::OnNotice.Remove(NoticeHandle);
 	Super::NativeDestruct();
@@ -274,7 +315,7 @@ void UTSScreenPanel::Refresh()
 	AspectText->SetText(FText::Format(LOCTEXT("AspectNow", "Picture fit: {0}"), AspectName(Screen->GetAspectMode())));
 	if (PipButtonText)
 	{
-		PipButtonText->SetText(UTSPipWidget::IsPinned(Screen) ? LOCTEXT("RemoveFromHud", "Remove from HUD") : LOCTEXT("ShowOnHud", "Show on HUD"));
+		PipButtonText->SetText(UTSScreenWindow::IsShowing(Screen) ? LOCTEXT("RemoveFromHud", "Remove from HUD") : LOCTEXT("ShowOnHud", "Show on HUD"));
 	}
 	if (State.Revision != ShownRevision)
 	{
@@ -282,6 +323,7 @@ void UTSScreenPanel::Refresh()
 		RebuildQueue();
 	}
 	RefreshTimes();
+	RefreshBrowser();
 }
 
 void UTSScreenPanel::RefreshTimes()
@@ -318,6 +360,53 @@ void UTSScreenPanel::RefreshTimes()
 	TimeText->SetText(Times);
 	const bool bBlocked = Player && !Player->GetBlockedReason().IsEmpty();
 	LoadAnywayButton->SetVisibility(bBlocked ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+}
+
+void UTSScreenPanel::RefreshBrowser()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Screen || !BrowserUrlBox)
+	{
+		return;
+	}
+	UTSScreenPlayer* Player = Screen->GetPlayer();
+	if (Player && !BrowserStateHandle.IsValid())
+	{
+		BrowserStateHandle = Player->OnBrowserStateChanged.AddUObject(this, &UTSScreenPanel::RefreshBrowser);
+	}
+	const bool bBrowserMode = Screen->GetMode() == ETSScreenMode::Browser;
+	const bool bMine = bBrowserMode && Screen->IsLocallyControlled();
+	const bool bAvailable = Host && Host->IsBrowserAvailable();
+	BrowserUrlRow->SetVisibility(bAvailable && (!bBrowserMode || bMine) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	BrowserStartRow->SetVisibility(!bBrowserMode ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	BrowserOwnRow->SetVisibility(bMine ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	BrowserOwnActions->SetVisibility(bMine ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	BrowserOtherRow->SetVisibility(bBrowserMode && !bMine ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (bBrowserMode && !bMine)
+	{
+		BrowserOtherText->SetText(FText::Format(LOCTEXT("BrowserOther", "{0} is using this screen's browser."), FText::FromString(Screen->GetControllerName())));
+	}
+	if (bMine && Player && !BrowserUrlBox->HasKeyboardFocus())
+	{
+		BrowserUrlBox->SetText(FText::FromString(Player->GetBrowserState().Url));
+	}
+	if (!bAvailable)
+	{
+		BrowserNote->SetText(LOCTEXT("BrowserMissing", "The browser component isn't installed on this PC."));
+	}
+	else if (bMine)
+	{
+		const FString Key = UTSConfig::GetString(this, UTSConfig::FocusKeyKey, TEXT("F8"));
+		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserMine",
+			"Only you see your browser for now; once live streaming arrives, everyone near the screen will. {0} switches the window between the browser and the game."),
+			FText::FromString(Key)));
+	}
+	else
+	{
+		BrowserNote->SetText(LOCTEXT("BrowserNote",
+			"Only you will see your browser until live streaming arrives in a later update. Then everything you open here is visible to other players."));
+	}
 }
 
 void UTSScreenPanel::RebuildQueue()
@@ -430,7 +519,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	}
 	if (Action == ETSPanelAction::TogglePip)
 	{
-		UTSPipWidget::Toggle(Screen);
+		UTSScreenWindow::TogglePinned(Screen);
 		Refresh();
 		return;
 	}
@@ -468,6 +557,35 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::AspectLetterbox: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Letterbox); break;
 	case ETSPanelAction::AspectFill: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Fill); break;
 	case ETSPanelAction::AspectStretch: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Stretch); break;
+	case ETSPanelAction::BrowserOpen:
+		RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, BrowserUrlBox->GetText().ToString().TrimStartAndEnd());
+		break;
+	case ETSPanelAction::BrowserTakeOver:
+		RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, FString());
+		break;
+	case ETSPanelAction::BrowserStop:
+		RCO->Server_ReleaseControl(Screen);
+		break;
+	case ETSPanelAction::BrowserGo:
+		if (UTSScreenPlayer* Player = Screen->GetPlayer())
+		{
+			Player->BrowserNavigate(BrowserUrlBox->GetText().ToString());
+		}
+		break;
+	case ETSPanelAction::BrowserBack:
+	case ETSPanelAction::BrowserForward:
+	case ETSPanelAction::BrowserReload:
+		if (UTSScreenPlayer* Player = Screen->GetPlayer())
+		{
+			Player->BrowserCommand(Action == ETSPanelAction::BrowserBack ? TSHostProtocol::ECommand::Back
+				: Action == ETSPanelAction::BrowserForward				? TSHostProtocol::ECommand::Forward
+																		: TSHostProtocol::ECommand::Reload);
+		}
+		break;
+	case ETSPanelAction::BrowserWindow:
+		Close();
+		UTSScreenWindow::OpenInteractive(Screen);
+		return;
 	case ETSPanelAction::LoadAnyway:
 		if (UTSScreenPlayer* Player = Screen->GetPlayer())
 		{

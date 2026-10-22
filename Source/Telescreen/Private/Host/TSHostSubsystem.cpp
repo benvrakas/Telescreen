@@ -280,6 +280,13 @@ bool UTSHostSubsystem::StartHost()
 		UE_LOG(LogTelescreen, Warning, TEXT("Host: yt-dlp unavailable; only local files will play (%s)"),
 			*Runtime.GetUnavailableReason(FTSRuntimeComponents::Fetcher).ToString());
 	}
+	if (Runtime.IsAvailable(FTSRuntimeComponents::Browser))
+	{
+		const FString BrowserData = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Telescreen") / TEXT("Browser"));
+		CommandLine += FString::Printf(TEXT(" --browserdir \"%s\" --browserdata \"%s\""),
+			*FPaths::ConvertRelativePathToFull(FPaths::GetPath(Runtime.GetFilePath(FTSRuntimeComponents::Browser, TEXT("libcef.dll")))),
+			*BrowserData.Replace(TEXT("/"), TEXT("\\")));
+	}
 
 	// The job object kills the helper with the game, even if the game crashes.
 	HANDLE Job = CreateJobObjectW(nullptr, nullptr);
@@ -486,6 +493,23 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		}
 		break;
 	}
+	case EMsg::BrowserState:
+	{
+		const uint32 Session = R.U32();
+		FTSBrowserState State;
+		State.Url = R.Str();
+		State.Title = R.Str();
+		State.bLoading = R.U8() != 0;
+		State.bCanGoBack = R.U8() != 0;
+		State.bCanGoForward = R.U8() != 0;
+		State.Cursor = R.U8();
+		State.bPointerLocked = R.U8() != 0;
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
+		{
+			(*Listener)->OnHostBrowserState(State);
+		}
+		break;
+	}
 	case EMsg::ProbeResult:
 	{
 		const uint32 Request = R.U32();
@@ -543,6 +567,59 @@ void UTSHostSubsystem::SyncTarget(uint32 Session, double MediaSeconds, bool bPau
 	PutF64(Payload, MediaSeconds);
 	PutU8(Payload, bPaused ? 1 : 0);
 	Send(EMsg::SyncTarget, Payload);
+}
+
+bool UTSHostSubsystem::IsBrowserAvailable() const
+{
+	return FTSRuntimeComponents::Get().IsAvailable(FTSRuntimeComponents::Browser);
+}
+
+uint32 UTSHostSubsystem::OpenBrowser(const FString& Url, uint32 Width, uint32 Height, bool bKeepLogins, const FString& Profile,
+	ITSHostSessionListener* Listener)
+{
+	if (!EnsureConnected())
+	{
+		return 0;
+	}
+	const uint32 Session = NextSessionId++;
+	Listeners.Add(Session, Listener);
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.Str(Url);
+	W.U32(Width);
+	W.U32(Height);
+	W.U8(bKeepLogins ? 1 : 0);
+	W.Str(Profile);
+	Send(EMsg::OpenBrowser, W.Bytes);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u opens a %ux%u browser at %s (%s)"), Session, Width, Height, *Url,
+		bKeepLogins ? TEXT("kept logins") : TEXT("clean profile"));
+	return Session;
+}
+
+void UTSHostSubsystem::SendBrowserInput(uint32 Session, EInput Kind, const TArray<uint8>& Body)
+{
+	if (!bConnected || !Listeners.Contains(Session))
+	{
+		return;
+	}
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.U8(uint8(Kind));
+	W.Bytes.Append(Body);
+	Send(EMsg::BrowserInput, W.Bytes);
+}
+
+void UTSHostSubsystem::SendBrowserCommand(uint32 Session, ECommand Command, const TArray<uint8>& Body)
+{
+	if (!bConnected || !Listeners.Contains(Session))
+	{
+		return;
+	}
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.U8(uint8(Command));
+	W.Bytes.Append(Body);
+	Send(EMsg::BrowserCommand, W.Bytes);
 }
 
 void UTSHostSubsystem::CloseSession(uint32 Session)

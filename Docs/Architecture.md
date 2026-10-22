@@ -73,11 +73,37 @@ Two halves: replicated state that the server owns, and per-client playback that 
 yt-dlp on the adding player's PC (title, duration) before being sent to the server; dedicated servers never run
 yt-dlp.
 
-### HUD picture
+## Browser (M2)
 
-"Show on HUD" in the panel pins one screen to a HUD corner (`UTSPipWidget`, a hit-test-invisible viewport widget
-showing the screen's current texture). A pinned screen ignores the play distance and the screens-at-once limit, and
-its sound is 2D by default so it can be heard anywhere. This is the first piece of the plan's pop-out window.
+- **Helper:** `FBrowserSession` (`Helper/src/BrowserSession.cpp`) runs CEF 152 off-screen (Alloy style), loading
+  `libcef.dll` from the `browser` runtime component (delay-loaded; CEF subprocesses are the same exe and get the
+  component folder through a `--ts-browser-dir` switch). Frames (with `<select>` pop-ups composited in) go to the
+  same video triple buffer as media; page audio comes from CEF's audio handler into the audio ring, so it plays from
+  the screen and never through Windows. Input, navigation and browser state travel over the pipe
+  (`HostProtocol.md`).
+- **Hardening** (whoever is in control): clean profile unless "Keep browser logins" is on; only http(s), about, data
+  and blob URLs; pop-ups stay in the view; downloads, file pickers, JavaScript dialogs, context menus and every
+  permission request are refused. CEF's process sandbox is off for now (it needs CEF's bootstrap executable); it's a
+  tracked M4 security item.
+- **Pointer lock:** off-screen browsers reject the API, so an injected script stands in for it (`HostProtocol.md`).
+  While a page holds the lock, the interactive window captures the mouse with high-precision (raw) movement and sends
+  deltas.
+- **Control:** a screen has a replicated mode (synced media or browser), controller and start URL. A player takes
+  control through the remote call object; the server releases it when the controller leaves or stops. Until live
+  streaming (M4), only the controller runs and sees the browser; everyone else sees "<name> is using the browser".
+- **Browser size** follows the screen's real aspect ratio at the "Video quality" height, and resizes when the screen
+  is rescaled.
+
+### HUD picture and screen window
+
+`UTSScreenWindow` shows one screen on the HUD in two states. **Pass-through** ("Show on HUD"): a small
+hit-test-invisible picture in a corner. **Interactive** (panel "Use it in a window", the focus key F8, or the
+screens list): a large centred window with UI-only input; mouse, wheel, keys and characters go to the browser, Esc
+reaches the page, and holding Esc or pressing the focus key returns to the game. A shown screen ignores the play
+distance and the screens-at-once limit, and its sound is 2D by default.
+
+`UTSScreensList` (F9) lists every screen in the world, nearest first, with Show on HUD and Open window.
+`UTSClientSubsystem` polls the two hotkeys.
 
 ### Settings
 

@@ -9,6 +9,37 @@
 
 class FTSHostConnection;
 
+// What a browser session reports about itself.
+struct FTSBrowserState
+{
+	FString Url;
+	FString Title;
+	bool bLoading = false;
+	bool bCanGoBack = false;
+	bool bCanGoForward = false;
+	// cef_cursor_type_t of the cursor the page wants.
+	uint8 Cursor = 0;
+	bool bPointerLocked = false;
+};
+
+// Builds the little-endian payloads of helper messages.
+struct FTSPayloadWriter
+{
+	TArray<uint8> Bytes;
+
+	void U8(uint8 V) { Bytes.Add(V); }
+	void U16(uint16 V) { Bytes.Append(reinterpret_cast<const uint8*>(&V), 2); }
+	void U32(uint32 V) { Bytes.Append(reinterpret_cast<const uint8*>(&V), 4); }
+	void I32(int32 V) { Bytes.Append(reinterpret_cast<const uint8*>(&V), 4); }
+	void F64(double V) { Bytes.Append(reinterpret_cast<const uint8*>(&V), 8); }
+	void Str(const FString& V)
+	{
+		const FTCHARToUTF8 Utf8(*V);
+		U32(uint32(Utf8.Length()));
+		Bytes.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+	}
+};
+
 // Receives one media session's messages from the helper (game thread).
 class ITSHostSessionListener
 {
@@ -19,6 +50,8 @@ public:
 	virtual void OnHostState(TSHostProtocol::ESessionState State, double Position, double Duration, const FString& Message) = 0;
 	// The helper stopped; every session is gone and must be reopened.
 	virtual void OnHostLost() = 0;
+	// Browser sessions only.
+	virtual void OnHostBrowserState(const FTSBrowserState& State) {}
 };
 
 struct FTSProbeResult
@@ -67,6 +100,18 @@ public:
 	// Opens a media session; returns its id (0 if the helper isn't connected).
 	uint32 OpenMedia(const FTSOpenMediaParams& Params, ITSHostSessionListener* Listener);
 	void SyncTarget(uint32 Session, double MediaSeconds, bool bPaused);
+
+	// Opens a browser session of Width x Height pixels; returns its id (0 if the helper isn't connected).
+	uint32 OpenBrowser(const FString& Url, uint32 Width, uint32 Height, bool bKeepLogins, const FString& Profile, ITSHostSessionListener* Listener);
+
+	// Sends one input event; Body is the payload after the session id and kind (Docs/HostProtocol.md).
+	void SendBrowserInput(uint32 Session, TSHostProtocol::EInput Kind, const TArray<uint8>& Body);
+
+	// Sends one navigation command; Body is the payload after the session id and command.
+	void SendBrowserCommand(uint32 Session, TSHostProtocol::ECommand Command, const TArray<uint8>& Body);
+
+	// True if the browser component is installed (the built-in browser can be used).
+	bool IsBrowserAvailable() const;
 	void CloseSession(uint32 Session);
 
 	// Looks up a link's title and duration with yt-dlp; OnDone runs on the game thread.

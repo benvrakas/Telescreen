@@ -43,6 +43,11 @@ public:
 	static const FString AllowAnySiteKey;
 	static const FString MaxVideoMinutesKey;
 	static const FString QueueAddsPerMinuteKey;
+	static const FString AllowBrowserKey;
+	static const FString BrowserHomeKey;
+	static const FString KeepBrowserLoginsKey;
+	static const FString FocusKeyKey;
+	static const FString ScreensListKeyKey;
 	static const FString PipWidthKey;
 	static const FString PipCornerKey;
 	static const FString PipAudio2DKey;

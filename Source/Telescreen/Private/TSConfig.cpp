@@ -26,6 +26,11 @@ const FString UTSConfig::AllowedSitesKey = TEXT("AllowedSites");
 const FString UTSConfig::AllowAnySiteKey = TEXT("AllowAnySite");
 const FString UTSConfig::MaxVideoMinutesKey = TEXT("MaxVideoMinutes");
 const FString UTSConfig::QueueAddsPerMinuteKey = TEXT("QueueAddsPerMinute");
+const FString UTSConfig::AllowBrowserKey = TEXT("AllowBrowser");
+const FString UTSConfig::BrowserHomeKey = TEXT("BrowserHome");
+const FString UTSConfig::KeepBrowserLoginsKey = TEXT("KeepBrowserLogins");
+const FString UTSConfig::FocusKeyKey = TEXT("FocusKey");
+const FString UTSConfig::ScreensListKeyKey = TEXT("ScreensListKey");
 const FString UTSConfig::PipWidthKey = TEXT("PipWidth");
 const FString UTSConfig::PipCornerKey = TEXT("PipCorner");
 const FString UTSConfig::PipAudio2DKey = TEXT("PipAudio2D");
@@ -136,6 +141,16 @@ UTSConfig::UTSConfig()
 	AddBool(Sound, MuteInBackgroundKey, LOCTEXT("MuteInBackground", "Mute when the game is in the background"),
 		LOCTEXT("MuteInBackgroundTip", "Silence screens while you're in another window. Videos keep playing in sync."), true);
 
+	UConfigPropertySection* BrowserSection = AddSection(TEXT("Browser"), LOCTEXT("BrowserSection", "Browser and window"));
+	AddString(BrowserSection, BrowserHomeKey, LOCTEXT("BrowserHome", "Browser start page"),
+		LOCTEXT("BrowserHomeTip", "Page the built-in browser opens when you start it without a link."), TEXT("https://duckduckgo.com"));
+	AddBool(BrowserSection, KeepBrowserLoginsKey, LOCTEXT("KeepBrowserLogins", "Keep browser logins"),
+		LOCTEXT("KeepBrowserLoginsTip", "Remember sign-ins and cookies between sessions. Off: every browser starts clean. Once streaming arrives, anything you're signed in to is visible on the screen."), false);
+	AddString(BrowserSection, FocusKeyKey, LOCTEXT("FocusKey", "Window focus key"),
+		LOCTEXT("FocusKeyTip", "Switches the screen window between using the browser (mouse and keyboard go to it) and playing (the window stays as a picture). Key name, e.g. F8."), TEXT("F8"));
+	AddString(BrowserSection, ScreensListKeyKey, LOCTEXT("ScreensListKey", "Screens list key"),
+		LOCTEXT("ScreensListKeyTip", "Opens the list of every screen in the world. Key name, e.g. F9."), TEXT("F9"));
+
 	UConfigPropertySection* Pip = AddSection(TEXT("HudPicture"), LOCTEXT("HudPicture", "Picture on the HUD"));
 	AddFloat(Pip, PipWidthKey, LOCTEXT("PipWidth", "Width"),
 		LOCTEXT("PipWidthTip", "Width of a screen shown on the HUD (\"Show on HUD\" in the screen's panel)."), 420.f);
@@ -156,6 +171,8 @@ UTSConfig::UTSConfig()
 		LOCTEXT("AllowedSitesTip", "Comma-separated sites videos can be added from. Also used by the privacy setting above."), DefaultAllowedSites);
 	AddBool(Hosting, AllowAnySiteKey, LOCTEXT("AllowAnySite", "Allow videos from any site"),
 		LOCTEXT("AllowAnySiteTip", "Let players add links from sites that aren't in the list (each player's privacy setting still applies)."), false);
+	AddBool(Hosting, AllowBrowserKey, LOCTEXT("AllowBrowser", "Allow the built-in browser"),
+		LOCTEXT("AllowBrowserTip", "Let players use the built-in browser on screens."), true);
 	AddInt(Hosting, MaxVideoMinutesKey, LOCTEXT("MaxVideoMinutes", "Longest video (minutes)"),
 		LOCTEXT("MaxVideoMinutesTip", "Reject longer videos. 0 means no limit."), 0);
 	AddInt(Hosting, QueueAddsPerMinuteKey, LOCTEXT("QueueAddsPerMinute", "Videos a player can add per minute"),

@@ -21,6 +21,22 @@
 10. Save, reload: the queue and position come back (playing items continue from the saved position).
 11. Rescale a screen with Infinite Nudge: the picture keeps the right shape (letterbox bars change).
 
+## M2 (browser, single player)
+
+1. Panel, Browser: "Open the browser on this screen" with an empty address: the screen shows the start page
+   (DuckDuckGo) at the screen's shape. Typing an address + Go, Back, Forward, Reload work.
+2. "Use it in a window": a large window opens; the mouse cursor appears; clicking, scrolling, typing (including
+   Ctrl+V paste) work in the page; the cursor changes over links and text boxes.
+3. Esc reaches the page (e.g. closes a site's menu); holding Esc for a second, or F8, returns to the game; F8 again
+   opens the window again.
+4. A browser game that locks the mouse (e.g. a first-person game on itch.io): clicking locks it, the mouse turns the
+   view, Esc releases it.
+5. Page sound comes from the screen (or plays everywhere while the window is open), not straight from Windows.
+6. F9 opens the screens list: names, distances, what's showing; Show on HUD and Open window work; Esc closes it.
+7. "Close the browser": the screen goes back to its video queue.
+8. Blocked: `chrome://version` and `file:///C:/` in the address box don't open; a page asking for the microphone gets
+   refused; a download link does nothing.
+
 ## M1 multiplayer
 
 1. Listen server: a client sees and hears the same video, within about a quarter of a second of the host.
@@ -29,3 +45,5 @@
 4. Privacy: with "Load videos other players add" = 2, a video added by someone else shows its title and
    "Not loaded on this PC" with a "Load it anyway" button in the panel.
 5. Dedicated server: same as 1 and 2; the server log has the `Server_Enqueue` and command lines and no helper.
+6. Browser (M2): when a client opens the browser, others see "<name> is using the browser"; Take over moves control;
+   when the controller leaves the game, the screen goes back to its videos.

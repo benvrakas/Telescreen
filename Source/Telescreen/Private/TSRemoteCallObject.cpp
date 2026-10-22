@@ -138,6 +138,51 @@ void UTSRemoteCallObject::Server_SetScreenSettings_Implementation(ATSBuildableSc
 	}
 }
 
+bool UTSRemoteCallObject::Server_TakeControl_Validate(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)
+{
+	return uint8(Mode) <= uint8(ETSScreenMode::Browser) && Url.Len() <= MaxUrlLength;
+}
+
+void UTSRemoteCallObject::Server_TakeControl_Implementation(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)
+{
+	APlayerController* Controller = GetOwnerPlayerController();
+	UE_LOG(LogTelescreen, Log, TEXT("Server_TakeControl from %s on %s: mode %d, %s"), *GetRequesterName(), *GetNameSafe(Screen), int32(Mode), *Url);
+	if (!Screen || !Controller || !Controller->PlayerState || Mode == ETSScreenMode::SyncedMedia)
+	{
+		return;
+	}
+	if (Mode == ETSScreenMode::Browser && !UTSConfig::GetBool(Screen, UTSConfig::AllowBrowserKey, true))
+	{
+		Client_Notice(TEXT("The built-in browser is turned off on this world."));
+		return;
+	}
+	if (!MayEdit(Screen))
+	{
+		return;
+	}
+	Screen->Server_TakeControl(Controller->PlayerState, Mode, Url.TrimStartAndEnd());
+}
+
+bool UTSRemoteCallObject::Server_ReleaseControl_Validate(ATSBuildableScreen* Screen)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_ReleaseControl_Implementation(ATSBuildableScreen* Screen)
+{
+	const APlayerController* Controller = GetOwnerPlayerController();
+	if (!Screen || !Controller)
+	{
+		return;
+	}
+	const bool bIsController = Screen->GetController() == Controller->PlayerState;
+	const bool bIsHost = Controller->IsLocalController() && Screen->GetNetMode() != NM_DedicatedServer;
+	if (bIsController || bIsHost)
+	{
+		Screen->Server_ReleaseControl(bIsController ? TEXT("controller stopped") : TEXT("host stopped it"));
+	}
+}
+
 void UTSRemoteCallObject::Client_Notice_Implementation(const FString& Message)
 {
 	UE_LOG(LogTelescreen, Log, TEXT("Server notice: %s"), *Message);

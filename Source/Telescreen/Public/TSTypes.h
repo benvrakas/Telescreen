@@ -15,6 +15,15 @@ enum class ETSAspectMode : uint8
 	Stretch,
 };
 
+// What a screen shows: the shared synced media queue, or a player's own source.
+UENUM(BlueprintType)
+enum class ETSScreenMode : uint8
+{
+	SyncedMedia,
+	// The controller's built-in browser (only the controller sees it until live streaming exists).
+	Browser,
+};
+
 // One entry of a screen's synced media queue.
 USTRUCT(BlueprintType)
 struct TELESCREEN_API FTSMediaItem

@@ -21,6 +21,7 @@
 
 const TCHAR* FTSRuntimeComponents::Host = TEXT("host");
 const TCHAR* FTSRuntimeComponents::Fetcher = TEXT("fetcher");
+const TCHAR* FTSRuntimeComponents::Browser = TEXT("browser");
 
 namespace
 {
@@ -165,8 +166,9 @@ void FTSRuntimeComponents::Verify()
 		Components = Working;
 	}
 	bReady = true;
-	UE_LOG(LogTelescreen, Log, TEXT("Runtime components verified in %.2f s: host %s, fetcher %s"), FPlatformTime::Seconds() - Start,
-		IsAvailable(Host) ? TEXT("ok") : TEXT("unavailable"), IsAvailable(Fetcher) ? TEXT("ok") : TEXT("unavailable"));
+	UE_LOG(LogTelescreen, Log, TEXT("Runtime components verified in %.2f s: host %s, fetcher %s, browser %s"), FPlatformTime::Seconds() - Start,
+		IsAvailable(Host) ? TEXT("ok") : TEXT("unavailable"), IsAvailable(Fetcher) ? TEXT("ok") : TEXT("unavailable"),
+		IsAvailable(Browser) ? TEXT("ok") : TEXT("unavailable"));
 }
 
 bool FTSRuntimeComponents::VerifyIn(FComponent& Component, const FString& Dir, TMap<FString, FString>& Cache, bool& bCacheChanged)

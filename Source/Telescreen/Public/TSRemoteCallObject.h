@@ -24,6 +24,12 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetScreenSettings(ATSBuildableScreen* Screen, const FString& Name, ETSAspectMode AspectMode);
 
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_TakeControl(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReleaseControl(ATSBuildableScreen* Screen);
+
 	// Tells the player why the server refused an edit.
 	UFUNCTION(Client, Reliable)
 	void Client_Notice(const FString& Message);

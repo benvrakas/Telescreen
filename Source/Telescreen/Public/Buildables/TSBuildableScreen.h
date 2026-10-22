@@ -10,6 +10,7 @@ class UMaterialInterface;
 class UStaticMeshComponent;
 class UTexture;
 class UTSScreenPlayer;
+class APlayerState;
 
 // Server-side media queue commands (see ATSBuildableScreen::ApplyMediaCommand).
 UENUM()
@@ -56,6 +57,13 @@ public:
 	const FString& GetScreenName() const { return mScreenName; }
 	ETSAspectMode GetAspectMode() const { return mAspectMode; }
 	UTSScreenPlayer* GetPlayer() const { return mPlayer; }
+	ETSScreenMode GetMode() const { return mMode; }
+	APlayerState* GetController() const { return mController; }
+	const FString& GetControllerName() const { return mControllerName; }
+	const FString& GetSourceUrl() const { return mSourceUrl; }
+
+	// True if the local player controls this screen's source.
+	bool IsLocallyControlled() const;
 	FText GetDisplayName() const;
 
 	// Server world time (the clock synced media is timed against).
@@ -72,6 +80,12 @@ public:
 
 	// Server only: renames the screen and sets how pictures fit it.
 	void Server_SetScreenSettings(const FString& Name, ETSAspectMode AspectMode);
+
+	// Server only: gives Requester control of the screen in Mode, starting at Url.
+	void Server_TakeControl(APlayerState* Requester, ETSScreenMode Mode, const FString& Url);
+
+	// Server only: hands the screen back to synced media.
+	void Server_ReleaseControl(const TCHAR* Reason);
 
 	// Broadcast on clients and the server whenever the media state or settings change.
 	FTSOnScreenChanged OnScreenChanged;
@@ -91,6 +105,11 @@ protected:
 
 	UFUNCTION()
 	void OnRep_ScreenSettings();
+
+	UFUNCTION()
+	void OnRep_Control();
+
+	void CheckController();
 
 	// Marks the media state changed on the server and schedules the move to the next item.
 	void CommitMediaState();
@@ -119,7 +138,21 @@ protected:
 	UPROPERTY(ReplicatedUsing = OnRep_ScreenSettings, SaveGame)
 	ETSAspectMode mAspectMode = ETSAspectMode::Letterbox;
 
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	ETSScreenMode mMode = ETSScreenMode::SyncedMedia;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	TObjectPtr<APlayerState> mController;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	FString mControllerName;
+
+	// Where the controller's source started (Browser: the first page).
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	FString mSourceUrl;
+
 	FTimerHandle mAdvanceTimer;
+	FTimerHandle mControllerCheckTimer;
 };
 
 // Small Telescreen, built from the Small Billboard (8 m x 4 m).
