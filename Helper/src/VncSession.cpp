@@ -104,6 +104,17 @@ namespace
 		return Char >= 0x20 && Char <= 0xFF ? Char : (0x01000000u | Char);
 	}
 
+	// TELESCREEN_VNC_TRACE=1 logs every message and rectangle (for diagnosing servers that disconnect).
+	bool Trace()
+	{
+		static const bool bTrace = []
+		{
+			char Value[8] = {};
+			return GetEnvironmentVariableA("TELESCREEN_VNC_TRACE", Value, sizeof(Value)) > 0 && Value[0] == '1';
+		}();
+		return bTrace;
+	}
+
 	bool InitWinsock()
 	{
 		static const bool bOk = []
@@ -192,6 +203,7 @@ bool FVncSession::Skip(size_t Size)
 
 bool FVncSession::Send(const void* Data, size_t Size)
 {
+	if (Trace()) LOG_INFO("session %u: trace: client message %u (%zu bytes)", Params.SessionId, Size ? static_cast<const uint8_t*>(Data)[0] : 0, Size);
 	std::lock_guard<std::mutex> Lock(SendMutex);
 	const char* In = static_cast<const char*>(Data);
 	while (Size > 0)
@@ -411,6 +423,7 @@ void FVncSession::Run()
 		}
 		uint8_t Type = 0;
 		if (!ReadExact(&Type, 1)) break;
+		if (Trace()) LOG_INFO("session %u: trace: server message %u", Params.SessionId, Type);
 		bool bOk = true;
 		switch (Type)
 		{
@@ -448,8 +461,8 @@ void FVncSession::Run()
 	}
 	if (!Stopping)
 	{
-		LOG_INFO("session %u: the VNC server closed the connection", Params.SessionId);
-		SetState(ESessionState::Error, "The VNC server closed the connection.");
+		LOG_INFO("session %u: VNC ended: %s", Params.SessionId, DecodeError.empty() ? "the server closed the connection" : DecodeError.c_str());
+		SetState(ESessionState::Error, DecodeError.empty() ? "The VNC server closed the connection." : DecodeError);
 	}
 }
 
@@ -464,6 +477,7 @@ bool FVncSession::HandleFramebufferUpdate()
 		if (!ReadExact(Rect, 12)) return false;
 		const int X = BE16(Rect), Y = BE16(Rect + 2), W = BE16(Rect + 4), H = BE16(Rect + 6);
 		const int32_t Encoding = int32_t(BE32(Rect + 8));
+		if (Trace()) LOG_INFO("session %u: trace: rect %d,%d %dx%d encoding %d", Params.SessionId, X, Y, W, H, Encoding);
 		bool bOk = true;
 		switch (Encoding)
 		{
@@ -496,7 +510,12 @@ bool FVncSession::HandleFramebufferUpdate()
 			LOG_WARN("session %u: unexpected VNC encoding %d; disconnecting", Params.SessionId, Encoding);
 			return false;
 		}
-		if (!bOk) return false;
+		if (!bOk)
+		{
+			LOG_WARN("session %u: couldn't read a %dx%d rectangle (encoding %d)", Params.SessionId, W, H, Encoding);
+			DecodeError = "Telescreen couldn't read the VNC server's picture (encoding " + std::to_string(Encoding) + ").";
+			return false;
+		}
 	}
 	return true;
 }
@@ -593,14 +612,21 @@ bool FVncSession::DecodeZrle(int X, int Y, int W, int H)
 	Z->avail_in = unsigned(ZrleIn.size());
 	ZrleOut.clear();
 	uint8_t Chunk[65536];
-	while (Z->avail_in > 0)
+	// Inflate until the input is used up and no output is pending: a rectangle can expand past one chunk after the last
+	// input byte is read (a full chunk means the inflater may hold more).
+	for (;;)
 	{
 		Z->next_out = Chunk;
 		Z->avail_out = sizeof(Chunk);
 		const int Result = mz_inflate(Z, MZ_SYNC_FLUSH);
-		if (Result != MZ_OK && Result != MZ_BUF_ERROR && Result != MZ_STREAM_END) return false;
-		ZrleOut.insert(ZrleOut.end(), Chunk, Chunk + (sizeof(Chunk) - Z->avail_out));
-		if (Result == MZ_BUF_ERROR && Z->avail_out != 0) break;
+		if (Result != MZ_OK && Result != MZ_BUF_ERROR && Result != MZ_STREAM_END)
+		{
+			LOG_WARN("session %u: ZRLE inflate failed (%d)", Params.SessionId, Result);
+			return false;
+		}
+		const size_t Produced = sizeof(Chunk) - Z->avail_out;
+		ZrleOut.insert(ZrleOut.end(), Chunk, Chunk + Produced);
+		if ((Z->avail_in == 0 && Z->avail_out != 0) || (Produced == 0 && Result == MZ_BUF_ERROR)) break;
 	}
 	size_t Pos = 0;
 	auto Need = [&](size_t N) { return Pos + N <= ZrleOut.size(); };
@@ -617,7 +643,11 @@ bool FVncSession::DecodeZrle(int X, int Y, int W, int H)
 		for (int TileX = X; TileX < X + W; TileX += 64)
 		{
 			const int TW = std::min(64, X + W - TileX), TH = std::min(64, Y + H - TileY);
-			if (!Need(1)) return false;
+			if (!Need(1))
+			{
+				LOG_WARN("session %u: ZRLE data for %dx%d ended early (%zu bytes)", Params.SessionId, W, H, ZrleOut.size());
+				return false;
+			}
 			const uint8_t Sub = ZrleOut[Pos++];
 			auto Put = [&](int I, uint32_t P)
 			{
@@ -729,6 +759,7 @@ bool FVncSession::HandleQemuMessage()
 		return false;
 	}
 	const uint16_t Op = BE16(Head + 1);
+	if (Trace()) LOG_INFO("session %u: trace: QEMU message %u op %u", Params.SessionId, Head[0], Op);
 	if (Op != 2) return true;
 	uint8_t Len[4];
 	if (!ReadExact(Len, 4)) return false;

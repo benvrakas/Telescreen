@@ -89,6 +89,8 @@ private:
 	// ZRLE's zlib stream lasts for the whole connection.
 	void* Zrle = nullptr;
 	std::vector<uint8_t> ZrleIn, ZrleOut;
+	// Why decoding stopped, if it did (shown instead of "the server closed the connection").
+	std::string DecodeError;
 
 	// QEMU audio.
 	bool bAudioOn = false;

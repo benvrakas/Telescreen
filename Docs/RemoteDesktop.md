@@ -47,6 +47,15 @@ Authentication, a moving pattern, a DesktopSize change and a Cursor) that prints
 frames, sends a click, Enter and "hi", and saves the last frame. Verified 2026-10-22: login with and without a
 password, all three encodings decode the static pattern with 0 differing pixels, DesktopSize, input events arrive.
 
+Against a real server (2026-10-22): QEMU 11.1.0's VNC server (portable, `D:\SFMod\Tools\VM`, Debian 13 Live XFCE,
+WHPX) through a whole boot: VNC password, QEMU audio acknowledged, DesktopSize 640x480 -> 720x400 -> 1280x800, ZRLE at
+up to ~20 fps while the desktop drew, the full desktop decoded correctly. That test found the inflate bug below.
+`TELESCREEN_VNC_TRACE=1` logs every message and rectangle.
+
+- Fixed: ZRLE rectangles that expand past one 64 KB inflate chunk after the last input byte lost their tail (the
+  inflater still held output), so decoding failed and the session ended as if the server had closed it. The loop now
+  drains pending output, and decode failures say so instead of "the server closed the connection".
+
 ## RDP
 
 Planned through FreeRDP (Apache-2.0): Hyper-V (including the VM console through FreeRDP's Hyper-V connect option),
