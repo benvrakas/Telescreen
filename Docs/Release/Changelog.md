@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0 beta 6
+
+- Tabs are game-style buttons with their names (orange when selected); they were empty boxes.
+- Text fields no longer show a search icon.
+- The sharing line at the top of the HUD and the screens list (F9) are centred; they could sit in the corner, cut off.
+
 ## 0.1.0 beta 5
 
 - The screen panel and the screens list (F9) use the game's own window frame, buttons, tabs, text fields and scroll

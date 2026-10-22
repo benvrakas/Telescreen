@@ -5,6 +5,8 @@
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/ScrollBox.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
@@ -63,8 +65,6 @@ void UTSScreensList::Toggle(const UObject* WorldContext)
 		return;
 	}
 	List->AddToViewport(20);
-	List->SetAnchorsInViewport(FAnchors(0.5f, 0.5f));
-	List->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
 	List->SetIsFocusable(true);
 	FInputModeUIOnly Mode;
 	Mode.SetWidgetToFocus(List->TakeWidget());
@@ -124,7 +124,12 @@ void UTSScreensList::BuildTree()
 	ListSize->AddChild(TSVanillaUI::MakeScrollBox(WidgetTree, Rows));
 	Size->AddChild(TSVanillaUI::MakeWindow(WidgetTree, LOCTEXT("ScreensTitle", "Screens"), TSVanillaUI::MakeContentBackground(WidgetTree, ListSize), this,
 		GET_FUNCTION_NAME_CHECKED(UTSScreensList, OnWindowClosed)));
-	WidgetTree->RootWidget = Size;
+	// The widget covers the viewport and centres the window in it.
+	UOverlay* Layer = WidgetTree->ConstructWidget<UOverlay>();
+	UOverlaySlot* WindowSlot = Layer->AddChildToOverlay(Size);
+	WindowSlot->SetHorizontalAlignment(HAlign_Center);
+	WindowSlot->SetVerticalAlignment(VAlign_Center);
+	WidgetTree->RootWidget = Layer;
 }
 
 void UTSScreensList::Rebuild()

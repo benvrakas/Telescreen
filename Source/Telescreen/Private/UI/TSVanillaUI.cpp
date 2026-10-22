@@ -19,6 +19,7 @@ namespace
 	const TCHAR* WindowClass = TEXT("/Game/FactoryGame/Interface/UI/Widget_Window_DarkMode.Widget_Window_DarkMode_C");
 	const TCHAR* ContentBackgroundClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/Widget_Window_ContentBackground_DarkMode.Widget_Window_ContentBackground_DarkMode_C");
 	const TCHAR* StandardButtonClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/Widget_StandardButton.Widget_StandardButton_C");
+	// Only probed for its bold title font.
 	const TCHAR* TabButtonClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/Widget_SlidingTabs_Button.Widget_SlidingTabs_Button_C");
 	const TCHAR* InputBoxClass = TEXT("/Game/FactoryGame/Interface/UI/Menu/Widget_InputBox.Widget_InputBox_C");
 	const TCHAR* ScrollBoxClass = TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/Widget_Scrollbox.Widget_Scrollbox_C");
@@ -280,15 +281,8 @@ void TSVanillaUI::SetButtonEnabled(UWidget* Button, bool bEnabled)
 
 UWidget* TSVanillaUI::MakeTab(UWidgetTree* Tree, const FText& Text, UObject* Handler, FName Function)
 {
-	if (UUserWidget* Tab = MakeVanilla(Tree, TabButtonClass))
-	{
-		// The tab stands alone (no sliding tabs widget behind it): clicks only go to Handler.
-		SetBoolProperty(Tab, TEXT("mOverrideButtonFunction"), true);
-		SetTextProperty(Tab, TEXT("mTitle"), Text);
-		CallText(Tab, TEXT("SetTitle"), Text);
-		BindClick(InnerButton(Tab), Handler, Function);
-		return Tab;
-	}
+	// The vanilla sliding-tab button takes its label and width from a tab bar container, so standalone tabs are
+	// standard buttons, orange while selected.
 	return MakeButton(Tree, Text, Handler, Function);
 }
 
@@ -301,15 +295,8 @@ void TSVanillaUI::SetTabActive(UWidget* Tab, bool bActive)
 	}
 	if (UUserWidget* AsUser = Cast<UUserWidget>(Tab))
 	{
-		if (AsUser->FindFunction(TEXT("SetActive")))
-		{
-			SetBoolProperty(AsUser, TEXT("IsActive"), bActive);
-			CallBools(AsUser, TEXT("SetActive"), {bActive});
-		}
-		else
-		{
-			CallBools(AsUser, TEXT("SetButtonStyle"), {bActive, false, false});
-		}
+		SetBoolProperty(AsUser, TEXT("mIsOrangeButton"), bActive);
+		CallBools(AsUser, TEXT("SetButtonStyle"), {bActive, false, false});
 	}
 }
 
@@ -318,6 +305,8 @@ UWidget* TSVanillaUI::MakeInputBox(UWidgetTree* Tree, const FText& Hint, UObject
 	if (UUserWidget* Box = MakeVanilla(Tree, InputBoxClass))
 	{
 		SetTextProperty(Box, TEXT("mPreviewText"), Hint);
+		// A text field, not the search bar style (no magnifier or clear button).
+		SetBoolProperty(Box, TEXT("isSearchbar"), false);
 		CallText(Box, TEXT("SetPreviewText"), Hint);
 		if (UEditableText* Inner = InnerEditable(Box))
 		{

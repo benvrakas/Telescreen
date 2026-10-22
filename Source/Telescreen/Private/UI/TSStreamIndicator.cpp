@@ -2,9 +2,12 @@
 #include "Blueprint/WidgetTree.h"
 #include "Buildables/TSBuildableScreen.h"
 #include "Components/Border.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/TextBlock.h"
 #include "Kismet/GameplayStatics.h"
 #include "TSConfig.h"
+#include "UI/TSVanillaUI.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -35,9 +38,6 @@ void UTSStreamIndicator::Update(const UObject* WorldContext, const ATSBuildableS
 		}
 		Indicator->SetVisibility(ESlateVisibility::HitTestInvisible);
 		Indicator->AddToViewport(5);
-		Indicator->SetAnchorsInViewport(FAnchors(0.5f, 0.f));
-		Indicator->SetAlignmentInViewport(FVector2D(0.5f, 0.f));
-		Indicator->SetPositionInViewport(FVector2D(0.f, 12.f), false);
 		GIndicator = Indicator;
 	}
 	const FText What = Screen->GetMode() == ETSScreenMode::Window ? LOCTEXT("IndicatorWindow", "a window") : LOCTEXT("IndicatorBrowser", "your browser");
@@ -68,15 +68,20 @@ bool UTSStreamIndicator::Initialize()
 	}
 	if (!WidgetTree->RootWidget)
 	{
+		// The widget covers the viewport; the line is aligned top centre inside it (viewport-slot placement without a
+		// size leaves widgets in the top-left corner).
+		UOverlay* Layer = WidgetTree->ConstructWidget<UOverlay>();
 		UBorder* Background = WidgetTree->ConstructWidget<UBorder>();
 		Background->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.6f));
 		Background->SetPadding(FMargin(10.f, 4.f));
-		Line = WidgetTree->ConstructWidget<UTextBlock>();
-		FSlateFontInfo Font = Line->GetFont();
-		Font.Size = 12;
-		Line->SetFont(Font);
+		Line = TSVanillaUI::MakeText(WidgetTree, FText::GetEmpty(), 12, FLinearColor::White);
+		Line->SetAutoWrapText(false);
 		Background->AddChild(Line);
-		WidgetTree->RootWidget = Background;
+		UOverlaySlot* LineSlot = Layer->AddChildToOverlay(Background);
+		LineSlot->SetHorizontalAlignment(HAlign_Center);
+		LineSlot->SetVerticalAlignment(VAlign_Top);
+		LineSlot->SetPadding(FMargin(0.f, 12.f, 0.f, 0.f));
+		WidgetTree->RootWidget = Layer;
 	}
 	return bSuperInitialized;
 }

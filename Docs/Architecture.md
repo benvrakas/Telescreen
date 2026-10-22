@@ -215,8 +215,8 @@ bound to each widget's inner `UButton`):
 | `Widget_Window_DarkMode` (`UFGWindow`) | window frame, title, close button | `WindowBody` named slot, `mTitleText`, `SetTitle`, `OnClose` |
 | `Widget_Window_ContentBackground_DarkMode` | panel and dialog background | (layered under the content) |
 | `Widget_StandardButton` | buttons | `mText`, `SetText`, `SetButtonStyle(orange, light, no background)`, `SetIsDisabled`, `mButton` |
-| `Widget_SlidingTabs_Button` | tabs | `mTitle`, `SetTitle`, `SetActive`, `mOverrideButtonFunction`, `mButton` |
-| `Widget_InputBox` | text fields | `mPreviewText`, `SetPreviewText`, `mInputBox` (UEditableText) |
+| `Widget_StandardButton` (orange = selected) | tabs | as buttons. `Widget_SlidingTabs_Button` takes its label and width from a `Widget_TabsContainer`, so standalone it shows as an empty box; it is only probed for the bold font |
+| `Widget_InputBox` | text fields | `mPreviewText`, `SetPreviewText`, `isSearchbar` (off), `mInputBox` (UEditableText) |
 | `Widget_Scrollbox` | scrolling pages and lists | `mScrollableContent` named slot |
 
 Plain text uses the game's UI font, read from the input box's and tab button's text blocks. Every maker falls back to
