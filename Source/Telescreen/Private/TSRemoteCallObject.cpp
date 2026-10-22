@@ -259,6 +259,20 @@ void UTSRemoteCallObject::Server_SetScreenSettings_Implementation(ATSBuildableSc
 	}
 }
 
+bool UTSRemoteCallObject::Server_ReportMedia_Validate(ATSBuildableScreen* Screen, const FString& Url, bool bHave, bool bCanStream)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_ReportMedia_Implementation(ATSBuildableScreen* Screen, const FString& Url, bool bHave, bool bCanStream)
+{
+	const APlayerController* Reporter = GetOwnerPlayerController();
+	if (Screen && Reporter && Reporter->PlayerState && Url.Len() <= MaxUrlLength)
+	{
+		Screen->Server_ReportMedia(Reporter->PlayerState, Url, bHave, bCanStream && UTSConfig::GetBool(Screen, UTSConfig::AllowStreamingKey, true));
+	}
+}
+
 bool UTSRemoteCallObject::Server_SetScreenVolume_Validate(ATSBuildableScreen* Screen, float Volume)
 {
 	return FMath::IsFinite(Volume);
@@ -334,7 +348,7 @@ bool UTSRemoteCallObject::Server_StreamChunk_Validate(ATSBuildableScreen* Screen
 void UTSRemoteCallObject::Server_StreamChunk_Implementation(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
 {
 	const APlayerController* Sender = GetOwnerPlayerController();
-	if (!Screen || !Sender || Screen->GetMode() == ETSScreenMode::SyncedMedia || Screen->GetController() != Sender->PlayerState || Screen->IsCurtainOn() ||
+	if (!Screen || !Sender || !Sender->PlayerState || Screen->GetStreamSender() != Sender->PlayerState || Screen->IsCurtainOn() ||
 		Screen->GetWatchers().Num() == 0 || !UTSConfig::GetBool(Screen, UTSConfig::AllowStreamingKey, true))
 	{
 		return;
@@ -600,7 +614,7 @@ void UTSRemoteCallObject::BroadcastMarker(ATSBuildableScreen* Screen, const FStr
 
 void UTSRemoteCallObject::SendKeyframeRequest(ATSBuildableScreen* Screen)
 {
-	const APlayerState* ControllerState = Screen ? Screen->GetController() : nullptr;
+	const APlayerState* ControllerState = Screen ? Screen->GetStreamSender() : nullptr;
 	APlayerController* Controller = ControllerState ? Cast<APlayerController>(ControllerState->GetOwner()) : nullptr;
 	if (!Controller)
 	{

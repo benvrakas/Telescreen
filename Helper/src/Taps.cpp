@@ -26,6 +26,16 @@ namespace
 			Taps.erase(Id);
 		}
 
+		bool Has(uint32_t Source)
+		{
+			std::lock_guard<std::mutex> Lock(Mutex);
+			for (auto& Pair : Taps)
+			{
+				if (Pair.second.first == Source) return true;
+			}
+			return false;
+		}
+
 		template <typename... TArgs>
 		void Publish(uint32_t Source, TArgs... Args)
 		{
@@ -65,6 +75,7 @@ void FrameTaps::ClearRefresh(uint32_t SourceSession)
 	GRefresh.erase(SourceSession);
 }
 void FrameTaps::Remove(int TapId) { GFrames.Remove(TapId); }
+bool FrameTaps::Has(uint32_t SourceSession) { return GFrames.Has(SourceSession); }
 void FrameTaps::Publish(uint32_t SourceSession, const uint8_t* Bgra, int Width, int Height) { GFrames.Publish(SourceSession, Bgra, Width, Height); }
 
 int AudioTaps::Add(uint32_t SourceSession, FTap Tap) { return GAudio.Add(SourceSession, std::move(Tap)); }

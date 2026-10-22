@@ -2,6 +2,7 @@
 
 #include "Common.h"
 #include "Host/TSHostProtocol.h"
+#include "Subtitles.h"
 
 #include <functional>
 
@@ -13,6 +14,9 @@ struct FSessionEvents
 	std::function<void(uint32_t Session, TSHostProtocol::ESessionState State, double Position, double Duration, const std::string& Message)> OnState;
 	std::function<void(uint32_t Session, const std::string& Url, const std::string& Title, bool Loading, bool CanGoBack, bool CanGoForward,
 		uint8_t Cursor, bool PointerLocked)> OnBrowserState;
+	std::function<void(uint32_t Session, const std::vector<FSubtitleTrack>& Tracks)> OnSubtitleTracks;
+	// Replace: these cues replace the track's earlier ones; otherwise they are added.
+	std::function<void(uint32_t Session, uint32_t Track, bool Replace, const std::vector<FSubtitleCue>& Cues)> OnSubtitleCues;
 };
 
 // One media or browser session; the host routes the mod's messages to it.

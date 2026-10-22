@@ -15,9 +15,11 @@
 struct AVFormatContext;
 struct AVCodecContext;
 struct AVPacket;
+struct AVStream;
 struct AVFrame;
 struct SwsContext;
 struct SwrContext;
+struct FResolvedMedia;
 
 struct FOpenParams
 {
@@ -28,6 +30,8 @@ struct FOpenParams
 	bool Paused = false;
 	uint32_t MaxWidth = 1280;
 	uint32_t MaxHeight = 720;
+	// Preferred subtitle language (e.g. "en"): which automatic captions are offered.
+	std::string SubtitleLanguage;
 };
 
 // Plays one media URL or file into a session's shared video and audio buffers, following the mod's sync target.
@@ -41,6 +45,9 @@ public:
 	virtual void SetTarget(double MediaSeconds, bool Paused) override;
 
 	uint64_t GetFramesPublished() const { return FramesPublished.load(); }
+
+	// SelectSubtitles: loads the track's cues and sends them (embedded tracks: as the file plays).
+	virtual void HandleCommand(TSHostProtocol::ECommand Command, FPayloadReader& Reader) override;
 
 private:
 	struct FInput;
@@ -67,6 +74,11 @@ private:
 	bool EnsureVideoWriter(uint32_t Width, uint32_t Height);
 	void SendState(TSHostProtocol::ESessionState State, double Position, const std::string& Message = std::string());
 	double PtsForRingFrame(int64_t Frame);
+	void PublishTapAudio();
+	void FindSubtitleTracks(const FResolvedMedia* Resolved);
+	void DecodeSubtitlePacket(FInput* Input, AVPacket* Packet);
+	bool ReadEmbeddedSubtitles(int StreamIndex, std::vector<FSubtitleCue>& Cues, std::string& Error);
+	static bool DecodeSubtitle(AVCodecContext* Codec, AVStream* Stream, double StartOffset, AVPacket* Packet, FSubtitleCue& Cue);
 
 	FOpenParams Params;
 	std::wstring YtDlpPath;
@@ -133,4 +145,22 @@ private:
 	double NextSyncCheck = 0.0, NextStateReport = 0.0, NextCompensation = 0.0;
 	std::atomic<uint64_t> FramesPublished{0};
 	bool Ended = false;
+
+	// For a live stream of this video (players without the file): the shown frame (kept only while tapped) and the
+	// audio written to the ring, handed to the taps as the game plays it so it stays in step with the picture.
+	std::mutex TapMutex;
+	std::vector<uint8_t> TapFrame;
+	int TapWidth = 0, TapHeight = 0;
+	std::vector<float> TapAudio;
+	int64_t TapAudioStart = 0;
+
+	// Subtitles: the tracks found at open; the selected embedded stream is decoded by the first input's demux thread.
+	std::mutex SubtitleMutex;
+	std::vector<FSubtitleTrack> SubtitleTracks;
+	std::atomic<int> SelectedSubtitleStream{-1};
+	std::atomic<uint32_t> SelectedSubtitleTrack{0};
+	AVCodecContext* SubtitleCodec = nullptr;
+	int SubtitleCodecStream = -1;
+	std::thread SubtitleLoader;
+	std::atomic<uint32_t> SubtitleRequest{0};
 };

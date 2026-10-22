@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 6;
+	constexpr uint32_t Version = 7;
 
 	enum class EMsg : uint16_t
 	{
@@ -35,6 +35,8 @@ namespace TSHostProtocol
 		ListWindows = 22,
 		WindowList = 23,
 		OpenVnc = 24,
+		SubtitleTracks = 25,
+		SubtitleCues = 26,
 	};
 
 	// StreamControl commands.
@@ -76,6 +78,8 @@ namespace TSHostProtocol
 		Reload = 3,
 		Stop = 4,
 		Resize = 5,
+		// Media sessions: u32 subtitle track id (0: none).
+		SelectSubtitles = 6,
 	};
 
 	// Modifier bits in input messages (as cef_event_flags_t).

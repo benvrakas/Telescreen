@@ -13,6 +13,8 @@ namespace FrameTaps
 	int Add(uint32_t SourceSession, FTap Tap);
 	void Remove(int TapId);
 	void Publish(uint32_t SourceSession, const uint8_t* Bgra, int Width, int Height);
+	// Whether anything listens to SourceSession's frames.
+	bool Has(uint32_t SourceSession);
 
 	// Set by a source that keeps its current frame: republishes it. Cleared before the source is destroyed.
 	void SetRefresh(uint32_t SourceSession, std::function<void()> Refresh);

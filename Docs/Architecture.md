@@ -183,6 +183,40 @@ keyframe at least every 4 s.
 
 Not done yet: WebRTC / direct connections to offload the server, CEF's process sandbox.
 
+## Local videos and streaming synced media
+
+**Local videos** (`Private/Screen/TSLocalVideos.cpp`). A queue entry without `://` is a file. Each PC plays it from
+the full path when that exists there; otherwise from a file with the same name (case-insensitive) anywhere in that
+player's videos folder (setting "Videos folder", or the Videos tab's Change folder button), so copies in different
+places (a Plex folder on F: or C:) still match. The folder is indexed on a worker thread (file name -> path, at most
+200,000 files) the first time it's needed; a miss re-indexes at most every 30 s. Folder and file pickers are the
+Windows `IFileOpenDialog` on their own thread, so the game (and a listen server) keeps running.
+
+**Streaming synced media.** A player whose PC can't play the current item (the file isn't there, or its session
+fails) watches it as a live stream from a player who plays it, through the same path as shared browsers:
+
+- Every PC reports once per item whether it plays it (`Server_ReportMedia`: plays / can't, and whether it agrees to
+  stream, setting "Stream videos to players who can't play them"; the world host's "Allow sharing" applies). A
+  different current URL resets the reports, the streamer and the watchers (`CommitMediaState`).
+- The server picks the media streamer from the players who play it and agree: the current one while it can,
+  otherwise the player who added it, otherwise any (`ChooseMediaStreamer`), and replicates it (`mMediaStreamer`).
+- Players who can't play it open a stream receiver and watch (`Server_SetWatcher` accepts watchers in synced mode
+  while there is a streamer); the stream sender is `GetStreamSender()` (the controller in browser/window/desktop
+  modes, the media streamer for synced media), which the chunk relay and keyframe requests use.
+- The streamer's player opens a stream sender on its media session while anyone watches, and keeps the screen
+  active (playing) wherever the streamer is. The helper's media session publishes its shown frames and its audio to
+  the taps; audio is handed to the taps as the game reads it from the ring, so it stays in step with the picture
+  (the decoder writes up to 0.3 s ahead).
+- Pause and seek follow the streamer's synced playback; viewers see it about half a second later. Privacy-blocked
+  items (Privacy setting) aren't streamed.
+
+The stream is re-encoded (the encoder ladder), not the file's own video: files are encoded for storage (5-15 Mbps for
+1080p, a keyframe every few seconds, 10-bit, AC3), while the stream fits the bitrate cap and recovers from losses with
+a keyframe on demand.
+
+Verified outside the game (2026-10-22): `--selftest-stream-file` on a 10-bit HEVC 1080p MKV with AC3 5.1: hevc_nvenc
+1280x720 at 30 fps, 2.9 Mbps, no losses, audio consumed throughout.
+
 ## Window mode (M5)
 
 `FWindowSession` (`Helper/src/WindowSession.cpp`) shares one top-level window the controller picks from the

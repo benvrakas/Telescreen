@@ -5,6 +5,13 @@
 First public release (everything from the betas below). Not yet tested in multiplayer.
 
 - New mod icon; the mod page has screenshots.
+- **Videos folder**: each player sets theirs (Videos tab, Change folder; or Mods > Telescreen > Videos on this PC).
+  A file someone else added plays from your copy: the same path, or a file with the same name anywhere in your videos
+  folder. **Pick a file** chooses a video with the Windows file picker.
+- **A video you can't play is streamed to you** by a player who plays it (you don't have the file, or the link fails
+  on your PC), like a shared window. Setting "Stream videos to players who can't play them" (on).
+- Fix: long links and file paths were cut short by the game's text field (about 80 characters), so long local file
+  paths couldn't be found. Text fields now take up to 2048 characters.
 
 ## 0.1.0 beta 11
 

@@ -41,6 +41,22 @@ struct FTSPayloadWriter
 };
 
 // Receives one media session's messages from the helper (game thread).
+// A subtitle track of a media session (kind: 0 the site's, 1 automatic captions, 2 inside the file, 3 a file next to it).
+struct FTSSubtitleTrack
+{
+	uint32 Id = 0;
+	FString Language;
+	FString Label;
+	uint8 Kind = 0;
+};
+
+struct FTSSubtitleCue
+{
+	uint32 StartMs = 0;
+	uint32 EndMs = 0;
+	FString Text;
+};
+
 class ITSHostSessionListener
 {
 public:
@@ -54,6 +70,9 @@ public:
 	virtual void OnHostBrowserState(const FTSBrowserState& State) {}
 	// Stream sender sessions only: an encoded packet to send to the viewers.
 	virtual void OnHostStreamPacket(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, TArray<uint8>&& Data) {}
+	// Media sessions only: the subtitle tracks found, and cues of the selected track (bReplace: instead of the earlier ones).
+	virtual void OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks) {}
+	virtual void OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues) {}
 };
 
 // A window on this PC that can be shared (from the helper's list).
@@ -82,6 +101,8 @@ struct FTSOpenMediaParams
 	bool bPaused = false;
 	uint32 MaxWidth = 1280;
 	uint32 MaxHeight = 720;
+	// Which automatic captions are offered (e.g. "en").
+	FString SubtitleLanguage;
 };
 
 // Runs TelescreenHost.exe for this game client and routes its messages (see Docs/HostProtocol.md). Not on dedicated servers.

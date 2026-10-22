@@ -165,7 +165,8 @@ FResolvedMedia ResolveWithYtDlp(const std::wstring& YtDlpPath, const std::string
 	if (WantStreams)
 	{
 		const std::wstring Height = std::to_wstring(MaxHeight ? MaxHeight : 720);
-		Args.insert(Args.end(), {L"-S", L"res:" + Height + L",proto", L"-f", L"bv*+ba/b", L"--print", L"urls"});
+		Args.insert(Args.end(), {L"-S", L"res:" + Height + L",proto", L"-f", L"bv*+ba/b", L"--print", L"%(language)s", L"--print", L"%(subtitles)j",
+			L"--print", L"%(automatic_captions)j", L"--print", L"urls"});
 	}
 	Args.push_back(L"--");
 	Args.push_back(Widen(Url));
@@ -185,7 +186,15 @@ FResolvedMedia ResolveWithYtDlp(const std::wstring& YtDlpPath, const std::string
 	Result.Title = Lines[0];
 	Result.Duration = (Lines[1] == "NA" || Lines[1].empty()) ? 0.0 : atof(Lines[1].c_str());
 	Result.IsLive = Lines[2] == "True";
-	for (size_t I = 3; I < Lines.size(); ++I)
+	size_t First = 3;
+	if (WantStreams && Lines.size() >= 6)
+	{
+		Result.Language = Lines[3] == "NA" ? std::string() : Lines[3];
+		Result.SubtitlesJson = Lines[4];
+		Result.AutomaticJson = Lines[5];
+		First = 6;
+	}
+	for (size_t I = First; I < Lines.size(); ++I)
 	{
 		if (Lines[I].rfind("http", 0) == 0) Result.StreamUrls.push_back(Lines[I]);
 	}

@@ -46,6 +46,8 @@ namespace
 		double LossPercent = 0.0;
 		int StreamHeight = 0;
 		int VncWantWidth = 0, VncWantHeight = 0;
+		int SubtitleTrack = 0;
+		std::string SubtitleLanguage = "en";
 		FEncodeBenchArgs Bench;
 		bool bBench = false;
 		double Seconds = 12.0, Start = 0.0, SeekAt = -1.0, SeekTo = 0.0, PauseAt = -1.0, ResumeAt = -1.0;
@@ -61,12 +63,15 @@ namespace
 			else if (Key == L"--log") Args.Log = Value;
 			else if (Key == L"--ytdlp") Args.YtDlp = Value;
 			else if (Key == L"--stream-height") Args.StreamHeight = _wtoi(Value.c_str());
+			else if (Key == L"--subtitles") Args.SubtitleTrack = _wtoi(Value.c_str());
+			else if (Key == L"--subtitle-language") Args.SubtitleLanguage = Narrow(Value);
 			else if (Key == L"--vnc-size") swscanf_s(Value.c_str(), L"%dx%d", &Args.VncWantWidth, &Args.VncWantHeight);
 			else if (Key == L"--jsruntime") Args.JsRuntime = Value;
 			else if (Key == L"--browserdir") Args.BrowserDir = Value;
 			else if (Key == L"--browserdata") Args.BrowserData = Value;
 			else if (Key == L"--selftest-browser") { Args.SelfTest = Narrow(Value); Args.SelfTestBrowser = true; }
 			else if (Key == L"--selftest-stream") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; }
+			else if (Key == L"--selftest-stream-file") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; Args.SelfTestLocal = true; }
 			else if (Key == L"--selftest-window") { Args.SelfTest = Narrow(Value); Args.SelfTestWindow = true; }
 			else if (Key == L"--selftest-vnc") { Args.SelfTest = Narrow(Value); Args.SelfTestVnc = true; }
 			else if (Key == L"--password") Args.VncPassword = Narrow(Value);
@@ -192,6 +197,44 @@ namespace
 			Pipe.Send(uint16_t(EMsg::SessionState), W.Bytes);
 		};
 
+		Events.OnSubtitleTracks = [&Pipe](uint32_t Session, const std::vector<FSubtitleTrack>& Tracks)
+		{
+			FPayloadWriter W;
+			W.U32(Session);
+			W.U32(uint32_t(Tracks.size()));
+			for (const FSubtitleTrack& Track : Tracks)
+			{
+				W.U32(Track.Id);
+				W.Str(Track.Language);
+				W.Str(Track.Label);
+				W.U8(uint8_t(Track.Kind));
+			}
+			Pipe.Send(uint16_t(EMsg::SubtitleTracks), W.Bytes);
+		};
+		Events.OnSubtitleCues = [&Pipe](uint32_t Session, uint32_t Track, bool Replace, const std::vector<FSubtitleCue>& Cues)
+		{
+			// Batches stay well under the pipe's message limit.
+			constexpr size_t Batch = 400;
+			size_t Sent = 0;
+			do
+			{
+				const size_t Count = std::min(Batch, Cues.size() - Sent);
+				FPayloadWriter W;
+				W.U32(Session);
+				W.U32(Track);
+				W.U8(Replace && Sent == 0 ? 1 : 0);
+				W.U32(uint32_t(Count));
+				for (size_t I = Sent; I < Sent + Count; ++I)
+				{
+					W.U32(Cues[I].StartMs);
+					W.U32(Cues[I].EndMs);
+					W.Str(Cues[I].Text.substr(0, 1000));
+				}
+				Pipe.Send(uint16_t(EMsg::SubtitleCues), W.Bytes);
+				Sent += Count;
+			} while (Sent < Cues.size());
+		};
+
 		Events.OnBrowserState = [&Pipe](uint32_t Session, const std::string& Url, const std::string& Title, bool Loading, bool CanGoBack,
 									  bool CanGoForward, uint8_t Cursor, bool PointerLocked)
 		{
@@ -248,6 +291,7 @@ namespace
 				Params.Paused = R.U8() != 0;
 				Params.MaxWidth = std::max(16u, R.U32());
 				Params.MaxHeight = std::max(16u, R.U32());
+				Params.SubtitleLanguage = R.Str();
 				if (!R.Ok) break;
 				std::lock_guard<std::mutex> Lock(SessionsMutex);
 				auto Existing = Sessions.find(Params.SessionId);
@@ -626,11 +670,16 @@ namespace
 	int RunStreamSelfTest(const FArgs& Args)
 	{
 		std::string Error;
-		Browser::AllowFileUrls(true);
-		if (!Browser::EnsureInitialized(Args.BrowserDir, Args.BrowserData, LogDirectory(Args.Log), Error))
+		// The source is a browser page, or with --selftest-stream-file a video file played like a screen does.
+		const bool bFromFile = Args.SelfTestLocal;
+		if (!bFromFile)
 		{
-			LOG_ERROR("selftest: %s", Error.c_str());
-			return 1;
+			Browser::AllowFileUrls(true);
+			if (!Browser::EnsureInitialized(Args.BrowserDir, Args.BrowserData, LogDirectory(Args.Log), Error))
+			{
+				LOG_ERROR("selftest: %s", Error.c_str());
+				return 1;
+			}
 		}
 		std::atomic<int> VideoFrames{0}, Dropped{0}, Delivered{0};
 		std::atomic<FAudioHeader*> Audio{nullptr};
@@ -675,12 +724,31 @@ namespace
 			++Delivered;
 			RawReceiver->HandleStreamPacket(Packet);
 		};
-		FBrowserParams BrowserParams;
-		BrowserParams.SessionId = 1;
-		BrowserParams.Url = Args.SelfTest;
-		BrowserParams.Width = 1280;
-		BrowserParams.Height = 720;
-		auto BrowserSessionPtr = std::make_unique<FBrowserSession>(BrowserParams, FSessionEvents());
+		std::unique_ptr<FSession> BrowserSessionPtr;
+		std::atomic<FAudioHeader*> SourceAudio{nullptr};
+		if (bFromFile)
+		{
+			FSessionEvents SourceEvents;
+			SourceEvents.OnAudio = [&SourceAudio](uint32_t, uint32_t, uint32_t, uint32_t, const std::string& Name)
+			{
+				HANDLE Mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, Widen(Name).c_str());
+				SourceAudio = Mapping ? static_cast<FAudioHeader*>(MapViewOfFile(Mapping, FILE_MAP_ALL_ACCESS, 0, 0, 0)) : nullptr;
+			};
+			FOpenParams Params;
+			Params.SessionId = 1;
+			Params.Url = Args.SelfTest;
+			Params.IsLocalFile = true;
+			BrowserSessionPtr = std::make_unique<FMediaSession>(Params, Args.YtDlp, SourceEvents);
+		}
+		else
+		{
+			FBrowserParams BrowserParams;
+			BrowserParams.SessionId = 1;
+			BrowserParams.Url = Args.SelfTest;
+			BrowserParams.Width = 1280;
+			BrowserParams.Height = 720;
+			BrowserSessionPtr = std::make_unique<FBrowserSession>(BrowserParams, FSessionEvents());
+		}
 		FSenderParams SenderParams;
 		SenderParams.SessionId = 2;
 		SenderParams.SourceSessionId = 1;
@@ -694,6 +762,7 @@ namespace
 		// Consume audio like the game's mixer and ask for a keyframe after losses, like the mod.
 		const double Start = NowSeconds();
 		int64_t Pulled = 0, Consumed = 0;
+		int64_t SourcePulled = 0;
 		while (NowSeconds() - Start < Args.Seconds)
 		{
 			if (FAudioHeader* Header = Audio.load())
@@ -706,6 +775,20 @@ namespace
 				Consumed += Take;
 				Pulled = Due;
 			}
+			// The video's own sound is played by the game on the sharer's PC: consume it the same way.
+			if (FAudioHeader* Header = SourceAudio.load())
+			{
+				const int64_t Due = int64_t((NowSeconds() - Start) * 48000);
+				int64_t Read = std::max(InterlockedCompareExchange64(&Header->ReadFrames, 0, 0), InterlockedCompareExchange64(&Header->DiscardUntil, 0, 0));
+				const int64_t Write = InterlockedCompareExchange64(&Header->WriteFrames, 0, 0);
+				const int64_t Take = std::clamp<int64_t>(Due - SourcePulled, 0, Write - Read);
+				InterlockedExchange64(&Header->ReadFrames, Read + Take);
+				SourcePulled = Due;
+			}
+			if (bFromFile)
+			{
+				BrowserSessionPtr->SetTarget(NowSeconds() - Start, false);
+			}
 			if (bWaitKey)
 			{
 				bWaitKey = false;
@@ -717,7 +800,7 @@ namespace
 		Sender.reset();
 		BrowserSessionPtr.reset();
 		Receiver.reset();
-		Browser::Shutdown();
+		if (!bFromFile) Browser::Shutdown();
 		return Delivered > 0 ? 0 : 1;
 	}
 
@@ -795,6 +878,18 @@ namespace
 			State.LastPosition = Position;
 			State.LastMessage = Message;
 		};
+		Events.OnSubtitleTracks = [](uint32_t, const std::vector<FSubtitleTrack>& Tracks)
+		{
+			for (const FSubtitleTrack& Track : Tracks)
+			{
+				LOG_INFO("selftest: subtitle track %u: %s [%s] kind %d %s", Track.Id, Track.Label.c_str(), Track.Language.c_str(), int(Track.Kind), Track.Format.c_str());
+			}
+		};
+		Events.OnSubtitleCues = [](uint32_t, uint32_t Track, bool Replace, const std::vector<FSubtitleCue>& Cues)
+		{
+			LOG_INFO("selftest: subtitles track %u: %zu cue(s)%s%s", Track, Cues.size(), Replace ? " (replace)" : "",
+				Cues.empty() ? "" : (" first " + std::to_string(Cues.front().StartMs) + " ms: " + Cues.front().Text.substr(0, 80)).c_str());
+		};
 
 		std::unique_ptr<FSession> Session;
 		FBrowserSession* BrowserSession = nullptr;
@@ -829,6 +924,7 @@ namespace
 			Params.Url = Args.SelfTest;
 			Params.IsLocalFile = Args.SelfTestLocal;
 			Params.StartSeconds = Args.Start;
+			Params.SubtitleLanguage = Args.SubtitleLanguage;
 			Session = std::make_unique<FMediaSession>(Params, Args.YtDlp, Events);
 		}
 
@@ -884,6 +980,16 @@ namespace
 			Send(EInput::Key, W);
 		};
 		std::vector<FStep> Steps;
+		if (Args.SubtitleTrack > 0)
+		{
+			Steps.push_back({8.0, [&]
+			{
+				FPayloadWriter W;
+				W.U32(uint32_t(Args.SubtitleTrack));
+				FPayloadReader R(W.Bytes);
+				Session->HandleCommand(ECommand::SelectSubtitles, R);
+			}});
+		}
 		if (BrowserSession)
 		{
 			Steps.push_back({3.0, [&]

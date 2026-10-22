@@ -35,6 +35,10 @@ const FString UTSConfig::StreamHeightKey = TEXT("StreamHeight");
 const FString UTSConfig::StreamEncoderKey = TEXT("StreamEncoder");
 const FString UTSConfig::BrowserHeightKey = TEXT("BrowserHeight");
 const FString UTSConfig::RemoteMatchScreenKey = TEXT("RemoteMatchScreen");
+const FString UTSConfig::VideosFolderKey = TEXT("VideosFolder");
+const FString UTSConfig::SubtitleModeKey = TEXT("SubtitleMode");
+const FString UTSConfig::SubtitleLanguageKey = TEXT("SubtitleLanguage");
+const FString UTSConfig::StreamMyVideosKey = TEXT("StreamMyVideos");
 const FString UTSConfig::MaxStreamHeightKey = TEXT("MaxStreamHeight");
 const FString UTSConfig::MaxStreamFpsKey = TEXT("MaxStreamFps");
 const FString UTSConfig::ReceiveStreamsKey = TEXT("ReceiveStreams");
@@ -162,6 +166,19 @@ UTSConfig::UTSConfig()
 		LOCTEXT("PlayDistanceTip", "Screens further away than this pause on your PC (they stay in sync and resume when you come back)."), 150.f);
 	AddInt(Performance, MaxVideoHeightKey, LOCTEXT("MaxVideoHeight", "Video quality (lines)"),
 		LOCTEXT("MaxVideoHeightTip", "Highest video resolution to fetch, e.g. 480, 720 or 1080. Higher looks sharper on big screens and costs more CPU and bandwidth."), 720);
+
+	UConfigPropertySection* LocalVideos = AddSection(TEXT("LocalVideos"), LOCTEXT("LocalVideos", "Videos on this PC"));
+	AddString(LocalVideos, VideosFolderKey, LOCTEXT("VideosFolder", "Videos folder"),
+		LOCTEXT("VideosFolderTip", "Where your video files are (e.g. your Plex folder). When a screen plays a file that isn't at the same path on your PC, Telescreen looks for a file with the same name in this folder and its subfolders. Also set with the Videos tab's Change folder button."),
+		FString());
+	AddBool(LocalVideos, StreamMyVideosKey, LOCTEXT("StreamMyVideos", "Stream videos to players who can't play them"),
+		LOCTEXT("StreamMyVideosTip", "When a video plays on your PC but another player can't play it (they don't have the file, or the link fails for them), your PC streams it to them like a shared window. Off: they see the title only."), true);
+
+	UConfigPropertySection* SubtitleSection = AddSection(TEXT("Subtitles"), LOCTEXT("Subtitles", "Subtitles"));
+	AddInt(SubtitleSection, SubtitleModeKey, LOCTEXT("SubtitleMode", "Show subtitles"),
+		LOCTEXT("SubtitleModeTip", "0: off; 1: on the screen; 2: on your HUD (for the nearest screen you can hear); 3: both. Only on your PC. Also in each screen's Videos tab."), 0);
+	AddString(SubtitleSection, SubtitleLanguageKey, LOCTEXT("SubtitleLanguage", "Subtitle language"),
+		LOCTEXT("SubtitleLanguageTip", "Language picked first, as a code: en, de, fr, es, ja... Automatic captions are offered in the video's language and this one."), TEXT("en"));
 
 	UConfigPropertySection* Sound = AddSection(TEXT("Audio"), LOCTEXT("Audio", "Audio"));
 	AddFloat(Sound, VolumeKey, LOCTEXT("Volume", "Screen volume"),
@@ -325,6 +342,7 @@ namespace
 			{UTSConfig::PipWidthKey, {160.f, 1600.f}},
 			{UTSConfig::StreamKbpsKey, {300.f, 20000.f}},
 			{UTSConfig::StreamFpsKey, {10.f, 60.f}},
+			{UTSConfig::SubtitleModeKey, {0.f, 3.f}},
 			{UTSConfig::StreamHeightKey, {240.f, 2160.f}},
 			{UTSConfig::StreamEncoderKey, {0.f, 4.f}},
 			{UTSConfig::BrowserHeightKey, {360.f, 1440.f}},
@@ -421,6 +439,36 @@ void UTSConfig::SetBool(const UObject* WorldContext, const FString& Key, bool Va
 	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
 	UConfigManager* Manager = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
 	UConfigPropertyBool* Property = Manager ? Cast<UConfigPropertyBool>(FindProperty(WorldContext, Key)) : nullptr;
+	if (!Property)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Config: could not set '%s'; configuration not available"), *Key);
+		return;
+	}
+	Property->Value = Value;
+	Manager->MarkConfigurationDirty(MakeConfigId());
+}
+
+void UTSConfig::SetInt(const UObject* WorldContext, const FString& Key, int32 Value)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UConfigManager* Manager = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	UConfigPropertyInteger* Property = Manager ? Cast<UConfigPropertyInteger>(FindProperty(WorldContext, Key)) : nullptr;
+	if (!Property)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Config: could not set '%s'; configuration not available"), *Key);
+		return;
+	}
+	Property->Value = Value;
+	Manager->MarkConfigurationDirty(MakeConfigId());
+}
+
+void UTSConfig::SetString(const UObject* WorldContext, const FString& Key, const FString& Value)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UConfigManager* Manager = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	UConfigPropertyString* Property = Manager ? Cast<UConfigPropertyString>(FindProperty(WorldContext, Key)) : nullptr;
 	if (!Property)
 	{
 		UE_LOG(LogTelescreen, Warning, TEXT("Config: could not set '%s'; configuration not available"), *Key);

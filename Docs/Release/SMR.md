@@ -14,7 +14,7 @@ version.
 | Network activity transparency | the NETWORK ACTIVITY TRANSPARENCY section |
 | AI usage transparency | the AI USAGE TRANSPARENCY section (edit the `[bracketed]` line first) |
 | Logo | `Docs/Images/icon-1080.png` (1080x1080) |
-| Source URL | `https://github.com/benvrakas/Telescreen` only once the repository is public (it is private now); otherwise leave empty |
+| Source URL | `https://github.com/benvrakas/Telescreen` (public since 2026-10-22) |
 | Tags | `multiplayer`, `decoration`, `api` (it fetches from video sites) |
 | Compatibility | Stable: works (built against CL 513885). Experimental: unknown until tested |
 
@@ -53,7 +53,4 @@ Later versions: the next version after the newest on SMR (`1.0.1` for fixes, `1.
 - **Licences.** Each runtime folder carries its licence and a `SOURCE.txt` (FFmpeg LGPL v3 with its source link,
   CEF/Chromium credits, yt-dlp, QuickJS, miniz). The mod page's "Credits and licences" lists them.
 - **Multiplayer is untested** (your decision for 1.0, 2026-10-22); the mod page says so at the top.
-- **Screenshots.** The mod page's images link to `raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/`,
-  which only load once the repository is public (`gh repo edit benvrakas/Telescreen --visibility public
-  --accept-visibility-change-consequences`). Otherwise upload the four `Docs/Images/*.jpg` somewhere public and change
-  the links.
+- **Screenshots** load from the public repository (`Docs/Images/*.jpg`, checked 2026-10-22).

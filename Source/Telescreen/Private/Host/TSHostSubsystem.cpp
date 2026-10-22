@@ -530,6 +530,46 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		}
 		break;
 	}
+	case EMsg::SubtitleTracks:
+	{
+		const uint32 Session = R.U32();
+		const uint32 Count = R.U32();
+		TArray<FTSSubtitleTrack> Tracks;
+		for (uint32 I = 0; I < Count && R.bOk && I < 200; ++I)
+		{
+			FTSSubtitleTrack& Track = Tracks.AddDefaulted_GetRef();
+			Track.Id = R.U32();
+			Track.Language = R.Str();
+			Track.Label = R.Str();
+			Track.Kind = R.U8();
+		}
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
+		{
+			(*Listener)->OnHostSubtitleTracks(Tracks);
+		}
+		break;
+	}
+	case EMsg::SubtitleCues:
+	{
+		const uint32 Session = R.U32();
+		const uint32 Track = R.U32();
+		const bool bReplace = R.U8() != 0;
+		const uint32 Count = R.U32();
+		TArray<FTSSubtitleCue> Cues;
+		Cues.Reserve(FMath::Min<uint32>(Count, 5000));
+		for (uint32 I = 0; I < Count && R.bOk && I < 5000; ++I)
+		{
+			FTSSubtitleCue& Cue = Cues.AddDefaulted_GetRef();
+			Cue.StartMs = R.U32();
+			Cue.EndMs = R.U32();
+			Cue.Text = R.Str();
+		}
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
+		{
+			(*Listener)->OnHostSubtitleCues(Track, bReplace, MoveTemp(Cues));
+		}
+		break;
+	}
 	case EMsg::WindowList:
 	{
 		const uint32 Request = R.U32();
@@ -593,6 +633,7 @@ uint32 UTSHostSubsystem::OpenMedia(const FTSOpenMediaParams& Params, ITSHostSess
 	PutU8(Payload, Params.bPaused ? 1 : 0);
 	PutU32(Payload, Params.MaxWidth);
 	PutU32(Payload, Params.MaxHeight);
+	PutStr(Payload, Params.SubtitleLanguage);
 	Send(EMsg::OpenMedia, Payload);
 	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u opens %s at %.2f s (%s, max %ux%u)"), Session, *Params.Url, Params.StartSeconds,
 		Params.bPaused ? TEXT("paused") : TEXT("playing"), Params.MaxWidth, Params.MaxHeight);

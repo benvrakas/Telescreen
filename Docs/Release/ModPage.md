@@ -29,6 +29,9 @@ it with friends, please tell me how it went, with your logs (see "Reporting prob
   (Signs, Telescreen Set, 25 FICSIT Coupons). Rescale them with a scaling mod and the picture follows.
 - **Synced videos**: YouTube, Twitch, Vimeo and video files. A shared queue (everyone sees who added what), a seek
   bar, pause, next, 3D sound from the screen, letterbox / fill / stretch, screen names.
+- **Your own video files** (e.g. your Plex library): pick a file, and every player plays their own copy, found by
+  file name in their videos folder even when it's somewhere else on their PC. Players who don't have it, or whose PC
+  can't play a link, watch it streamed from a player who plays it.
 - **Shared built-in browser**: use it in a window with mouse and keyboard (web games that lock the mouse work).
   Everyone near the screen sees and hears it, streamed through the game's own connection: no ports to open.
 - **Share a window** from your PC (a video player, a music app, a game) with its own sound. Only that window is
@@ -144,6 +147,10 @@ the mod opens no ports and makes no direct connections between players.
   only a random token, never the address or password, is sent to the other players.
 - **Shared windows** are captured on your PC and sent only through the game's connection; no other service is
   contacted.
+- **Your video files** are read from your PC only. When another player can't play a video that plays on your PC, your
+  PC may stream it to them through the game's connection (setting "Stream videos to players who can't play them").
+  Your videos folder is indexed locally (file names only) and never sent anywhere; only the queued file's path or
+  name goes to the other players, as part of the queue.
 
 The helper program talks to the game through a local pipe and shared memory on your PC. The mod downloads no updates
 or other files, and has no telemetry or analytics.

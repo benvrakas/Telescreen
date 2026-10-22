@@ -52,6 +52,10 @@ public:
 	static const FString StreamEncoderKey;
 	static const FString BrowserHeightKey;
 	static const FString RemoteMatchScreenKey;
+	static const FString VideosFolderKey;
+	static const FString SubtitleModeKey;
+	static const FString SubtitleLanguageKey;
+	static const FString StreamMyVideosKey;
 	static const FString MaxStreamHeightKey;
 	static const FString MaxStreamFpsKey;
 	static const FString ReceiveStreamsKey;
@@ -93,6 +97,9 @@ public:
 
 	// Writes a boolean setting and saves it to disk. No-op if the configuration isn't available.
 	static void SetBool(const UObject* WorldContext, const FString& Key, bool Value);
+	// Writes a text setting and saves it to disk. No-op if the configuration isn't available.
+	static void SetString(const UObject* WorldContext, const FString& Key, const FString& Value);
+	static void SetInt(const UObject* WorldContext, const FString& Key, int32 Value);
 	static int32 GetInt(const UObject* WorldContext, const FString& Key, int32 Fallback);
 	static FString GetString(const UObject* WorldContext, const FString& Key, const FString& Fallback);
 

@@ -21,6 +21,7 @@
 #include "EngineUtils.h"
 #include "FGHUD.h"
 #include "GameFramework/PlayerController.h"
+#include "Screen/TSLocalVideos.h"
 #include "Screen/TSRemoteConnections.h"
 #include "Screen/TSScreenPlayer.h"
 #include "Components/EditableTextBox.h"
@@ -168,6 +169,59 @@ void UTSScreenPanel::OnVolumeChanged(float Value)
 	{
 		Player->RefreshVolume();
 	}
+}
+
+void UTSScreenPanel::RebuildSubtitles()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSScreenPlayer* Player = Screen ? Screen->GetPlayer() : nullptr;
+	const int32 Mode = int32(UTSScreenPlayer::GetSubtitleMode(this));
+	for (int32 I = 0; I < SubtitleModeButtons.Num(); ++I)
+	{
+		TSVanillaUI::SetTabActive(SubtitleModeButtons[I], I == Mode);
+	}
+	// Rebuilt only when the tracks or the selection change.
+	FString Signature = FString::Printf(TEXT("%d|%u|"), Mode, Player ? Player->GetSelectedSubtitleTrack() : 0);
+	if (Player)
+	{
+		for (const FTSSubtitleTrack& Track : Player->GetSubtitleTracks())
+		{
+			Signature += FString::Printf(TEXT("%u:%s;"), Track.Id, *Track.Label);
+		}
+	}
+	if (Signature == ShownSubtitles)
+	{
+		return;
+	}
+	ShownSubtitles = Signature;
+	SubtitleTracksBox->ClearChildren();
+	if (!Player || Player->GetSubtitleTracks().Num() == 0)
+	{
+		SubtitleTracksBox->AddChildToWrapBox(MakeText(Player && Player->IsReceivingStream()
+			? LOCTEXT("SubtitlesStreamed", "No subtitles for a video streamed from another player.")
+			: LOCTEXT("SubtitlesNone", "This video has no subtitles (files: text tracks inside it, or a .srt / .vtt with the same name next to it)."), 12, Muted));
+		return;
+	}
+	if (Mode == 0)
+	{
+		SubtitleTracksBox->AddChildToWrapBox(MakeText(LOCTEXT("SubtitlesPickMode", "Pick where to show them; then a track:"), 12, Muted));
+	}
+	for (const FTSSubtitleTrack& Track : Player->GetSubtitleTracks())
+	{
+		const FText Kind = Track.Kind == 1 ? LOCTEXT("TrackAuto", " (automatic)") : Track.Kind == 3 ? LOCTEXT("TrackFile", " (file)") : FText::GetEmpty();
+		UWidget* Button = MakeButton(FText::Format(LOCTEXT("TrackButton", "{0}{1}"), FText::FromString(Track.Label.Left(40)), Kind),
+			ETSPanelAction::SubtitleTrack, int32(Track.Id));
+		TSVanillaUI::SetTabActive(Button, Track.Id == Player->GetSelectedSubtitleTrack());
+		SubtitleTracksBox->AddChildToWrapBox(Button);
+	}
+}
+
+void UTSScreenPanel::RefreshVideosFolder()
+{
+	const FString Folder = TSLocalVideos::GetFolder(this);
+	VideosFolderText->SetText(Folder.IsEmpty()
+		? LOCTEXT("NoVideosFolder", "Videos folder: not set. Files others add are found by name in it.")
+		: FText::Format(LOCTEXT("VideosFolderIs", "Videos folder: {0}"), FText::FromString(Folder)));
 }
 
 void UTSScreenPanel::OnScreenVolumeBegin()
@@ -378,6 +432,20 @@ void UTSScreenPanel::BuildTree()
 		AddToHBox(Seek, SeekDurationText);
 		SeekRow = Seek;
 		AddRow(Page, Seek, 8.f);
+		UHorizontalBox* SubtitleRow = MakeHBox();
+		AddToHBox(SubtitleRow, MakeText(LOCTEXT("SubtitlesLabel", "Subtitles"), 13, Muted));
+		const FText ModeNames[] = {LOCTEXT("SubtitlesOff", "Off"), LOCTEXT("SubtitlesScreen", "On screen"), LOCTEXT("SubtitlesHud", "On HUD"),
+			LOCTEXT("SubtitlesBoth", "Both")};
+		for (int32 I = 0; I < UE_ARRAY_COUNT(ModeNames); ++I)
+		{
+			UWidget* Button = MakeButton(ModeNames[I], ETSPanelAction::SubtitleMode, I);
+			SubtitleModeButtons.Add(Button);
+			AddToHBox(SubtitleRow, Button);
+		}
+		AddRow(Page, SubtitleRow, 8.f);
+		SubtitleTracksBox = WidgetTree->ConstructWidget<UWrapBox>();
+		SubtitleTracksBox->SetInnerSlotPadding(FVector2D(6.f, 4.f));
+		AddRow(Page, SubtitleTracksBox, 4.f);
 		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
 		AddRow(Page, Heading(LOCTEXT("AddHeader", "Add a video")), 10.f);
 		UHorizontalBox* AddBox = MakeHBox();
@@ -386,6 +454,15 @@ void UTSScreenPanel::BuildTree()
 		AddToHBox(AddBox, MakeButton(LOCTEXT("PlayNow", "Play now"), ETSPanelAction::PlayNow, INDEX_NONE, true));
 		AddToHBox(AddBox, MakeButton(LOCTEXT("AddToQueue", "Add to queue"), ETSPanelAction::AddToQueue));
 		AddRow(Page, AddBox);
+		// Files: picked from this PC; others play their own copy (same path, or same name in their videos folder),
+		// or watch it streamed.
+		UHorizontalBox* FolderRow = MakeHBox();
+		AddToHBox(FolderRow, MakeButton(LOCTEXT("PickFile", "Pick a file"), ETSPanelAction::PickFile));
+		VideosFolderText = MakeText(FText::GetEmpty(), 12, Muted);
+		AddToHBox(FolderRow, VideosFolderText, true);
+		AddToHBox(FolderRow, MakeButton(LOCTEXT("ChangeVideosFolder", "Change folder"), ETSPanelAction::ChangeVideosFolder));
+		AddToHBox(FolderRow, MakeButton(LOCTEXT("OpenVideosFolder", "Open folder"), ETSPanelAction::OpenVideosFolder));
+		AddRow(Page, FolderRow, 6.f);
 		LoadAnywayButton = MakeButton(LOCTEXT("LoadAnyway", "Load it anyway on this PC"), ETSPanelAction::LoadAnyway);
 		Show(LoadAnywayButton, false);
 		AddRow(Page, LoadAnywayButton, 4.f);
@@ -561,6 +638,7 @@ void UTSScreenPanel::NativeConstruct()
 	}
 	NoticeHandle = UTSRemoteCallObject::OnNotice.AddWeakLambda(this, [this](const FText& Text) { SetNotice(Text, true); });
 	FitToViewport();
+	RefreshVideosFolder();
 	// Masking again once the input box exists (its construction may reset it).
 	TSVanillaUI::SetInputPassword(RemotePasswordBox, true);
 	// Open on the tab for what the screen does now.
@@ -581,6 +659,7 @@ void UTSScreenPanel::NativeDestruct()
 		if (UTSScreenPlayer* Player = Screen->GetPlayer())
 		{
 			Player->OnBrowserStateChanged.Remove(BrowserStateHandle);
+			Player->OnSubtitlesChanged.Remove(SubtitlesHandle);
 		}
 	}
 	UTSRemoteCallObject::OnNotice.Remove(NoticeHandle);
@@ -777,6 +856,11 @@ void UTSScreenPanel::RefreshSharing()
 	{
 		BrowserStateHandle = Player->OnBrowserStateChanged.AddUObject(this, &UTSScreenPanel::RefreshSharing);
 	}
+	if (Player && !SubtitlesHandle.IsValid())
+	{
+		SubtitlesHandle = Player->OnSubtitlesChanged.AddUObject(this, &UTSScreenPanel::RebuildSubtitles);
+	}
+	RebuildSubtitles();
 	const bool bBrowserMode = Screen->GetMode() == ETSScreenMode::Browser;
 	const bool bWindowMode = Screen->GetMode() == ETSScreenMode::Window;
 	const bool bRemoteMode = Screen->GetMode() == ETSScreenMode::RemoteDesktop;
@@ -1257,7 +1341,8 @@ void UTSScreenPanel::AddLink(bool bPlayNow)
 		Item.Title = FPaths::GetCleanFilename(Url);
 		RCO->Server_Enqueue(Screen, Item, bPlayNow);
 		TSVanillaUI::SetInputText(LinkBox, FText::GetEmpty());
-		SetNotice(FText::Format(LOCTEXT("AddedFile", "Added {0}. Other players need the same file at the same path."), FText::FromString(Item.Title)));
+		SetNotice(FText::Format(LOCTEXT("AddedFile", "Added {0}. Players who have it (same path, or same file name in their videos folder) play their own copy; others watch it streamed from a player who has it."),
+			FText::FromString(Item.Title)));
 		return;
 	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
@@ -1328,6 +1413,72 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		return;
 	case ETSPanelAction::WindowRefresh:
 		RequestWindowList();
+		return;
+	case ETSPanelAction::SubtitleMode:
+	{
+		UTSScreenPlayer::SetSubtitleMode(this, UTSScreenPlayer::ESubtitleMode(FMath::Clamp(Index, 0, 3)));
+		for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+		{
+			if (UTSScreenPlayer* Each = It->GetPlayer())
+			{
+				Each->RefreshSubtitles();
+			}
+		}
+		RebuildSubtitles();
+		return;
+	}
+	case ETSPanelAction::SubtitleTrack:
+		if (UTSScreenPlayer* Player = Screen ? Screen->GetPlayer() : nullptr)
+		{
+			if (UTSScreenPlayer::GetSubtitleMode(this) == UTSScreenPlayer::ESubtitleMode::Off)
+			{
+				UTSScreenPlayer::SetSubtitleMode(this, UTSScreenPlayer::ESubtitleMode::Screen);
+			}
+			Player->SelectSubtitleTrack(Player->GetSelectedSubtitleTrack() == uint32(Index) ? 0 : uint32(Index));
+			Player->RefreshSubtitles();
+		}
+		RebuildSubtitles();
+		return;
+	case ETSPanelAction::PickFile:
+	{
+		TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+		TSLocalVideos::PickFile(TSLocalVideos::GetFolder(this), [WeakThis](const FString& Path)
+		{
+			if (UTSScreenPanel* Panel = WeakThis.Get(); Panel && !Path.IsEmpty())
+			{
+				TSVanillaUI::SetInputText(Panel->LinkBox, FText::FromString(Path));
+				Panel->SetNotice(LOCTEXT("PickedFile", "Press Play now or Add to queue."));
+			}
+		});
+		return;
+	}
+	case ETSPanelAction::ChangeVideosFolder:
+	{
+		TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+		TSLocalVideos::PickFolder(TSLocalVideos::GetFolder(this), [WeakThis](const FString& Path)
+		{
+			if (UTSScreenPanel* Panel = WeakThis.Get(); Panel && !Path.IsEmpty())
+			{
+				TSLocalVideos::SetFolder(Panel, Path);
+				Panel->RefreshVideosFolder();
+				Panel->SetNotice(LOCTEXT("FolderChanged", "Videos folder changed. Files are matched by name in it and its subfolders."));
+				if (ATSBuildableScreen* Screen = Panel->GetScreen(); Screen && Screen->GetPlayer())
+				{
+					Screen->GetPlayer()->RefreshMedia();
+				}
+			}
+		});
+		return;
+	}
+	case ETSPanelAction::OpenVideosFolder:
+		if (TSLocalVideos::GetFolder(this).IsEmpty())
+		{
+			SetNotice(LOCTEXT("NoFolderToOpen", "Choose a videos folder first (Change folder)."), true);
+		}
+		else
+		{
+			TSLocalVideos::OpenFolder(this);
+		}
 		return;
 	case ETSPanelAction::OpenWindow:
 		Close();

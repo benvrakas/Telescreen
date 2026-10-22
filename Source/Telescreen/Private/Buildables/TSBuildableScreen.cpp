@@ -59,6 +59,8 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mViewerStates);
 	DOREPLIFETIME(ATSBuildableScreen, mGrants);
 	DOREPLIFETIME(ATSBuildableScreen, mStreamLimits);
+	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamer);
+	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamerName);
 }
 
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
@@ -315,6 +317,119 @@ void ATSBuildableScreen::OnRep_Control()
 	OnScreenChanged.Broadcast();
 }
 
+bool ATSBuildableScreen::IsLocalMediaStreamer() const
+{
+	const APlayerController* Local = UGameplayStatics::GetPlayerController(this, 0);
+	return mMode == ETSScreenMode::SyncedMedia && mMediaStreamer && Local && Local->PlayerState == mMediaStreamer;
+}
+
+APlayerState* ATSBuildableScreen::GetStreamSender() const
+{
+	return mMode == ETSScreenMode::SyncedMedia ? mMediaStreamer.Get() : mController.Get();
+}
+
+void ATSBuildableScreen::Server_ReportMedia(APlayerState* Player, const FString& Url, bool bHave, bool bCanStream)
+{
+	const FTSMediaItem* Current = mMediaState.GetCurrent();
+	if (!HasAuthority() || !Player || mMode != ETSScreenMode::SyncedMedia || !Current || Current->Url != Url)
+	{
+		return;
+	}
+	if (mMediaReportsUrl != Url)
+	{
+		ResetMediaReports(Url);
+	}
+	FMediaReport& Report = mMediaReports.FindOrAdd(Player);
+	Report.bHave = bHave;
+	Report.bCanStream = bCanStream;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s the current video%s"), *GetName(), *Player->GetPlayerName(), bHave ? TEXT("plays") : TEXT("can't play"),
+		bHave && !bCanStream ? TEXT(" (won't stream it)") : TEXT(""));
+	ChooseMediaStreamer();
+}
+
+void ATSBuildableScreen::ResetMediaReports(const FString& Url)
+{
+	mMediaReports.Reset();
+	mMediaReportsUrl = Url;
+	bool bChanged = false;
+	if (mMediaStreamer || !mMediaStreamerName.IsEmpty())
+	{
+		mMediaStreamer = nullptr;
+		mMediaStreamerName.Reset();
+		bChanged = true;
+	}
+	if (mMode == ETSScreenMode::SyncedMedia && mWatchers.Num() > 0)
+	{
+		mWatchers.Reset();
+		SyncViewers();
+		bChanged = true;
+	}
+	if (bChanged)
+	{
+		FlushNetDormancy();
+		ForceNetUpdate();
+		OnScreenChanged.Broadcast();
+	}
+}
+
+void ATSBuildableScreen::ChooseMediaStreamer()
+{
+	for (auto It = mMediaReports.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	auto CanStream = [this](const APlayerState* Player)
+	{
+		const FMediaReport* Report = Player ? mMediaReports.Find(Player) : nullptr;
+		return Report && Report->bHave && Report->bCanStream;
+	};
+	// Keep the current one while it can; otherwise prefer the player who added the video.
+	APlayerState* Chosen = CanStream(mMediaStreamer) ? mMediaStreamer.Get() : nullptr;
+	const FTSMediaItem* Current = mMediaState.GetCurrent();
+	for (const auto& Pair : mMediaReports)
+	{
+		APlayerState* Player = Pair.Key.Get();
+		if (Chosen || !CanStream(Player))
+		{
+			continue;
+		}
+		if (Current && Player->GetPlayerName() == Current->AddedBy)
+		{
+			Chosen = Player;
+		}
+	}
+	for (const auto& Pair : mMediaReports)
+	{
+		if (!Chosen && CanStream(Pair.Key.Get()))
+		{
+			Chosen = Pair.Key.Get();
+		}
+	}
+	if (Chosen == mMediaStreamer)
+	{
+		return;
+	}
+	mMediaStreamer = Chosen;
+	mMediaStreamerName = Chosen ? Chosen->GetPlayerName() : FString();
+	UE_LOG(LogTelescreen, Log, TEXT("%s: media streamer %s"), *GetName(), Chosen ? *mMediaStreamerName : TEXT("none"));
+	// A viewer can't watch itself.
+	if (Chosen)
+	{
+		mWatchers.RemoveAll([Chosen](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid() || P->PlayerState == Chosen; });
+	}
+	SyncViewers();
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+	if (Chosen && mWatchers.Num() > 0)
+	{
+		UTSRemoteCallObject::SendKeyframeRequest(this);
+	}
+}
+
 bool ATSBuildableScreen::IsLocallyControlled() const
 {
 	const APlayerController* Local = UGameplayStatics::GetPlayerController(this, 0);
@@ -336,6 +451,10 @@ void ATSBuildableScreen::Server_TakeControl(APlayerState* Requester, ETSScreenMo
 	SyncViewers();
 	mCurtain = false;
 	mGrants.Reset();
+	mMediaStreamer = nullptr;
+	mMediaStreamerName.Reset();
+	mMediaReports.Reset();
+	mMediaReportsUrl.Reset();
 	RefreshStreamLimits();
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s took control (mode %d, %s)%s"), *GetName(), *mControllerName, int32(Mode), *mSourceUrl,
 		Previous.IsEmpty() || Previous == mControllerName ? TEXT("") : *FString::Printf(TEXT(" from %s"), *Previous));
@@ -366,11 +485,11 @@ void ATSBuildableScreen::Server_ReleaseControl(const TCHAR* Reason)
 
 void ATSBuildableScreen::Server_SetWatcher(APlayerController* Watcher, bool bWatching)
 {
-	if (!HasAuthority() || !Watcher || mMode == ETSScreenMode::SyncedMedia)
+	if (!HasAuthority() || !Watcher || (mMode == ETSScreenMode::SyncedMedia && !mMediaStreamer))
 	{
 		return;
 	}
-	const bool bIsController = Watcher->PlayerState == mController;
+	const bool bIsController = Watcher->PlayerState == GetStreamSender();
 	bool bChanged = false;
 	if (bWatching && !bIsController && !mWatchers.Contains(Watcher))
 	{
@@ -564,7 +683,11 @@ void ATSBuildableScreen::CheckController()
 	{
 		Server_ReleaseControl(TEXT("controller left"));
 	}
-	if (mMode != ETSScreenMode::SyncedMedia && RefreshStreamLimits())
+	if (mMode == ETSScreenMode::SyncedMedia && (mMediaStreamer ? !IsValid(mMediaStreamer) : false))
+	{
+		ChooseMediaStreamer();
+	}
+	if ((mMode != ETSScreenMode::SyncedMedia || mMediaStreamer) && RefreshStreamLimits())
 	{
 		FlushNetDormancy();
 		ForceNetUpdate();
@@ -582,6 +705,13 @@ void ATSBuildableScreen::CheckController()
 void ATSBuildableScreen::CommitMediaState()
 {
 	++mMediaState.Revision;
+	// A different video: every player reports again, and the stream (if any) starts over.
+	const FTSMediaItem* Current = mMediaState.GetCurrent();
+	const FString CurrentUrl = Current ? Current->Url : FString();
+	if (CurrentUrl != mMediaReportsUrl)
+	{
+		ResetMediaReports(CurrentUrl);
+	}
 	FlushNetDormancy();
 	ForceNetUpdate();
 	ScheduleAdvance();

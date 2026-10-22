@@ -39,9 +39,38 @@ public:
 	virtual void OnHostState(TSHostProtocol::ESessionState State, double Position, double Duration, const FString& Message) override;
 	virtual void OnHostLost() override;
 	virtual void OnHostBrowserState(const FTSBrowserState& State) override;
+	virtual void OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks) override;
+	virtual void OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues) override;
+
+	// Subtitles, per player (see Docs/Architecture.md, Subtitles): where they show, the tracks of the playing video and
+	// the selected one (0: none), and the line(s) showing now.
+	enum class ESubtitleMode : uint8
+	{
+		Off,
+		Screen,
+		Hud,
+		Both,
+	};
+	static ESubtitleMode GetSubtitleMode(const UObject* Context);
+	static void SetSubtitleMode(const UObject* Context, ESubtitleMode Mode);
+	const TArray<FTSSubtitleTrack>& GetSubtitleTracks() const { return SubtitleTracks; }
+	uint32 GetSelectedSubtitleTrack() const { return SelectedSubtitleTrack; }
+	void SelectSubtitleTrack(uint32 Id);
+	const FString& GetSubtitleText() const { return SubtitleText; }
+	// After the mode changed: picks a track if none is selected, and redraws.
+	void RefreshSubtitles();
+	FTSOnBrowserStateChanged OnSubtitlesChanged;
 
 	// What this client shows instead of the video right now, or empty while the video plays.
 	FText GetLocalStatus() const { return bShowingVideo ? FText::GetEmpty() : StatusLine2; }
+
+	// Looks for the current video on this PC again (after the videos folder changed).
+	void RefreshMedia()
+	{
+		FailedKey.Reset();
+		ReportedKey.Reset();
+		Reconcile();
+	}
 
 	// Applies a volume change (the panel's My volume slider) right away.
 	void RefreshVolume() { UpdateAudio(); }
@@ -149,6 +178,14 @@ private:
 	FString WantedKey;
 	FString UnblockedKey;
 	FText BlockedReason;
+	// Synced media this PC can't play: reported to the server (once per item), and watched as a stream when another
+	// player plays it. FailedKey: the item whose session failed here.
+	FString ReportedKey;
+	bool bReportedHave = false;
+	FString FailedKey;
+	FString FailedMessage;
+	void ReportMedia(const FString& Key, const FString& Url, bool bHave);
+	void ReconcileMediaStream(ATSBuildableScreen* Screen, const FTSMediaItem& Item, const FString& Key);
 
 	FTSVideoReader Video;
 	TArray<uint8> FrameBuffer;
@@ -175,6 +212,22 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasRenderTarget2D> StatusTarget;
+
+	// The picture with the current subtitle drawn over it, used as the screen's texture while a line shows on screen.
+	UPROPERTY(Transient)
+	TObjectPtr<UCanvasRenderTarget2D> SubtitleTarget;
+	bool bScreenShowsSubtitles = false;
+	TArray<FTSSubtitleTrack> SubtitleTracks;
+	uint32 SelectedSubtitleTrack = 0;
+	TArray<FTSSubtitleCue> SubtitleCues;
+	FString SubtitleText;
+	double NextSubtitleUpdate = 0.0;
+	uint32 PickSubtitleTrack() const;
+	void ClearSubtitles();
+	void UpdateSubtitleText();
+	void ApplyScreenTexture();
+	UFUNCTION()
+	void DrawSubtitled(UCanvas* Canvas, int32 Width, int32 Height);
 	FText StatusLine1, StatusLine2;
 
 	TSHostProtocol::ESessionState HostState = TSHostProtocol::ESessionState::Resolving;

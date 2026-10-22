@@ -74,6 +74,8 @@ public class Telescreen : ModuleRules
 		{
 			PublicSystemLibraries.Add("bcrypt.lib");
 			PublicSystemLibraries.Add("crypt32.lib");
+			PublicSystemLibraries.Add("ole32.lib");
+			PublicSystemLibraries.Add("shell32.lib");
 		}
 	}
 }

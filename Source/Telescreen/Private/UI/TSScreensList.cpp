@@ -21,6 +21,9 @@
 #include "UI/TSScreenWindow.h"
 #include "UI/TSVanillaUI.h"
 #include "UI/TSStreamIndicator.h"
+#include "UI/TSSubtitleOverlay.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Screen/TSScreenPlayer.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -262,6 +265,12 @@ void UTSClientSubsystem::Tick(float DeltaTime)
 	{
 		UTSScreensList::Toggle(this);
 	}
+	NextSubtitleUpdate -= DeltaTime;
+	if (NextSubtitleUpdate <= 0.f)
+	{
+		NextSubtitleUpdate = 0.1f;
+		UpdateHudSubtitles(Controller);
+	}
 	const FKey CurtainKey(*UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")));
 	const bool bCurtainPressed = CurtainKey.IsValid() && Controller->WasInputKeyJustPressed(CurtainKey);
 	NextIndicatorUpdate -= DeltaTime;
@@ -294,8 +303,41 @@ void UTSClientSubsystem::Tick(float DeltaTime)
 	UTSStreamIndicator::Update(this, Mine ? Mine : Granted, Mine == nullptr && Granted != nullptr);
 }
 
+void UTSClientSubsystem::UpdateHudSubtitles(const APlayerController* Controller)
+{
+	const UTSScreenPlayer::ESubtitleMode Mode = UTSScreenPlayer::GetSubtitleMode(this);
+	FString Text;
+	if ((Mode == UTSScreenPlayer::ESubtitleMode::Hud || Mode == UTSScreenPlayer::ESubtitleMode::Both) && Controller->PlayerCameraManager)
+	{
+		const FVector Camera = Controller->PlayerCameraManager->GetCameraLocation();
+		const double Range = UTSConfig::GetFloat(this, UTSConfig::PlayDistanceKey, 150.f) * 100.0;
+		double Best = Range;
+		for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+		{
+			const UTSScreenPlayer* Player = It->GetPlayer();
+			if (!Player || Player->GetSubtitleText().IsEmpty())
+			{
+				continue;
+			}
+			if (Player->IsPinned())
+			{
+				Text = Player->GetSubtitleText();
+				break;
+			}
+			const double Distance = FVector::Dist(Camera, It->GetScreenCenter());
+			if (Distance <= Best)
+			{
+				Best = Distance;
+				Text = Player->GetSubtitleText();
+			}
+		}
+	}
+	UTSSubtitleOverlay::Update(this, Text);
+}
+
 void UTSClientSubsystem::Deinitialize()
 {
+	UTSSubtitleOverlay::Update(this, FString());
 	UTSStreamIndicator::Update(this, nullptr);
 	Super::Deinitialize();
 }

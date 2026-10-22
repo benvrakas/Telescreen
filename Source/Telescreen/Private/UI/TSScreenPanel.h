@@ -12,6 +12,7 @@ class UEditableTextBox;
 class UImage;
 class UTexture;
 class USizeBox;
+class UWrapBox;
 class USlider;
 class UTextBlock;
 class UVerticalBox;
@@ -62,6 +63,11 @@ enum class ETSPanelAction : uint8
 	Tab,
 	ConfirmAccept,
 	ConfirmCancel,
+	PickFile,
+	SubtitleMode,
+	SubtitleTrack,
+	ChangeVideosFolder,
+	OpenVideosFolder,
 };
 
 // Routes one button's click to its panel with the button's action and index (queue row, window row or tab).
@@ -257,6 +263,18 @@ private:
 	bool bScreenVolumeDragging = false;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LinkBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> VideosFolderText;
+
+	// Subtitles (Videos page): where they show, and the playing video's tracks.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> SubtitleModeButtons;
+	UPROPERTY(Transient)
+	TObjectPtr<UWrapBox> SubtitleTracksBox;
+	FString ShownSubtitles;
+	FDelegateHandle SubtitlesHandle;
+	void RebuildSubtitles();
+	void RefreshVideosFolder();
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LoadAnywayButton;
 	UPROPERTY(Transient)

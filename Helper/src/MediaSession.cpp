@@ -1,5 +1,7 @@
 #include "MediaSession.h"
 #include "YtDlp.h"
+#include "Taps.h"
+#include "Subtitles.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +17,7 @@ extern "C"
 }
 
 using TSHostProtocol::ESessionState;
+using TSHostProtocol::ECommand;
 
 namespace
 {
@@ -79,12 +82,19 @@ FMediaSession::FMediaSession(const FOpenParams& InParams, const std::wstring& In
 	TargetPaused = Params.Paused;
 	TargetReceivedAt = NowSeconds();
 	TargetValid = true;
+	FrameTaps::SetRefresh(Params.SessionId, [this]
+	{
+		std::lock_guard<std::mutex> Lock(TapMutex);
+		if (!TapFrame.empty()) FrameTaps::Publish(Params.SessionId, TapFrame.data(), TapWidth, TapHeight);
+	});
 	SessionThread = std::thread([this] { Run(); });
 }
 
 FMediaSession::~FMediaSession()
 {
+	FrameTaps::ClearRefresh(Params.SessionId);
 	Stopping = true;
+	if (SubtitleLoader.joinable()) SubtitleLoader.join();
 	for (FPacketQueue* Queue : {VideoPackets.get(), AudioPackets.get()}) Queue->Cv.notify_all();
 	FrameCv.notify_all();
 	if (SessionThread.joinable()) SessionThread.join();
@@ -139,6 +149,7 @@ bool FMediaSession::Open(std::string& Error)
 			Error = Resolved.Error;
 			return false;
 		}
+		FindSubtitleTracks(&Resolved);
 		Urls = Resolved.StreamUrls;
 		Title = Resolved.Title;
 		Duration = Resolved.Duration;
@@ -224,6 +235,10 @@ bool FMediaSession::Open(std::string& Error)
 		Error = "no playable video or audio stream";
 		return false;
 	}
+	if (Params.IsLocalFile)
+	{
+		FindSubtitleTracks(nullptr);
+	}
 
 	if (AudioCodec)
 	{
@@ -273,6 +288,7 @@ void FMediaSession::Close()
 	Inputs.clear();
 	avcodec_free_context(&VideoCodec);
 	avcodec_free_context(&AudioCodec);
+	avcodec_free_context(&SubtitleCodec);
 	sws_freeContext(Sws);
 	Sws = nullptr;
 	swr_free(&Swr);
@@ -290,6 +306,10 @@ void FMediaSession::RequestSeek(double Target)
 	}
 	FrameCv.notify_all();
 	if (AudioWriter) AudioWriter->DiscardQueued();
+	{
+		std::lock_guard<std::mutex> TapLock(TapMutex);
+		TapAudio.clear();
+	}
 	{
 		std::lock_guard<std::mutex> Lock(AudioMapMutex);
 		AudioMap.clear();
@@ -345,6 +365,12 @@ void FMediaSession::DemuxLoop(FInput* Input)
 				Queue->Cv.notify_all();
 			}
 			Eof = true;
+			continue;
+		}
+		if (Packet->stream_index == SelectedSubtitleStream.load() && !Inputs.empty() && Input == Inputs.front().get())
+		{
+			DecodeSubtitlePacket(Input, Packet);
+			av_packet_unref(Packet);
 			continue;
 		}
 		FPacketQueue* Queue = Packet->stream_index == Input->VideoStream ? VideoPackets.get()
@@ -560,10 +586,214 @@ void FMediaSession::AudioDecodeLoop()
 				AudioMap.push_back({AudioWriter->GetWriteFrames(), Pts});
 				while (AudioMap.size() > 256) AudioMap.pop_front();
 			}
+			{
+				std::lock_guard<std::mutex> Lock(TapMutex);
+				if (TapAudio.empty()) TapAudioStart = AudioWriter->GetWriteFrames();
+				TapAudio.insert(TapAudio.end(), Samples, Samples + size_t(Count) * OutChannels);
+				// At most 2 s waiting (the game stopped reading): drop the oldest.
+				const size_t Max = size_t(OutSampleRate) * 2 * OutChannels;
+				if (TapAudio.size() > Max)
+				{
+					const size_t Drop = TapAudio.size() - Max;
+					TapAudio.erase(TapAudio.begin(), TapAudio.begin() + Drop);
+					TapAudioStart += int64_t(Drop / OutChannels);
+				}
+			}
 			AudioWriter->Write(Samples, uint32_t(Count));
 		}
 	}
 	av_frame_free(&Frame);
+}
+
+void FMediaSession::FindSubtitleTracks(const FResolvedMedia* Resolved)
+{
+	std::vector<FSubtitleTrack> Tracks;
+	if (Resolved)
+	{
+		Subtitles::AddSiteTracks(Resolved->SubtitlesJson, Resolved->AutomaticJson, Resolved->Language, Params.SubtitleLanguage, Tracks);
+	}
+	else if (!Inputs.empty())
+	{
+		AVFormatContext* Format = Inputs.front()->Format;
+		for (unsigned I = 0; I < Format->nb_streams; ++I)
+		{
+			const AVStream* Stream = Format->streams[I];
+			const AVCodecDescriptor* Descriptor = avcodec_descriptor_get(Stream->codecpar->codec_id);
+			if (Stream->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE || !Descriptor || !(Descriptor->props & AV_CODEC_PROP_TEXT_SUB)) continue;
+			const AVDictionaryEntry* Language = av_dict_get(Stream->metadata, "language", nullptr, 0);
+			const AVDictionaryEntry* Name = av_dict_get(Stream->metadata, "title", nullptr, 0);
+			FSubtitleTrack Track;
+			Track.Id = uint32_t(Tracks.size() + 1);
+			Track.Kind = ESubtitleKind::Embedded;
+			Track.Stream = int(I);
+			Track.Language = Language ? Language->value : "";
+			Track.Label = Name ? Name->value : (Language ? Language->value : "Track " + std::to_string(Tracks.size() + 1));
+			Tracks.push_back(std::move(Track));
+		}
+		Subtitles::AddFileTracks(Params.Url, Tracks);
+	}
+	for (size_t I = 0; I < Tracks.size(); ++I) Tracks[I].Id = uint32_t(I + 1);
+	LOG_INFO("session %u: %zu subtitle track(s)", Params.SessionId, Tracks.size());
+	{
+		std::lock_guard<std::mutex> Lock(SubtitleMutex);
+		SubtitleTracks = Tracks;
+	}
+	if (Events.OnSubtitleTracks) Events.OnSubtitleTracks(Params.SessionId, Tracks);
+}
+
+void FMediaSession::HandleCommand(ECommand Command, FPayloadReader& Reader)
+{
+	if (Command != ECommand::SelectSubtitles) return;
+	const uint32_t Id = Reader.U32();
+	if (!Reader.Ok) return;
+	FSubtitleTrack Track;
+	bool bFound = false;
+	{
+		std::lock_guard<std::mutex> Lock(SubtitleMutex);
+		for (const FSubtitleTrack& Each : SubtitleTracks)
+		{
+			if (Each.Id == Id) { Track = Each; bFound = true; }
+		}
+	}
+	const uint32_t Request = ++SubtitleRequest;
+	SelectedSubtitleTrack = bFound ? Id : 0;
+	SelectedSubtitleStream = bFound && Track.Kind == ESubtitleKind::Embedded ? Track.Stream : -1;
+	if (Events.OnSubtitleCues) Events.OnSubtitleCues(Params.SessionId, bFound ? Id : 0, true, {});
+	if (!bFound)
+	{
+		LOG_INFO("session %u: subtitles off", Params.SessionId);
+		return;
+	}
+	if (SubtitleLoader.joinable()) SubtitleLoader.join();
+	SubtitleLoader = std::thread([this, Track, Request]
+	{
+		std::vector<FSubtitleCue> Cues;
+		std::string Error;
+		const double Start = NowSeconds();
+		// Embedded: the playing demuxer has read past what already played, so the whole track is read from the file
+		// too; the demuxer's own lines cover the time until then.
+		const bool bLoaded = Track.Kind == ESubtitleKind::Embedded ? ReadEmbeddedSubtitles(Track.Stream, Cues, Error) : Subtitles::Load(Track, Cues, Error);
+		if (!bLoaded)
+		{
+			LOG_WARN("session %u: subtitles %s: %s", Params.SessionId, Track.Label.c_str(), Error.c_str());
+			return;
+		}
+		LOG_INFO("session %u: subtitles %s (%s): %zu cues in %.1f s", Params.SessionId, Track.Label.c_str(), Track.Format.c_str(), Cues.size(), NowSeconds() - Start);
+		if (Stopping || Request != SubtitleRequest.load()) return;
+		if (Events.OnSubtitleCues) Events.OnSubtitleCues(Params.SessionId, Track.Id, true, Cues);
+	});
+}
+
+bool FMediaSession::ReadEmbeddedSubtitles(int StreamIndex, std::vector<FSubtitleCue>& Cues, std::string& Error)
+{
+	AVFormatContext* Format = avformat_alloc_context();
+	Format->interrupt_callback.callback = InterruptCallback;
+	Format->interrupt_callback.opaque = &Stopping;
+	if (avformat_open_input(&Format, Params.Url.c_str(), nullptr, nullptr) < 0)
+	{
+		Error = "couldn't open the file again";
+		return false;
+	}
+	bool bOk = false;
+	AVCodecContext* Codec = nullptr;
+	if (StreamIndex >= 0 && unsigned(StreamIndex) < Format->nb_streams)
+	{
+		for (unsigned I = 0; I < Format->nb_streams; ++I) Format->streams[I]->discard = int(I) == StreamIndex ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+		AVStream* Stream = Format->streams[StreamIndex];
+		const double Offset = Format->start_time != AV_NOPTS_VALUE ? Format->start_time / double(AV_TIME_BASE) : 0.0;
+		if (const AVCodec* Decoder = avcodec_find_decoder(Stream->codecpar->codec_id))
+		{
+			Codec = avcodec_alloc_context3(Decoder);
+			avcodec_parameters_to_context(Codec, Stream->codecpar);
+			Codec->pkt_timebase = Stream->time_base;
+			bOk = avcodec_open2(Codec, Decoder, nullptr) >= 0;
+		}
+		AVPacket* Packet = av_packet_alloc();
+		while (bOk && !Stopping && av_read_frame(Format, Packet) >= 0)
+		{
+			if (Packet->stream_index == StreamIndex)
+			{
+				FSubtitleCue Cue;
+				if (DecodeSubtitle(Codec, Stream, Offset, Packet, Cue)) Cues.push_back(std::move(Cue));
+			}
+			av_packet_unref(Packet);
+		}
+		av_packet_free(&Packet);
+	}
+	avcodec_free_context(&Codec);
+	avformat_close_input(&Format);
+	if (!bOk) Error = "no decoder for that subtitle stream";
+	return bOk;
+}
+
+bool FMediaSession::DecodeSubtitle(AVCodecContext* Codec, AVStream* Stream, double StartOffset, AVPacket* Packet, FSubtitleCue& Cue)
+{
+	AVSubtitle Sub{};
+	int Got = 0;
+	if (avcodec_decode_subtitle2(Codec, &Sub, &Got, Packet) < 0 || !Got) return false;
+	std::string Text;
+	for (unsigned I = 0; I < Sub.num_rects; ++I)
+	{
+		const AVSubtitleRect* Rect = Sub.rects[I];
+		const std::string Line = Rect->ass ? Subtitles::FromAss(Rect->ass) : Rect->text ? Subtitles::Clean(Rect->text) : std::string();
+		if (Line.empty()) continue;
+		if (!Text.empty()) Text += '\n';
+		Text += Line;
+	}
+	avsubtitle_free(&Sub);
+	const int64_t Pts = Packet->pts != AV_NOPTS_VALUE ? Packet->pts : Packet->dts;
+	if (Text.empty() || Pts == AV_NOPTS_VALUE) return false;
+	const double TimeBase = av_q2d(Stream->time_base);
+	const double Start = Pts * TimeBase - StartOffset;
+	const double Length = Packet->duration > 0 ? Packet->duration * TimeBase : 3.0;
+	Cue.StartMs = uint32_t(std::max(0.0, Start) * 1000.0);
+	Cue.EndMs = Cue.StartMs + uint32_t(std::clamp(Length, 0.3, 15.0) * 1000.0);
+	Cue.Text = std::move(Text);
+	return true;
+}
+
+void FMediaSession::DecodeSubtitlePacket(FInput* Input, AVPacket* Packet)
+{
+	AVStream* Stream = Input->Format->streams[Packet->stream_index];
+	if (SubtitleCodecStream != Packet->stream_index)
+	{
+		avcodec_free_context(&SubtitleCodec);
+		SubtitleCodecStream = Packet->stream_index;
+		const AVCodec* Decoder = avcodec_find_decoder(Stream->codecpar->codec_id);
+		if (Decoder)
+		{
+			SubtitleCodec = avcodec_alloc_context3(Decoder);
+			avcodec_parameters_to_context(SubtitleCodec, Stream->codecpar);
+			SubtitleCodec->pkt_timebase = Stream->time_base;
+			if (avcodec_open2(SubtitleCodec, Decoder, nullptr) < 0) avcodec_free_context(&SubtitleCodec);
+		}
+		if (!SubtitleCodec) LOG_WARN("session %u: no decoder for subtitle stream %d", Params.SessionId, Packet->stream_index);
+	}
+	if (!SubtitleCodec) return;
+	FSubtitleCue Cue;
+	if (DecodeSubtitle(SubtitleCodec, Stream, Input->StartOffset, Packet, Cue) && Events.OnSubtitleCues)
+	{
+		Events.OnSubtitleCues(Params.SessionId, SelectedSubtitleTrack.load(), false, {Cue});
+	}
+}
+
+void FMediaSession::PublishTapAudio()
+{
+	if (!AudioWriter) return;
+	const int64_t Read = AudioWriter->GetReadFrames();
+	std::lock_guard<std::mutex> Lock(TapMutex);
+	if (TapAudio.empty()) return;
+	if (Read < TapAudioStart)
+	{
+		// The ring was reset (a seek or pause): what's waiting will never play.
+		if (TapAudioStart - Read > int64_t(OutSampleRate)) TapAudio.clear();
+		return;
+	}
+	const int64_t Ready = std::min<int64_t>(Read - TapAudioStart, int64_t(TapAudio.size() / OutChannels));
+	if (Ready <= 0) return;
+	AudioTaps::Publish(Params.SessionId, TapAudio.data(), int(Ready));
+	TapAudio.erase(TapAudio.begin(), TapAudio.begin() + size_t(Ready) * OutChannels);
+	TapAudioStart += Ready;
 }
 
 double FMediaSession::PtsForRingFrame(int64_t Frame)
@@ -622,6 +852,10 @@ void FMediaSession::ControlSync(double Now, double Clock)
 			HoldPosition = Clock;
 			Paused = true;
 			if (AudioWriter) AudioWriter->DiscardQueued();
+			{
+				std::lock_guard<std::mutex> TapLock(TapMutex);
+				TapAudio.clear();
+			}
 			{
 				std::lock_guard<std::mutex> Lock(AudioMapMutex);
 				AudioMap.clear();
@@ -714,6 +948,14 @@ void FMediaSession::PublishDueFrames(double Clock)
 	{
 		VideoWriter->Publish(Frame.Bgra.data(), Frame.Pts);
 		++FramesPublished;
+		if (FrameTaps::Has(Params.SessionId))
+		{
+			FrameTaps::Publish(Params.SessionId, Frame.Bgra.data(), int(Width), int(Height));
+			std::lock_guard<std::mutex> TapLock(TapMutex);
+			TapFrame = Frame.Bgra;
+			TapWidth = int(Width);
+			TapHeight = int(Height);
+		}
 	}
 	Lock.lock();
 	FramePool.push_back(std::move(Frame.Bgra));
@@ -749,6 +991,7 @@ void FMediaSession::PresentLoop()
 		const double Clock = ComputeClock(Now);
 		LastClock = Clock;
 		PublishDueFrames(Clock);
+		PublishTapAudio();
 
 		if (Now >= NextSyncCheck)
 		{

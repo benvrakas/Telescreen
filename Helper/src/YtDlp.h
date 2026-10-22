@@ -10,6 +10,10 @@ struct FResolvedMedia
 	bool IsLive = false;
 	// One URL (muxed) or two (video, then audio).
 	std::vector<std::string> StreamUrls;
+	// With streams: the video's language and yt-dlp's subtitle lists (JSON).
+	std::string Language;
+	std::string SubtitlesJson;
+	std::string AutomaticJson;
 	std::string Error;
 };
 

@@ -103,6 +103,19 @@ public:
 	// Delivered on every client watching (and the controller) for viewer cursors and pings.
 	FTSOnScreenMarker OnScreenMarker;
 
+	// Synced media a player can't play (a file they don't have, a link that fails for them) is streamed to them by a
+	// player who plays it, chosen by the server from every player's report (see Docs/Architecture.md, Streaming
+	// synced media).
+	APlayerState* GetMediaStreamer() const { return mMediaStreamer; }
+	const FString& GetMediaStreamerName() const { return mMediaStreamerName; }
+	bool IsLocalMediaStreamer() const;
+
+	// Server only: Player can (or can't) play Url, the current item; bCanStream: they agree to stream it to others.
+	void Server_ReportMedia(APlayerState* Player, const FString& Url, bool bHave, bool bCanStream);
+
+	// Who sends this screen's live stream now: the controller of a browser, window or desktop, or the media streamer.
+	APlayerState* GetStreamSender() const;
+
 	// Server only: the players watching the stream.
 	const TArray<TWeakObjectPtr<APlayerController>>& GetWatchers() const { return mWatchers; }
 
@@ -237,6 +250,23 @@ protected:
 
 	UPROPERTY(Replicated)
 	FTSStreamLimits mStreamLimits;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	TObjectPtr<APlayerState> mMediaStreamer;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	FString mMediaStreamerName;
+
+	// Server: what each player reported for the current item (mMediaReportsUrl).
+	struct FMediaReport
+	{
+		bool bHave = false;
+		bool bCanStream = false;
+	};
+	TMap<TWeakObjectPtr<APlayerState>, FMediaReport> mMediaReports;
+	FString mMediaReportsUrl;
+	void ResetMediaReports(const FString& Url);
+	void ChooseMediaStreamer();
 	// Server: reads the limits from this world's settings; true when they changed.
 	bool RefreshStreamLimits();
 

@@ -77,4 +77,7 @@ public:
 
 private:
 	float NextIndicatorUpdate = 0.f;
+	float NextSubtitleUpdate = 0.f;
+	// The HUD subtitle line: from the screen shown on the HUD, or the nearest one in hearing range.
+	void UpdateHudSubtitles(const APlayerController* Controller);
 };

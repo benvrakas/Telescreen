@@ -24,6 +24,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetScreenSettings(ATSBuildableScreen* Screen, const FString& Name, ETSAspectMode AspectMode);
 
+	// Whether this player can play the current synced item Url (see ATSBuildableScreen::Server_ReportMedia).
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReportMedia(ATSBuildableScreen* Screen, const FString& Url, bool bHave, bool bCanStream);
+
 	// The screen's volume for everyone (sent when the slider is let go).
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetScreenVolume(ATSBuildableScreen* Screen, float Volume);

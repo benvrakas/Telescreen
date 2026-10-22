@@ -3,6 +3,8 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/AudioComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Algo/BinarySearch.h"
+#include "CanvasItem.h"
 #include "Engine/Canvas.h"
 #include "Engine/CanvasRenderTarget2D.h"
 #include "Engine/Engine.h"
@@ -24,6 +26,7 @@
 #include "Engine/NetConnection.h"
 #include "Net/TSNetRate.h"
 #include "TSRemoteCallObject.h"
+#include "Screen/TSLocalVideos.h"
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <windows.h>
@@ -321,6 +324,7 @@ void UTSScreenPlayer::Reconcile()
 	if (Screen->GetMode() != ETSScreenMode::SyncedMedia)
 	{
 		BlockedReason = FText::GetEmpty();
+		ReportedKey.Reset();
 		if (!Screen->IsLocallyControlled())
 		{
 			ReconcileViewer(Screen);
@@ -379,13 +383,92 @@ void UTSScreenPlayer::Reconcile()
 		SetStatus(Title, LOCTEXT("Inactive", "Paused on this PC (far away, or too many screens playing)"));
 		return;
 	}
+	// A file plays from its path, or from the same name in this player's videos folder.
+	FString PlayPath = Item->Url;
+	bool bCantPlay = Key == FailedKey;
+	if (!bCantPlay && TSLocalVideos::IsLocalFile(Item->Url))
+	{
+		switch (TSLocalVideos::Resolve(this, Item->Url, PlayPath))
+		{
+		case TSLocalVideos::EResolve::Searching:
+			// Kept wanted, so the next ranking pass looks again.
+			WantedKey = Key;
+			CloseSession();
+			SetStatus(Title, LOCTEXT("SearchingFolder", "Looking for the file in your videos folder..."));
+			return;
+		case TSLocalVideos::EResolve::Missing:
+			bCantPlay = true;
+			break;
+		default:
+			break;
+		}
+	}
+	if (bCantPlay)
+	{
+		ReportMedia(Key, Item->Url, false);
+		ReconcileMediaStream(Screen, *Item, Key);
+		return;
+	}
 	WantedKey = Key;
 	if (Session != 0 && Key == SessionKey)
 	{
 		return;
 	}
 	CloseSession();
-	OpenSession(*Item);
+	FTSMediaItem ToPlay = *Item;
+	ToPlay.Url = PlayPath;
+	if (PlayPath != Item->Url)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: playing %s from the videos folder: %s"), *Screen->GetName(), *FPaths::GetCleanFilename(Item->Url), *PlayPath);
+	}
+	OpenSession(ToPlay);
+}
+
+void UTSScreenPlayer::ReportMedia(const FString& Key, const FString& Url, bool bHave)
+{
+	if (ReportedKey == Key && bReportedHave == bHave)
+	{
+		return;
+	}
+	ReportedKey = Key;
+	bReportedHave = bHave;
+	if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+	{
+		RCO->Server_ReportMedia(GetScreen(), Url, bHave, UTSConfig::GetBool(this, UTSConfig::StreamMyVideosKey, true));
+	}
+}
+
+void UTSScreenPlayer::ReconcileMediaStream(ATSBuildableScreen* Screen, const FTSMediaItem& Item, const FString& Key)
+{
+	const FText Title = FText::FromString(Item.GetDisplayTitle());
+	const APlayerController* Local = UGameplayStatics::GetPlayerController(this, 0);
+	const APlayerState* Streamer = Screen->GetMediaStreamer();
+	if (!Streamer || (Local && Streamer == Local->PlayerState))
+	{
+		WantedKey.Reset();
+		CloseSession();
+		SetStatus(Title, TSLocalVideos::IsLocalFile(Item.Url)
+			? FText::Format(LOCTEXT("FileMissing", "Not on this PC. Put \"{0}\" in your videos folder (Videos tab), or wait for a player who has it."),
+				FText::FromString(FPaths::GetCleanFilename(Item.Url.Replace(TEXT("\\"), TEXT("/")))))
+			: FText::Format(LOCTEXT("CantPlayHere", "Could not play here: {0}. No other player is playing it to stream it."), FText::FromString(FailedMessage)));
+		return;
+	}
+	if (UTSConfig::GetInt(this, UTSConfig::ReceiveStreamsKey, 0) == 1)
+	{
+		WantedKey.Reset();
+		CloseSession();
+		SetStatus(Title, LOCTEXT("MediaStreamsOff", "Not on this PC; watching other players' streams is turned off in your settings."));
+		return;
+	}
+	const FString StreamKey = TEXT("mediastream|") + Key + TEXT("|") + Screen->GetMediaStreamerName();
+	WantedKey = StreamKey;
+	if (Session != 0 && SessionKey == StreamKey)
+	{
+		return;
+	}
+	CloseSession();
+	UE_LOG(LogTelescreen, Log, TEXT("%s: can't play %s here; watching %s's stream"), *Screen->GetName(), *Item.GetDisplayTitle(), *Screen->GetMediaStreamerName());
+	OpenReceiverSession(GetControllerTitle());
 }
 
 void UTSScreenPlayer::OpenSession(const FTSMediaItem& Item)
@@ -405,6 +488,7 @@ void UTSScreenPlayer::OpenSession(const FTSMediaItem& Item)
 	Params.bPaused = Screen->GetMediaState().bPaused;
 	Params.MaxHeight = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxVideoHeightKey, 720), 144, 2160));
 	Params.MaxWidth = Params.MaxHeight * 16 / 9;
+	Params.SubtitleLanguage = UTSConfig::GetString(this, UTSConfig::SubtitleLanguageKey, TEXT("en")).TrimStartAndEnd().ToLower();
 	Session = Host->OpenMedia(Params, this);
 	if (Session == 0)
 	{
@@ -476,6 +560,12 @@ FIntPoint UTSScreenPlayer::ToSourcePixels(const FVector2D& Position) const
 FText UTSScreenPlayer::GetControllerTitle() const
 {
 	const ATSBuildableScreen* Screen = GetScreen();
+	if (Screen && Screen->GetMode() == ETSScreenMode::SyncedMedia)
+	{
+		const FTSMediaItem* Item = Screen->GetMediaState().GetCurrent();
+		return FText::Format(LOCTEXT("StreamedMedia", "{0} (streamed from {1})"), FText::FromString(Item ? Item->GetDisplayTitle() : FString()),
+			FText::FromString(Screen->GetMediaStreamerName()));
+	}
 	const FText Name = FText::FromString(Screen ? Screen->GetControllerName() : FString());
 	if (Screen && Screen->GetMode() == ETSScreenMode::Window)
 	{
@@ -758,8 +848,11 @@ UTSRemoteCallObject* UTSScreenPlayer::FindRemoteCallObject() const
 void UTSScreenPlayer::UpdateStreamSender()
 {
 	ATSBuildableScreen* Screen = GetScreen();
-	const bool bWant = Screen && (bBrowserSession || bWindowSession || bRemoteSession) && Session != 0 && Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled() &&
-		Screen->GetViewerCount() > 0 && !Screen->IsCurtainOn();
+	const bool bShared = Screen && (bBrowserSession || bWindowSession || bRemoteSession) && Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled();
+	const bool bMediaStreamer = Screen && !bStreamReceiver && !bBrowserSession && !bWindowSession && !bRemoteSession && SessionKey != TEXT("loopback") &&
+		Screen->IsLocalMediaStreamer() && UTSConfig::GetBool(this, UTSConfig::StreamMyVideosKey, true) &&
+		(HostState == ESessionState::Playing || HostState == ESessionState::Paused || HostState == ESessionState::Buffering);
+	const bool bWant = Screen && Session != 0 && (bShared || bMediaStreamer) && Screen->GetViewerCount() > 0 && !Screen->IsCurtainOn();
 	if (SenderSession != 0 && (!bWant || SenderSource != Session))
 	{
 		CloseStreamSender();
@@ -1385,6 +1478,7 @@ void UTSScreenPlayer::CloseSession()
 		Audio->Stop();
 	}
 	StopWwise();
+	ClearSubtitles();
 	bShowingVideo = false;
 	bBrowserSession = false;
 	bWindowSession = false;
@@ -1476,6 +1570,11 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 		NextAudioUpdate = Now + AudioInterval;
 		UpdateAudio();
 	}
+	if (Now >= NextSubtitleUpdate)
+	{
+		NextSubtitleUpdate = Now + 0.1;
+		UpdateSubtitleText();
+	}
 	// A HUD picture's sound follows the camera; a screen's emitter stays where it was placed when the sound started.
 	if (WwisePlayingId != 0 && bPinned)
 	{
@@ -1505,7 +1604,7 @@ void UTSScreenPlayer::RankActivity()
 		OutDistance = FVector::Dist(Viewer, S->GetActorLocation());
 		return OutDistance <= MaxDistance;
 	};
-	if (Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled())
+	if ((Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled()) || (Screen->IsLocalMediaStreamer() && Screen->GetViewerCount() > 0))
 	{
 		bActive = true;
 		return;
@@ -1660,8 +1759,10 @@ void UTSScreenPlayer::ComposeFrame()
 	if (!bShowingVideo)
 	{
 		bShowingVideo = true;
+		bScreenShowsSubtitles = false;
 		Screen->SetScreenTexture(VideoTexture);
 	}
+	ApplyScreenTexture();
 }
 
 void UTSScreenPlayer::SetPinned(bool bInPinned)
@@ -1922,6 +2023,29 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 		}
 		return;
 	}
+	// Synced media on this PC: tell the server whether it plays here; a failure falls back to another player's stream.
+	const bool bSyncedSession = Screen && Item && Screen->GetMode() == ETSScreenMode::SyncedMedia && !bStreamReceiver && !bBrowserSession && !bWindowSession &&
+		!bRemoteSession && SessionKey != TEXT("loopback") && SessionKey == WantedKey;
+	if (bSyncedSession && State == ESessionState::Playing)
+	{
+		ReportMedia(SessionKey, Item->Url, true);
+	}
+	if (bSyncedSession && State == ESessionState::Error)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: %s can't play here (%s)"), *Screen->GetName(), *Item->GetDisplayTitle(), *Message);
+		FailedKey = SessionKey;
+		FailedMessage = Message;
+		ReportMedia(SessionKey, Item->Url, false);
+		bShowingVideo = false;
+		SetStatus(Title, FText::Format(LOCTEXT("PlayErrorLooking", "Could not play here: {0}"), FText::FromString(Message)));
+		ShowStatus();
+		// Not from inside the session's own callback: the next tick switches to another player's stream, if any.
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateUObject(this, &UTSScreenPlayer::Reconcile));
+		}
+		return;
+	}
 	switch (State)
 	{
 	case ESessionState::Error:
@@ -1984,7 +2108,229 @@ void UTSScreenPlayer::ShowStatus()
 		return;
 	}
 	StatusTarget->UpdateResource();
+	bScreenShowsSubtitles = false;
 	Screen->SetScreenTexture(StatusTarget);
+}
+
+UTSScreenPlayer::ESubtitleMode UTSScreenPlayer::GetSubtitleMode(const UObject* Context)
+{
+	return ESubtitleMode(FMath::Clamp(UTSConfig::GetInt(Context, UTSConfig::SubtitleModeKey, 0), 0, 3));
+}
+
+void UTSScreenPlayer::SetSubtitleMode(const UObject* Context, ESubtitleMode Mode)
+{
+	UTSConfig::SetInt(Context, UTSConfig::SubtitleModeKey, int32(Mode));
+	UE_LOG(LogTelescreen, Log, TEXT("Subtitles: mode %d"), int32(Mode));
+}
+
+void UTSScreenPlayer::OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks)
+{
+	SubtitleTracks = Tracks;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %d subtitle track(s)"), *GetNameSafe(GetOwner()), Tracks.Num());
+	RefreshSubtitles();
+	OnSubtitlesChanged.Broadcast();
+}
+
+void UTSScreenPlayer::OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues)
+{
+	if (Track != SelectedSubtitleTrack)
+	{
+		return;
+	}
+	if (bReplace)
+	{
+		SubtitleCues = MoveTemp(Cues);
+	}
+	else
+	{
+		// Lines decoded while playing may also come with the whole track: keep one of each.
+		for (FTSSubtitleCue& Cue : Cues)
+		{
+			if (!SubtitleCues.ContainsByPredicate([&Cue](const FTSSubtitleCue& Each) { return Each.StartMs == Cue.StartMs && Each.Text == Cue.Text; }))
+			{
+				SubtitleCues.Add(MoveTemp(Cue));
+			}
+		}
+	}
+	SubtitleCues.StableSort([](const FTSSubtitleCue& A, const FTSSubtitleCue& B) { return A.StartMs < B.StartMs; });
+	NextSubtitleUpdate = 0.0;
+}
+
+uint32 UTSScreenPlayer::PickSubtitleTrack() const
+{
+	const FString Want = UTSConfig::GetString(this, UTSConfig::SubtitleLanguageKey, TEXT("en")).TrimStartAndEnd().ToLower();
+	// Files name languages with three letters (eng, ger, fre).
+	static const TMap<FString, TArray<FString>> Long = {{TEXT("en"), {TEXT("eng")}}, {TEXT("de"), {TEXT("ger"), TEXT("deu")}},
+		{TEXT("fr"), {TEXT("fre"), TEXT("fra")}}, {TEXT("es"), {TEXT("spa")}}, {TEXT("it"), {TEXT("ita")}}, {TEXT("pt"), {TEXT("por")}},
+		{TEXT("nl"), {TEXT("dut"), TEXT("nld")}}, {TEXT("ru"), {TEXT("rus")}}, {TEXT("ja"), {TEXT("jpn")}}, {TEXT("zh"), {TEXT("chi"), TEXT("zho")}},
+		{TEXT("ko"), {TEXT("kor")}}, {TEXT("pl"), {TEXT("pol")}}, {TEXT("sv"), {TEXT("swe")}}};
+	auto Matches = [&](const FTSSubtitleTrack& Track)
+	{
+		const FString Language = Track.Language.ToLower();
+		if (Language.StartsWith(Want))
+		{
+			return true;
+		}
+		const TArray<FString>* Codes = Long.Find(Want);
+		return Codes && Codes->ContainsByPredicate([&Language](const FString& Code) { return Language.StartsWith(Code); });
+	};
+	// People-made in the preferred language first, then automatic captions in it, then a single unlabelled track.
+	for (const FTSSubtitleTrack& Track : SubtitleTracks)
+	{
+		if (Track.Kind != 1 && Matches(Track)) return Track.Id;
+	}
+	for (const FTSSubtitleTrack& Track : SubtitleTracks)
+	{
+		if (Track.Kind == 1 && Matches(Track)) return Track.Id;
+	}
+	if (SubtitleTracks.Num() == 1 && SubtitleTracks[0].Language.IsEmpty())
+	{
+		return SubtitleTracks[0].Id;
+	}
+	return 0;
+}
+
+void UTSScreenPlayer::SelectSubtitleTrack(uint32 Id)
+{
+	if (Id == SelectedSubtitleTrack)
+	{
+		return;
+	}
+	SelectedSubtitleTrack = Id;
+	SubtitleCues.Reset();
+	UE_LOG(LogTelescreen, Log, TEXT("%s: subtitle track %u"), *GetNameSafe(GetOwner()), Id);
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && Session != 0)
+	{
+		FTSPayloadWriter W;
+		W.U32(Id);
+		Host->SendBrowserCommand(Session, ECommand::SelectSubtitles, W.Bytes);
+	}
+	UpdateSubtitleText();
+	OnSubtitlesChanged.Broadcast();
+}
+
+void UTSScreenPlayer::RefreshSubtitles()
+{
+	if (GetSubtitleMode(this) != ESubtitleMode::Off && SelectedSubtitleTrack == 0 && SubtitleTracks.Num() > 0)
+	{
+		SelectSubtitleTrack(PickSubtitleTrack());
+	}
+	NextSubtitleUpdate = 0.0;
+	ApplyScreenTexture();
+}
+
+void UTSScreenPlayer::ClearSubtitles()
+{
+	const bool bHad = SubtitleTracks.Num() > 0 || !SubtitleText.IsEmpty();
+	SubtitleTracks.Reset();
+	SubtitleCues.Reset();
+	SelectedSubtitleTrack = 0;
+	SubtitleText.Reset();
+	bScreenShowsSubtitles = false;
+	if (bHad)
+	{
+		OnSubtitlesChanged.Broadcast();
+	}
+}
+
+void UTSScreenPlayer::UpdateSubtitleText()
+{
+	const ATSBuildableScreen* Screen = GetScreen();
+	FString Text;
+	if (Screen && Session != 0 && !bStreamReceiver && SubtitleCues.Num() > 0 && GetSubtitleMode(this) != ESubtitleMode::Off)
+	{
+		const uint32 Now = uint32(FMath::Max(0.0, Screen->GetPlaybackPosition()) * 1000.0);
+		// The last cue starting by now, and the ones just before it that are still on (rolling captions): at most two lines.
+		const int32 Last = Algo::UpperBoundBy(SubtitleCues, Now, [](const FTSSubtitleCue& Cue) { return Cue.StartMs; }) - 1;
+		TArray<FString> Lines;
+		for (int32 I = Last; I >= 0 && I > Last - 8 && Lines.Num() < 2; --I)
+		{
+			if (SubtitleCues[I].EndMs > Now)
+			{
+				Lines.Insert(SubtitleCues[I].Text, 0);
+			}
+		}
+		Text = FString::Join(Lines, TEXT("\n"));
+	}
+	if (Text != SubtitleText)
+	{
+		SubtitleText = Text;
+		ApplyScreenTexture();
+	}
+}
+
+void UTSScreenPlayer::ApplyScreenTexture()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	const ESubtitleMode Mode = GetSubtitleMode(this);
+	const bool bOverlay = Screen && bShowingVideo && VideoTexture && !SubtitleText.IsEmpty() && (Mode == ESubtitleMode::Screen || Mode == ESubtitleMode::Both);
+	if (!bOverlay)
+	{
+		if (bScreenShowsSubtitles && Screen && bShowingVideo && VideoTexture)
+		{
+			Screen->SetScreenTexture(VideoTexture);
+		}
+		bScreenShowsSubtitles = false;
+		return;
+	}
+	const int32 Width = VideoTexture->GetSizeX(), Height = VideoTexture->GetSizeY();
+	if (!SubtitleTarget || SubtitleTarget->SizeX != Width || SubtitleTarget->SizeY != Height)
+	{
+		SubtitleTarget = UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(this, UCanvasRenderTarget2D::StaticClass(), Width, Height);
+		if (!SubtitleTarget)
+		{
+			return;
+		}
+		SubtitleTarget->ClearColor = FLinearColor::Black;
+		SubtitleTarget->OnCanvasRenderTargetUpdate.AddDynamic(this, &UTSScreenPlayer::DrawSubtitled);
+		bScreenShowsSubtitles = false;
+	}
+	SubtitleTarget->UpdateResource();
+	if (!bScreenShowsSubtitles)
+	{
+		bScreenShowsSubtitles = true;
+		Screen->SetScreenTexture(SubtitleTarget);
+	}
+}
+
+void UTSScreenPlayer::DrawSubtitled(UCanvas* Canvas, int32 Width, int32 Height)
+{
+	UFont* Font = GEngine ? GEngine->GetLargeFont() : nullptr;
+	if (!Canvas || !VideoTexture)
+	{
+		return;
+	}
+	Canvas->K2_DrawTexture(VideoTexture, FVector2D::ZeroVector, FVector2D(Width, Height), FVector2D::ZeroVector, FVector2D::UnitVector, FLinearColor::White,
+		BLEND_Opaque);
+	if (!Font || SubtitleText.IsEmpty())
+	{
+		return;
+	}
+	TArray<FString> Lines;
+	SubtitleText.ParseIntoArray(Lines, TEXT("\n"));
+	float LineWidth = 0.f, LineHeight = 0.f;
+	Canvas->TextSize(Font, TEXT("Ag"), LineWidth, LineHeight, 1.f, 1.f);
+	// About a 16th of the picture's height per line, as TV subtitles.
+	const float Scale = LineHeight > 0.f ? Height / 16.f / LineHeight : 1.f;
+	float Y = Height * 0.94f - Lines.Num() * LineHeight * Scale * 1.1f;
+	for (const FString& Line : Lines)
+	{
+		float TextWidth = 0.f, TextHeight = 0.f;
+		float LineScale = Scale;
+		Canvas->TextSize(Font, Line, TextWidth, TextHeight, LineScale, LineScale);
+		if (TextWidth > Width * 0.94f && TextWidth > 0.f)
+		{
+			LineScale *= Width * 0.94f / TextWidth;
+			Canvas->TextSize(Font, Line, TextWidth, TextHeight, LineScale, LineScale);
+		}
+		FCanvasTextItem Item(FVector2D((Width - TextWidth) * 0.5f, Y), FText::FromString(Line), Font, FLinearColor::White);
+		Item.Scale = FVector2D(LineScale, LineScale);
+		Item.bOutlined = true;
+		Item.OutlineColor = FLinearColor::Black;
+		Item.EnableShadow(FLinearColor(0.f, 0.f, 0.f, 0.85f), FVector2D(2.f, 2.f) * LineScale);
+		Canvas->DrawItem(Item);
+		Y += LineHeight * Scale * 1.1f;
+	}
 }
 
 void UTSScreenPlayer::DrawStatus(UCanvas* Canvas, int32 Width, int32 Height)

@@ -115,6 +115,14 @@ namespace
 		}
 	}
 
+	void SetIntProperty(UObject* Object, FName Name, int32 Value)
+	{
+		if (FIntProperty* Property = Object ? FindFProperty<FIntProperty>(Object->GetClass(), Name) : nullptr)
+		{
+			Property->SetPropertyValue_InContainer(Object, Value);
+		}
+	}
+
 	void SetTextProperty(UObject* Object, FName Name, const FText& Value)
 	{
 		if (FTextProperty* Property = Object ? FindFProperty<FTextProperty>(Object->GetClass(), Name) : nullptr)
@@ -322,6 +330,8 @@ UWidget* TSVanillaUI::MakeInputBox(UWidgetTree* Tree, const FText& Hint, UObject
 		SetTextProperty(Box, TEXT("mPreviewText"), Hint);
 		// A text field, not the search bar style (no magnifier or clear button).
 		SetBoolProperty(Box, TEXT("isSearchbar"), false);
+		// Long enough for web addresses and file paths (the game's default cuts them short).
+		SetIntProperty(Box, TEXT("mCharacterLimit"), 2048);
 		CallText(Box, TEXT("SetPreviewText"), Hint);
 		if (UEditableText* Inner = InnerEditable(Box))
 		{
