@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "EncodeBench.h"
 #include "LoopbackSession.h"
+#include "StreamSession.h"
 #include "MediaSession.h"
 #include "Pipe.h"
 #include "YtDlp.h"
@@ -35,6 +36,8 @@ namespace
 		std::string SelfTest;
 		bool SelfTestLocal = false;
 		bool SelfTestBrowser = false;
+		bool SelfTestStream = false;
+		double LossPercent = 0.0;
 		FEncodeBenchArgs Bench;
 		bool bBench = false;
 		double Seconds = 12.0, Start = 0.0, SeekAt = -1.0, SeekTo = 0.0, PauseAt = -1.0, ResumeAt = -1.0;
@@ -53,6 +56,8 @@ namespace
 			else if (Key == L"--browserdir") Args.BrowserDir = Value;
 			else if (Key == L"--browserdata") Args.BrowserData = Value;
 			else if (Key == L"--selftest-browser") { Args.SelfTest = Narrow(Value); Args.SelfTestBrowser = true; }
+			else if (Key == L"--selftest-stream") { Args.SelfTest = Narrow(Value); Args.SelfTestStream = true; }
+			else if (Key == L"--loss") Args.LossPercent = _wtof(Value.c_str());
 			else if (Key == L"--parent") Args.Parent = wcstoul(Value.c_str(), nullptr, 10);
 			else if (Key == L"--selftest") Args.SelfTest = Narrow(Value);
 			else if (Key == L"--selftest-file") { Args.SelfTest = Narrow(Value); Args.SelfTestLocal = true; }
@@ -189,6 +194,19 @@ namespace
 			Pipe.Send(uint16_t(EMsg::BrowserState), W.Bytes);
 		};
 
+		auto SendStreamPacket = [&Pipe](uint32_t Session, const FStreamPacket& Packet)
+		{
+			FPayloadWriter W;
+			W.Bytes.reserve(Packet.Data.size() + 16);
+			W.U32(Session);
+			W.U8(uint8_t(Packet.Kind));
+			W.U8(Packet.Flags);
+			W.U32(Packet.PtsMs);
+			W.U32(Packet.Codec);
+			W.Append(Packet.Data.data(), Packet.Data.size());
+			Pipe.Send(uint16_t(EMsg::StreamPacket), W.Bytes);
+		};
+
 		uint16_t Type = 0;
 		std::vector<uint8_t> Payload;
 		while (Pipe.Read(Type, Payload))
@@ -316,6 +334,66 @@ namespace
 				Sessions[Params.SessionId] = std::make_unique<FLoopbackSession>(Params, Events);
 				break;
 			}
+			case EMsg::OpenStreamSender:
+			{
+				FSenderParams Params;
+				Params.SessionId = R.U32();
+				Params.SourceSessionId = R.U32();
+				Params.Fps = int(std::clamp<uint32_t>(R.U32(), 1, 120));
+				Params.BitrateKbps = int(std::clamp<uint32_t>(R.U32(), 200, 50000));
+				Params.bAllowSoftware = R.U8() != 0;
+				Params.Prefer = R.Str();
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto Existing = Sessions.find(Params.SessionId);
+				if (Existing != Sessions.end())
+				{
+					Retire(std::move(Existing->second));
+					Sessions.erase(Existing);
+				}
+				Sessions[Params.SessionId] = std::make_unique<FStreamSenderSession>(Params, Events, SendStreamPacket);
+				break;
+			}
+			case EMsg::OpenStreamReceiver:
+			{
+				const uint32_t Session = R.U32();
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto Existing = Sessions.find(Session);
+				if (Existing != Sessions.end())
+				{
+					Retire(std::move(Existing->second));
+					Sessions.erase(Existing);
+				}
+				Sessions[Session] = std::make_unique<FStreamReceiverSession>(Session, Events);
+				break;
+			}
+			case EMsg::StreamPacket:
+			{
+				const uint32_t Session = R.U32();
+				FStreamPacket Packet;
+				Packet.Kind = EStreamKind(R.U8());
+				Packet.Flags = R.U8();
+				Packet.PtsMs = R.U32();
+				Packet.Codec = R.U32();
+				if (!R.Ok || R.Pos > Payload.size()) break;
+				Packet.Data.assign(Payload.begin() + R.Pos, Payload.end());
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto It = Sessions.find(Session);
+				if (It != Sessions.end()) It->second->HandleStreamPacket(Packet);
+				break;
+			}
+			case EMsg::StreamControl:
+			{
+				const uint32_t Session = R.U32();
+				const uint8_t Command = R.U8();
+				const uint32_t Value = R.U32();
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto It = Sessions.find(Session);
+				if (It != Sessions.end()) It->second->HandleStreamControl(Command, Value);
+				break;
+			}
 			case EMsg::BrowserInput:
 			case EMsg::BrowserCommand:
 			{
@@ -341,6 +419,105 @@ namespace
 		LOG_INFO("pipe closed; exiting");
 		ShutdownAll();
 		ExitProcess(0);
+	}
+
+	// Runs a browser on Args.SelfTest, streams it through a sender and a receiver with LossPercent of the packets dropped,
+	// and reports what arrives.
+	int RunStreamSelfTest(const FArgs& Args)
+	{
+		std::string Error;
+		Browser::AllowFileUrls(true);
+		if (!Browser::EnsureInitialized(Args.BrowserDir, Args.BrowserData, LogDirectory(Args.Log), Error))
+		{
+			LOG_ERROR("selftest: %s", Error.c_str());
+			return 1;
+		}
+		std::atomic<int> VideoFrames{0}, Dropped{0}, Delivered{0};
+		std::atomic<FAudioHeader*> Audio{nullptr};
+		FSessionEvents ReceiverEvents;
+		ReceiverEvents.OnVideo = [](uint32_t, uint32_t Generation, uint32_t Width, uint32_t Height, const std::string&)
+		{
+			LOG_INFO("selftest: receiver video %ux%u (generation %u)", Width, Height, Generation);
+		};
+		ReceiverEvents.OnAudio = [&Audio](uint32_t, uint32_t, uint32_t, uint32_t, const std::string& Name)
+		{
+			HANDLE Mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, Widen(Name).c_str());
+			Audio = Mapping ? static_cast<FAudioHeader*>(MapViewOfFile(Mapping, FILE_MAP_ALL_ACCESS, 0, 0, 0)) : nullptr;
+			LOG_INFO("selftest: receiver audio ring mapped=%d", Audio.load() != nullptr);
+		};
+		ReceiverEvents.OnState = [](uint32_t, ESessionState State, double, double, const std::string& Message)
+		{
+			LOG_INFO("selftest: receiver state %d %s", int(State), Message.c_str());
+		};
+		auto Receiver = std::make_unique<FStreamReceiverSession>(3, ReceiverEvents);
+
+		FSessionEvents SenderEvents;
+		SenderEvents.OnState = [](uint32_t, ESessionState State, double, double, const std::string& Message)
+		{
+			LOG_INFO("selftest: sender state %d %s", int(State), Message.c_str());
+		};
+		uint32_t Seed = 12345;
+		bool bWaitKey = false;
+		FStreamReceiverSession* RawReceiver = Receiver.get();
+		auto Deliver = [&](uint32_t, const FStreamPacket& Packet)
+		{
+			Seed = Seed * 1664525u + 1013904223u;
+			if ((Seed >> 8) % 10000 < uint32_t(Args.LossPercent * 100.0))
+			{
+				++Dropped;
+				if (Packet.Kind == EStreamKind::Video)
+				{
+					bWaitKey = true;
+					RawReceiver->HandleStreamControl(uint8_t(EStreamControl::Reset), 0);
+				}
+				return;
+			}
+			++Delivered;
+			RawReceiver->HandleStreamPacket(Packet);
+		};
+		FBrowserParams BrowserParams;
+		BrowserParams.SessionId = 1;
+		BrowserParams.Url = Args.SelfTest;
+		BrowserParams.Width = 1280;
+		BrowserParams.Height = 720;
+		auto BrowserSessionPtr = std::make_unique<FBrowserSession>(BrowserParams, FSessionEvents());
+		FSenderParams SenderParams;
+		SenderParams.SessionId = 2;
+		SenderParams.SourceSessionId = 1;
+		SenderParams.Fps = Args.Bench.Settings.Fps > 0 ? Args.Bench.Settings.Fps : 30;
+		SenderParams.BitrateKbps = Args.Bench.Settings.BitrateKbps;
+		SenderParams.Prefer = Args.Bench.Settings.Prefer;
+		SenderParams.bAllowSoftware = Args.Bench.Settings.bAllowSoftware;
+		auto Sender = std::make_unique<FStreamSenderSession>(SenderParams, SenderEvents, Deliver);
+
+		// Consume audio like the game's mixer and ask for a keyframe after losses, like the mod.
+		const double Start = NowSeconds();
+		int64_t Pulled = 0, Consumed = 0;
+		while (NowSeconds() - Start < Args.Seconds)
+		{
+			if (FAudioHeader* Header = Audio.load())
+			{
+				const int64_t Due = int64_t((NowSeconds() - Start) * 48000);
+				int64_t Read = std::max(InterlockedCompareExchange64(&Header->ReadFrames, 0, 0), InterlockedCompareExchange64(&Header->DiscardUntil, 0, 0));
+				const int64_t Write = InterlockedCompareExchange64(&Header->WriteFrames, 0, 0);
+				const int64_t Take = std::clamp<int64_t>(Due - Pulled, 0, Write - Read);
+				InterlockedExchange64(&Header->ReadFrames, Read + Take);
+				Consumed += Take;
+				Pulled = Due;
+			}
+			if (bWaitKey)
+			{
+				bWaitKey = false;
+				Sender->HandleStreamControl(uint8_t(EStreamControl::Keyframe), 0);
+			}
+			Sleep(10);
+		}
+		LOG_INFO("selftest result: packets delivered %d, dropped %d, audio consumed %.1f s", Delivered.load(), Dropped.load(), Consumed / 48000.0);
+		Sender.reset();
+		BrowserSessionPtr.reset();
+		Receiver.reset();
+		Browser::Shutdown();
+		return Delivered > 0 ? 0 : 1;
 	}
 
 	// Plays Args.SelfTest while acting as the mod's side of the shared buffers, then reports and saves the last frame.
@@ -685,6 +862,7 @@ int wmain(int Argc, wchar_t** Argv)
 	SetYtDlpJsRuntime(Args.JsRuntime);
 
 	if (Args.bBench) return RunEncodeBench(Args.Bench);
+	if (Args.SelfTestStream) return RunStreamSelfTest(Args);
 	if (!Args.SelfTest.empty()) return RunSelfTest(Args);
 	if (Args.Pipe.empty())
 	{

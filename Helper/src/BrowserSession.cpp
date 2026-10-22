@@ -1,5 +1,5 @@
 #include "BrowserSession.h"
-#include "LoopbackSession.h"
+#include "Taps.h"
 
 #include <algorithm>
 #include <cstring>
@@ -572,7 +572,7 @@ void FBrowserSession::OnAudioStarted(int Channels)
 void FBrowserSession::OnAudioPacket(const float** Data, int Frames)
 {
 	std::lock_guard<std::mutex> Lock(AudioMutex);
-	if (!AudioWriter || Frames <= 0 || AudioWriter->QueuedFrames() > MaxAudioQueued) return;
+	if (Frames <= 0) return;
 	Interleaved.resize(size_t(Frames) * 2);
 	const float* Left = Data[0];
 	const float* Right = AudioChannels > 1 ? Data[1] : Data[0];
@@ -581,7 +581,8 @@ void FBrowserSession::OnAudioPacket(const float** Data, int Frames)
 		Interleaved[size_t(F) * 2] = Left[F];
 		Interleaved[size_t(F) * 2 + 1] = Right[F];
 	}
-	AudioWriter->Write(Interleaved.data(), uint32_t(Frames));
+	AudioTaps::Publish(Params.SessionId, Interleaved.data(), Frames);
+	if (AudioWriter && AudioWriter->QueuedFrames() <= MaxAudioQueued) AudioWriter->Write(Interleaved.data(), uint32_t(Frames));
 }
 
 void FBrowserSession::OnBrowserState(const std::string& InUrl, const std::string& InTitle, int InLoading, int InCanGoBack, int InCanGoForward,

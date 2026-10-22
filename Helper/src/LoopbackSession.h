@@ -4,22 +4,13 @@
 #include "Session.h"
 #include "SharedMemory.h"
 #include "StreamCodec.h"
+#include "Taps.h"
 
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
-
-// Lets other sessions receive a session's published frames (BGRA, Width x Height).
-namespace FrameTaps
-{
-	using FTap = std::function<void(const uint8_t* Bgra, int Width, int Height)>;
-
-	int Add(uint32_t SourceSession, FTap Tap);
-	void Remove(int TapId);
-	void Publish(uint32_t SourceSession, const uint8_t* Bgra, int Width, int Height);
-}
 
 struct FLoopbackParams
 {

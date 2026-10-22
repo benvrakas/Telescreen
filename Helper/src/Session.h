@@ -29,4 +29,10 @@ public:
 
 	// A BrowserCommand payload after its session id and command (browser sessions only).
 	virtual void HandleCommand(TSHostProtocol::ECommand Command, FPayloadReader& Reader) {}
+
+	// A live stream packet from the mod (receiver sessions only).
+	virtual void HandleStreamPacket(const struct FStreamPacket& Packet) {}
+
+	// A StreamControl command (sender and receiver sessions).
+	virtual void HandleStreamControl(uint8_t Command, uint32_t Value) {}
 };

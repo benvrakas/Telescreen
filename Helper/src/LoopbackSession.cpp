@@ -5,36 +5,6 @@
 
 using TSHostProtocol::ESessionState;
 
-namespace
-{
-	std::mutex GTapMutex;
-	std::map<int, std::pair<uint32_t, FrameTaps::FTap>> GTaps;
-	int GNextTap = 1;
-}
-
-int FrameTaps::Add(uint32_t SourceSession, FTap Tap)
-{
-	std::lock_guard<std::mutex> Lock(GTapMutex);
-	const int Id = GNextTap++;
-	GTaps[Id] = {SourceSession, std::move(Tap)};
-	return Id;
-}
-
-void FrameTaps::Remove(int TapId)
-{
-	std::lock_guard<std::mutex> Lock(GTapMutex);
-	GTaps.erase(TapId);
-}
-
-void FrameTaps::Publish(uint32_t SourceSession, const uint8_t* Bgra, int Width, int Height)
-{
-	std::lock_guard<std::mutex> Lock(GTapMutex);
-	for (auto& Pair : GTaps)
-	{
-		if (Pair.second.first == SourceSession) Pair.second.second(Bgra, Width, Height);
-	}
-}
-
 FLoopbackSession::FLoopbackSession(const FLoopbackParams& InParams, FSessionEvents InEvents)
 	: Params(InParams), Events(std::move(InEvents))
 {
