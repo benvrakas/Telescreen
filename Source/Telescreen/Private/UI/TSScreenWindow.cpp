@@ -3,6 +3,8 @@
 #include "Blueprint/WidgetTree.h"
 #include "Buildables/TSBuildableScreen.h"
 #include "Components/Border.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
@@ -138,6 +140,16 @@ void UTSScreenWindow::ToggleFocus(const UObject* WorldContext)
 			return;
 		}
 	}
+	// Otherwise a screen whose controller gave this player control.
+	const APlayerController* Controller = WorldContext ? UGameplayStatics::GetPlayerController(WorldContext, 0) : nullptr;
+	for (TActorIterator<ATSBuildableScreen> It(World); World && Controller && It; ++It)
+	{
+		if (It->GetMode() != ETSScreenMode::SyncedMedia && It->GetGrantFor(Controller->PlayerState) != ETSInputScope::None)
+		{
+			OpenInteractive(*It);
+			return;
+		}
+	}
 }
 
 bool UTSScreenWindow::IsShowing(const ATSBuildableScreen* InScreen)
@@ -220,6 +232,11 @@ void UTSScreenWindow::BuildTree()
 	TitleSlot->SetHorizontalAlignment(HAlign_Left);
 	TitleSlot->SetVerticalAlignment(VAlign_Top);
 	TitleSlot->SetPadding(FMargin(6.f, 4.f));
+	MarkerLayer = WidgetTree->ConstructWidget<UCanvasPanel>();
+	MarkerLayer->SetVisibility(ESlateVisibility::HitTestInvisible);
+	UOverlaySlot* MarkerSlot = Overlay->AddChildToOverlay(MarkerLayer);
+	MarkerSlot->SetHorizontalAlignment(HAlign_Fill);
+	MarkerSlot->SetVerticalAlignment(VAlign_Fill);
 	WidgetTree->RootWidget = Layer;
 }
 
@@ -342,7 +359,7 @@ UTSScreenPlayer* UTSScreenWindow::GetBrowserPlayer() const
 {
 	ATSBuildableScreen* Shown = Screen.Get();
 	UTSScreenPlayer* Player = Shown ? Shown->GetPlayer() : nullptr;
-	return Player && Player->AcceptsInput() ? Player : nullptr;
+	return Player && Player->CanInteract() ? Player : nullptr;
 }
 
 void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -355,8 +372,8 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		Close();
 		return;
 	}
-	// Control moved to someone else (or the browser closed): input no longer has anywhere to go.
-	if (bInteractive && (!Shown->IsLocallyControlled() || Shown->GetMode() == ETSScreenMode::SyncedMedia))
+	// Control moved away and this player isn't watching a stream either: input has nowhere to go.
+	if (bInteractive && (Shown->GetMode() == ETSScreenMode::SyncedMedia || !Player->CanInteract()))
 	{
 		UE_LOG(LogTelescreen, Log, TEXT("%s: no longer yours; leaving the interactive window"), *Shown->GetName());
 		if (bPinned)
@@ -399,7 +416,45 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		UpdateCursor();
 	}
+	UpdateMarkerLabels(Player);
 	Place();
+}
+
+void UTSScreenWindow::UpdateMarkerLabels(const UTSScreenPlayer* Player)
+{
+	const TArray<UTSScreenPlayer::FMarker>& Markers = Player->GetMarkers();
+	const FVector2D Area = Picture->GetCachedGeometry().GetLocalSize();
+	while (MarkerLabels.Num() < Markers.Num())
+	{
+		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
+		FSlateFontInfo Font = Label->GetFont();
+		Font.Size = 11;
+		Label->SetFont(Font);
+		Label->SetShadowOffset(FVector2D(1.f, 1.f));
+		Label->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.9f));
+		if (UCanvasPanelSlot* LabelSlot = MarkerLayer->AddChildToCanvas(Label))
+		{
+			LabelSlot->SetAutoSize(true);
+		}
+		MarkerLabels.Add(Label);
+	}
+	for (int32 I = 0; I < MarkerLabels.Num(); ++I)
+	{
+		UTextBlock* Label = MarkerLabels[I];
+		if (!Markers.IsValidIndex(I) || Area.X < 1.f)
+		{
+			Label->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+		const UTSScreenPlayer::FMarker& Marker = Markers[I];
+		Label->SetText(FText::FromString(Marker.Name));
+		Label->SetColorAndOpacity(FSlateColor(Marker.Color));
+		Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+		if (UCanvasPanelSlot* LabelSlot = Cast<UCanvasPanelSlot>(Label->Slot))
+		{
+			LabelSlot->SetPosition(FVector2D(Marker.Position.X * Area.X + 12.f, Marker.Position.Y * Area.Y + 4.f));
+		}
+	}
 }
 
 void UTSScreenWindow::UpdateCursor()

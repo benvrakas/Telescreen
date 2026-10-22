@@ -38,6 +38,11 @@ const FString UTSConfig::AllowBrowserKey = TEXT("AllowBrowser");
 const FString UTSConfig::BrowserRoleKey = TEXT("BrowserRole");
 const FString UTSConfig::WindowRoleKey = TEXT("WindowRole");
 const FString UTSConfig::RemoteDesktopRoleKey = TEXT("RemoteDesktopRole");
+const FString UTSConfig::ViewerInputBrowserKey = TEXT("ViewerInputBrowser");
+const FString UTSConfig::ViewerInputWindowKey = TEXT("ViewerInputWindow");
+const FString UTSConfig::ViewerInputRemoteKey = TEXT("ViewerInputRemote");
+const FString UTSConfig::GrantMinutesKey = TEXT("GrantMinutes");
+const FString UTSConfig::GrantDisclaimerKey = TEXT("GrantDisclaimerAccepted");
 const FString UTSConfig::RemoteDisclaimerKey = TEXT("RemoteDisclaimerAccepted");
 const FString UTSConfig::TrustedPlayersKey = TEXT("TrustedPlayers");
 const FString UTSConfig::AllowTakeOverKey = TEXT("AllowTakeOver");
@@ -161,7 +166,9 @@ UTSConfig::UTSConfig()
 	AddBool(Sound, WwiseAudioKey, LOCTEXT("WwiseAudio", "Play through the game's audio engine"),
 		LOCTEXT("WwiseAudioTip", "Screen sound goes through the game's own audio (rooms, reverb, walls, the game's volume sliders for the Boom Box). Off: Unreal plays it directly. Applies to sounds that start after the change."), true);
 
-	UConfigPropertySection* BrowserSection = AddSection(TEXT("Browser"), LOCTEXT("BrowserSection", "Browser and window"));
+	// The player sharing a browser, window or remote desktop: it runs on their PC, and these are their choices.
+	UConfigPropertySection* BrowserSection = AddSection(TEXT("Browser"), LOCTEXT("BrowserSection", "When you share (your PC)"));
+	BrowserSection->Tooltip = LOCTEXT("BrowserSectionTip", "Your own browser, window or remote desktop, shown on a screen from your PC. The world host's rules (below) limit what you can share and give.");
 	AddString(BrowserSection, BrowserHomeKey, LOCTEXT("BrowserHome", "Browser start page"),
 		LOCTEXT("BrowserHomeTip", "Page the built-in browser opens when you start it without a link."), TEXT("https://duckduckgo.com"));
 	AddBool(BrowserSection, KeepBrowserLoginsKey, LOCTEXT("KeepBrowserLogins", "Keep browser logins"),
@@ -170,8 +177,6 @@ UTSConfig::UTSConfig()
 		LOCTEXT("StreamKbpsTip", "Video bitrate when you share your browser with other players. 2500 is sharp at 720p; lower it if your upload is slow."), 2500);
 	AddInt(BrowserSection, StreamFpsKey, LOCTEXT("StreamFps", "Stream frame rate"),
 		LOCTEXT("StreamFpsTip", "Frames per second of the shared browser: 30 or 60."), 30);
-	AddInt(BrowserSection, ReceiveStreamsKey, LOCTEXT("ReceiveStreams", "Watch other players' browsers and windows"),
-		LOCTEXT("ReceiveStreamsTip", "0: show them automatically; 1: never (you see who is using the screen only)."), 0);
 	AddString(BrowserSection, CurtainKeyKey, LOCTEXT("CurtainKey", "Privacy curtain key"),
 		LOCTEXT("CurtainKeyTip", "Blanks your shared browser for everyone (you still see it) and back. Key name, e.g. F10."), TEXT("F10"));
 	AddBool(BrowserSection, StreamDisclaimerKey, LOCTEXT("StreamDisclaimer", "I understand that shared browsers are visible to everyone"),
@@ -180,13 +185,19 @@ UTSConfig::UTSConfig()
 		LOCTEXT("WindowAudioTip", "Send the shared window's own sound to the screen (needs Windows 11 or Windows 10 21H2 and later). You keep hearing it from the window itself."), true);
 	AddBool(BrowserSection, WindowCursorKey, LOCTEXT("WindowCursor", "Show the mouse in a shared window"),
 		LOCTEXT("WindowCursorTip", "Include your mouse pointer in the picture of a shared window."), true);
+	AddInt(BrowserSection, GrantMinutesKey, LOCTEXT("GrantMinutes", "Control you give lasts (minutes)"),
+		LOCTEXT("GrantMinutesTip", "How long a viewer you let use your browser, window or remote desktop keeps that control. F10 or Revoke ends it sooner."), 15);
+	AddBool(BrowserSection, GrantDisclaimerKey, LOCTEXT("GrantDisclaimer", "I understand that viewers I give control act on my PC"),
+		LOCTEXT("GrantDisclaimerTip", "Set when you accept the notice the first time you give a viewer control. Turn it off to see it again."), false);
 	AddBool(BrowserSection, RemoteDisclaimerKey, LOCTEXT("RemoteDisclaimer", "I understand that shared remote desktops are visible to everyone"),
 		LOCTEXT("RemoteDisclaimerTip", "Set when you accept the notice the first time you connect a screen to a remote desktop. Turn it off to see it again."), false);
 	AddBool(BrowserSection, WindowDisclaimerKey, LOCTEXT("WindowDisclaimer", "I understand that shared windows are visible to everyone"),
 		LOCTEXT("WindowDisclaimerTip", "Set when you accept the notice the first time you share a window. Turn it off to see it again."), false);
-	AddString(BrowserSection, FocusKeyKey, LOCTEXT("FocusKey", "Window focus key"),
+
+	UConfigPropertySection* Keys = AddSection(TEXT("Keys"), LOCTEXT("KeysSection", "Keys"));
+	AddString(Keys, FocusKeyKey, LOCTEXT("FocusKey", "Window focus key"),
 		LOCTEXT("FocusKeyTip", "Switches the screen window between using the browser (mouse and keyboard go to it) and playing (the window stays as a picture). Key name, e.g. F8."), TEXT("F8"));
-	AddString(BrowserSection, ScreensListKeyKey, LOCTEXT("ScreensListKey", "Screens list key"),
+	AddString(Keys, ScreensListKeyKey, LOCTEXT("ScreensListKey", "Screens list key"),
 		LOCTEXT("ScreensListKeyTip", "Opens the list of every screen in the world. Key name, e.g. F9."), TEXT("F9"));
 
 	UConfigPropertySection* Pip = AddSection(TEXT("HudPicture"), LOCTEXT("HudPicture", "Picture on the HUD"));
@@ -201,10 +212,14 @@ UTSConfig::UTSConfig()
 	AddInt(Privacy, AutoLoadKey, LOCTEXT("AutoLoad", "Load videos other players add"),
 		LOCTEXT("AutoLoadTip", "Loading a video contacts its website from your PC. 0: only from the allowed sites below; 1: from any site; 2: never (you see the title only)."),
 		int32(ETSAutoLoad::AllowedSitesOnly));
+	AddInt(Privacy, ReceiveStreamsKey, LOCTEXT("ReceiveStreams", "Watch other players' browsers and windows"),
+		LOCTEXT("ReceiveStreamsTip", "0: show them automatically; 1: never (you see who is using the screen only)."), 0);
 
-	UConfigPropertySection* Hosting = AddSection(TEXT("Hosting"), LOCTEXT("Hosting", "When hosting"));
+	// The world host: the player hosting the world (or a dedicated server's own settings); rules for everyone.
+	UConfigPropertySection* Hosting = AddSection(TEXT("Hosting"), LOCTEXT("Hosting", "Rules for this world (world host)"));
+	Hosting->Tooltip = LOCTEXT("HostingTip", "Used when this PC hosts the world (on a dedicated server, the server's copy of these settings): what every player may do with screens. Server admins count as the world host.");
 	AddInt(Hosting, QueuePolicyKey, LOCTEXT("QueuePolicy", "Who can change screen videos"),
-		LOCTEXT("QueuePolicyTip", "0: anyone; 1: only the host (on a dedicated server: its admins)."), int32(ETSQueuePolicy::Anyone));
+		LOCTEXT("QueuePolicyTip", "0: anyone; 1: only the world host (on a dedicated server: its admins)."), int32(ETSQueuePolicy::Anyone));
 	AddString(Hosting, AllowedSitesKey, LOCTEXT("AllowedSites", "Allowed sites"),
 		LOCTEXT("AllowedSitesTip", "Comma-separated sites videos can be added from. Also used by the privacy setting above."), DefaultAllowedSites);
 	AddBool(Hosting, AllowAnySiteKey, LOCTEXT("AllowAnySite", "Allow videos from any site"),
@@ -216,18 +231,25 @@ UTSConfig::UTSConfig()
 	AddBool(Hosting, AllowBrowserKey, LOCTEXT("AllowBrowser", "Allow the built-in browser"),
 		LOCTEXT("AllowBrowserTip", "Let players use the built-in browser on screens."), true);
 	AddInt(Hosting, BrowserRoleKey, LOCTEXT("BrowserRole", "Who can use the browser"),
-		LOCTEXT("BrowserRoleTip", "0: everyone; 1: trusted players (list below) and the host; 2: only the host (on a dedicated server: its admins)."),
+		LOCTEXT("BrowserRoleTip", "0: everyone; 1: trusted players (list below) and the world host; 2: only the world host (on a dedicated server: its admins)."),
 		int32(ETSRole::Everyone));
 	AddInt(Hosting, WindowRoleKey, LOCTEXT("WindowRole", "Who can share a window"),
-		LOCTEXT("WindowRoleTip", "Sharing a window shows something from that player's desktop to everyone. 0: everyone; 1: trusted players and the host; 2: only the host or admins."),
+		LOCTEXT("WindowRoleTip", "Sharing a window shows something from that player's desktop to everyone. 0: everyone; 1: trusted players and the world host; 2: only the world host or server admins."),
 		int32(ETSRole::Trusted));
 	AddInt(Hosting, RemoteDesktopRoleKey, LOCTEXT("RemoteDesktopRole", "Who can show a remote desktop"),
-		LOCTEXT("RemoteDesktopRoleTip", "A remote desktop (VNC) shows a whole computer to everyone. 0: everyone; 1: trusted players and the host; 2: only the host or admins."),
+		LOCTEXT("RemoteDesktopRoleTip", "A remote desktop (VNC) shows a whole computer to everyone. 0: everyone; 1: trusted players and the world host; 2: only the world host or server admins."),
 		int32(ETSRole::HostAndAdmins));
+	AddInt(Hosting, ViewerInputBrowserKey, LOCTEXT("ViewerInputBrowser", "Most control a viewer can get: browser"),
+		LOCTEXT("ViewerInputBrowserTip", "What the player sharing a browser may let a viewer do in it. 0: nothing; 1: mouse; 2: mouse and typing; 3: everything the input filter allows."),
+		int32(ETSInputScope::Pointer));
+	AddInt(Hosting, ViewerInputWindowKey, LOCTEXT("ViewerInputWindow", "Most control a viewer can get: shared window"),
+		LOCTEXT("ViewerInputWindowTip", "Viewers acting in a window on the sharer's PC. 0: nothing; 1: mouse; 2: mouse and typing."), int32(ETSInputScope::None));
+	AddInt(Hosting, ViewerInputRemoteKey, LOCTEXT("ViewerInputRemote", "Most control a viewer can get: remote desktop"),
+		LOCTEXT("ViewerInputRemoteTip", "Viewers acting on a whole remote computer. 0: nothing; 1: mouse; 2: mouse and typing."), int32(ETSInputScope::None));
 	AddString(Hosting, TrustedPlayersKey, LOCTEXT("TrustedPlayers", "Trusted players"),
 		LOCTEXT("TrustedPlayersTip", "Comma-separated player names for the \"trusted players\" choices above."), FString());
 	AddBool(Hosting, AllowTakeOverKey, LOCTEXT("AllowTakeOver", "Players can take over a screen in use"),
-		LOCTEXT("AllowTakeOverTip", "Off: only the player using a screen (or the host and admins) can stop it; others wait until it's free."), true);
+		LOCTEXT("AllowTakeOverTip", "Off: only the player using a screen (or the world host and server admins) can stop it; others wait until it's free."), true);
 	AddInt(Hosting, MaxControlledScreensKey, LOCTEXT("MaxControlledScreens", "Screens in use at once"),
 		LOCTEXT("MaxControlledScreensTip", "Most screens showing a browser or window at the same time in this world. Each player uses one at a time."), 4);
 	AddInt(Hosting, MaxVideoMinutesKey, LOCTEXT("MaxVideoMinutes", "Longest video (minutes)"),
@@ -288,6 +310,10 @@ namespace
 			{UTSConfig::BrowserRoleKey, {0.f, 2.f}},
 			{UTSConfig::WindowRoleKey, {0.f, 2.f}},
 			{UTSConfig::RemoteDesktopRoleKey, {0.f, 2.f}},
+			{UTSConfig::ViewerInputBrowserKey, {0.f, 3.f}},
+			{UTSConfig::ViewerInputWindowKey, {0.f, 2.f}},
+			{UTSConfig::ViewerInputRemoteKey, {0.f, 2.f}},
+			{UTSConfig::GrantMinutesKey, {1.f, 120.f}},
 			{UTSConfig::MaxControlledScreensKey, {1.f, 64.f}},
 			{UTSConfig::MaxVideoMinutesKey, {0.f, 100000.f}},
 			{UTSConfig::QueueAddsPerMinuteKey, {1.f, 1000.f}},

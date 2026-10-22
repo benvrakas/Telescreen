@@ -55,6 +55,8 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mSourceUrl);
 	DOREPLIFETIME(ATSBuildableScreen, mViewerCount);
 	DOREPLIFETIME(ATSBuildableScreen, mCurtain);
+	DOREPLIFETIME(ATSBuildableScreen, mViewerStates);
+	DOREPLIFETIME(ATSBuildableScreen, mGrants);
 }
 
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
@@ -329,8 +331,9 @@ void ATSBuildableScreen::Server_TakeControl(APlayerState* Requester, ETSScreenMo
 	mControllerName = Requester->GetPlayerName();
 	mSourceUrl = Url.Left(2048);
 	mWatchers.RemoveAll([Requester](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid() || P->PlayerState == Requester; });
-	mViewerCount = mWatchers.Num();
+	SyncViewers();
 	mCurtain = false;
+	mGrants.Reset();
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s took control (mode %d, %s)%s"), *GetName(), *mControllerName, int32(Mode), *mSourceUrl,
 		Previous.IsEmpty() || Previous == mControllerName ? TEXT("") : *FString::Printf(TEXT(" from %s"), *Previous));
 	FlushNetDormancy();
@@ -350,7 +353,8 @@ void ATSBuildableScreen::Server_ReleaseControl(const TCHAR* Reason)
 	mControllerName.Reset();
 	mSourceUrl.Reset();
 	mWatchers.Reset();
-	mViewerCount = 0;
+	SyncViewers();
+	mGrants.Reset();
 	mCurtain = false;
 	FlushNetDormancy();
 	ForceNetUpdate();
@@ -378,7 +382,7 @@ void ATSBuildableScreen::Server_SetWatcher(APlayerController* Watcher, bool bWat
 	{
 		return;
 	}
-	mViewerCount = mWatchers.Num();
+	SyncViewers();
 	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s the stream (%d viewer(s))"), *GetName(), Watcher->PlayerState ? *Watcher->PlayerState->GetPlayerName() : TEXT("?"),
 		bWatching ? TEXT("watches") : TEXT("stopped watching"), mViewerCount);
 	FlushNetDormancy();
@@ -398,6 +402,11 @@ void ATSBuildableScreen::Server_SetCurtain(bool bOn)
 	}
 	mCurtain = bOn;
 	UE_LOG(LogTelescreen, Log, TEXT("%s: privacy curtain %s"), *GetName(), bOn ? TEXT("on") : TEXT("off"));
+	// The curtain is also the panic key: nobody keeps control of the source while it is blanked.
+	if (bOn)
+	{
+		Server_RevokeGrants(TEXT("curtain on"));
+	}
 	FlushNetDormancy();
 	ForceNetUpdate();
 	OnScreenChanged.Broadcast();
@@ -405,6 +414,92 @@ void ATSBuildableScreen::Server_SetCurtain(bool bOn)
 	{
 		UTSRemoteCallObject::SendKeyframeRequest(this);
 	}
+}
+
+void ATSBuildableScreen::SyncViewers()
+{
+	mViewerCount = mWatchers.Num();
+	mViewerStates.Reset();
+	for (const TWeakObjectPtr<APlayerController>& Watcher : mWatchers)
+	{
+		if (Watcher.IsValid() && Watcher->PlayerState)
+		{
+			mViewerStates.Add(Watcher->PlayerState);
+		}
+	}
+	// Viewers who left lose their grant.
+	mGrants.RemoveAll([this](const FTSInputGrant& Grant) { return !Grant.Player || !mViewerStates.Contains(Grant.Player); });
+}
+
+ETSInputScope ATSBuildableScreen::GetGrantFor(const APlayerState* Player) const
+{
+	const FTSInputGrant* Grant = Player ? mGrants.FindByPredicate([Player](const FTSInputGrant& Each) { return Each.Player == Player; }) : nullptr;
+	return Grant && Grant->ExpiresAt > GetServerTime() ? Grant->Scope : ETSInputScope::None;
+}
+
+ETSInputScope ATSBuildableScreen::GetMaxGrantScope() const
+{
+	const FString& Key = mMode == ETSScreenMode::Window ? UTSConfig::ViewerInputWindowKey
+		: mMode == ETSScreenMode::RemoteDesktop			? UTSConfig::ViewerInputRemoteKey
+														: UTSConfig::ViewerInputBrowserKey;
+	const int32 Default = mMode == ETSScreenMode::Browser ? int32(ETSInputScope::Pointer) : int32(ETSInputScope::None);
+	ETSInputScope Max = ETSInputScope(FMath::Clamp(UTSConfig::GetInt(this, Key, Default), 0, 3));
+	// Full keyboard only in the browser, whose shortcuts the input filter knows.
+	if (mMode != ETSScreenMode::Browser && Max == ETSInputScope::Full)
+	{
+		Max = ETSInputScope::Typing;
+	}
+	return mMode == ETSScreenMode::SyncedMedia ? ETSInputScope::None : Max;
+}
+
+void ATSBuildableScreen::Server_SetGrant(APlayerState* Player, ETSInputScope Scope, int32 Minutes)
+{
+	if (!HasAuthority() || !Player || Player == mController)
+	{
+		return;
+	}
+	mGrants.RemoveAll([Player](const FTSInputGrant& Each) { return Each.Player == Player; });
+	const ETSInputScope Granted = ETSInputScope(FMath::Min(uint8(Scope), uint8(GetMaxGrantScope())));
+	if (Granted != ETSInputScope::None && mViewerStates.Contains(Player))
+	{
+		FTSInputGrant& Grant = mGrants.AddDefaulted_GetRef();
+		Grant.Player = Player;
+		Grant.PlayerName = Player->GetPlayerName();
+		Grant.Scope = Granted;
+		Grant.ExpiresAt = GetServerTime() + 60.0 * FMath::Clamp(Minutes, 1, 120);
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s %s %s input (%s, %d min)"), *GetName(), *mControllerName, Granted == ETSInputScope::None ? TEXT("revoked") : TEXT("granted"),
+		*Player->GetPlayerName(), *UEnum::GetValueAsString(Granted), Minutes);
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::Server_RevokeGrants(const TCHAR* Reason)
+{
+	if (!HasAuthority() || mGrants.Num() == 0)
+	{
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: all input grants revoked (%s)"), *GetName(), Reason);
+	mGrants.Reset();
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+}
+
+bool ATSBuildableScreen::Server_AllowViewerInput(const APlayerState* Viewer)
+{
+	// 120 events a second at most per viewer.
+	TArray<double>& Times = mViewerInputTimes.FindOrAdd(Viewer);
+	const double Now = FPlatformTime::Seconds();
+	Times.RemoveAll([Now](double T) { return Now - T > 1.0; });
+	if (Times.Num() >= 120)
+	{
+		return false;
+	}
+	Times.Add(Now);
+	return true;
 }
 
 bool ATSBuildableScreen::Server_AllowKeyframeRequest()
@@ -442,7 +537,7 @@ void ATSBuildableScreen::CheckController()
 {
 	if (mWatchers.RemoveAll([](const TWeakObjectPtr<APlayerController>& P) { return !P.IsValid(); }) > 0)
 	{
-		mViewerCount = mWatchers.Num();
+		SyncViewers();
 		FlushNetDormancy();
 		ForceNetUpdate();
 		OnScreenChanged.Broadcast();
@@ -450,6 +545,14 @@ void ATSBuildableScreen::CheckController()
 	if (mMode != ETSScreenMode::SyncedMedia && !IsValid(mController))
 	{
 		Server_ReleaseControl(TEXT("controller left"));
+	}
+	const double Now = GetServerTime();
+	if (mGrants.RemoveAll([Now](const FTSInputGrant& Grant) { return Grant.ExpiresAt <= Now; }) > 0)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: an input grant expired"), *GetName());
+		FlushNetDormancy();
+		ForceNetUpdate();
+		OnScreenChanged.Broadcast();
 	}
 }
 

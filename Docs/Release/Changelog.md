@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0 beta 7
+
+- **Sound through the game's audio engine** (Wwise), as BoomBoxPlus plays its music: rooms, reverb, walls and the
+  game's volume sliders apply. Works alongside BoomBoxPlus. Mods menu, Telescreen, Audio switches it off.
+- **Remote desktop (VNC):** a screen panel tab connects to a VM console (QEMU/KVM, Proxmox) or any VNC server, with
+  mouse and keyboard in its window, sound from QEMU, and saved connections (passwords encrypted for your Windows
+  user). Only the world host may use it by default.
+- **Giving viewers control:** the player sharing can let a watching player use the mouse, or mouse and typing (or
+  everything, in the browser), for 15 minutes, within the world host's limit. F10 (blank) also takes control back.
+  Viewers' cursors and names show on the screen; any viewer can click to point at something for everyone.
+- Settings split into **When you share (your PC)** and **Rules for this world (world host)**; texts say "world host"
+  for the world's host and admins.
+
 ## 0.1.0 beta 6
 
 - Tabs are game-style buttons with their names (orange when selected); they were empty boxes.

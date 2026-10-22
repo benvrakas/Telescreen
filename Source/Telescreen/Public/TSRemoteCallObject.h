@@ -53,6 +53,31 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_RequestKeyframe(ATSBuildableScreen* Screen);
 
+	// The controller lets Viewer use the source (Scope None revokes) for Minutes.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetInputGrant(ATSBuildableScreen* Screen, APlayerState* Viewer, ETSInputScope Scope, int32 Minutes);
+
+	// A granted viewer's input: pointer moves unreliably, everything else reliably.
+	UFUNCTION(Server, Unreliable, WithValidation)
+	void Server_ViewerPointer(ATSBuildableScreen* Screen, const FTSViewerInput& Input);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ViewerInput(ATSBuildableScreen* Screen, const FTSViewerInput& Input);
+
+	UFUNCTION(Client, Reliable)
+	void Client_ViewerInput(ATSBuildableScreen* Screen, const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope);
+
+	UFUNCTION(Client, Unreliable)
+	void Client_ViewerPointer(ATSBuildableScreen* Screen, const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope);
+
+	// A viewer points at a spot of the picture (no control needed); everyone watching sees a named ping.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_Ping(ATSBuildableScreen* Screen, uint16 X, uint16 Y);
+
+	// A named cursor or ping on Screen (positions 0-65535 across the picture).
+	UFUNCTION(Client, Unreliable)
+	void Client_ScreenMarker(ATSBuildableScreen* Screen, const FString& Name, uint16 X, uint16 Y, bool bPing);
+
 	// Server: asks Screen's controller for a keyframe.
 	static void SendKeyframeRequest(ATSBuildableScreen* Screen);
 
@@ -83,4 +108,9 @@ private:
 	bool mForceNetField_UTSRemoteCallObject = false;
 
 	TArray<double> RecentAdds;
+	TArray<double> RecentPings;
+	double LastCursorBroadcast = 0.0;
+	void RelayViewerInput(ATSBuildableScreen* Screen, const FTSViewerInput& Input, bool bReliable);
+	// Server: sends a cursor or ping marker to the controller and every watcher of Screen.
+	static void BroadcastMarker(ATSBuildableScreen* Screen, const FString& Name, uint16 X, uint16 Y, bool bPing);
 };

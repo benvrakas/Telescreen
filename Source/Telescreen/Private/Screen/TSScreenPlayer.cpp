@@ -192,6 +192,8 @@ void UTSScreenPlayer::BeginPlay()
 	ScreenChangedHandle = Screen->OnScreenChanged.AddUObject(this, &UTSScreenPlayer::OnScreenChanged);
 	ChunkHandle = Screen->OnStreamChunk.AddUObject(this, &UTSScreenPlayer::OnStreamChunk);
 	KeyframeHandle = Screen->OnKeyframeRequested.AddUObject(this, &UTSScreenPlayer::OnKeyframeRequested);
+	ViewerInputHandle = Screen->OnViewerInput.AddUObject(this, &UTSScreenPlayer::OnViewerInput);
+	MarkerHandle = Screen->OnScreenMarker.AddUObject(this, &UTSScreenPlayer::OnScreenMarker);
 
 	const FVector2D Size = Screen->GetScreenWorldSize();
 	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
@@ -220,6 +222,8 @@ void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Screen->OnScreenChanged.Remove(ScreenChangedHandle);
 		Screen->OnStreamChunk.Remove(ChunkHandle);
 		Screen->OnKeyframeRequested.Remove(KeyframeHandle);
+		Screen->OnViewerInput.Remove(ViewerInputHandle);
+		Screen->OnScreenMarker.Remove(MarkerHandle);
 	}
 	if (Audio)
 	{
@@ -537,6 +541,14 @@ void UTSScreenPlayer::OpenWindowSession()
 
 void UTSScreenPlayer::BrowserMouseMove(const FVector2D& Position, uint32 Modifiers)
 {
+	if (!AcceptsInput() && CanSendViewerInput())
+	{
+		FTSViewerInput Input;
+		Input.Kind = uint8(EInput::MouseMove);
+		Input.Modifiers = Modifiers;
+		SendViewerInput(Input, Position, false);
+		return;
+	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
 	if (!Host || !AcceptsInput())
 	{
@@ -552,6 +564,28 @@ void UTSScreenPlayer::BrowserMouseMove(const FVector2D& Position, uint32 Modifie
 
 void UTSScreenPlayer::BrowserMouseButton(const FVector2D& Position, uint8 Button, bool bUp, int32 ClickCount, uint32 Modifiers)
 {
+	if (!AcceptsInput())
+	{
+		if (CanSendViewerInput())
+		{
+			FTSViewerInput Input;
+			Input.Kind = uint8(EInput::MouseButton);
+			Input.Button = Button;
+			Input.bUp = bUp;
+			Input.Clicks = uint8(FMath::Clamp(ClickCount, 1, 3));
+			Input.Modifiers = Modifiers;
+			SendViewerInput(Input, Position, true);
+		}
+		else if (!bUp && Button == 0 && IsReceivingStream())
+		{
+			// Watching without control: a click points at the spot for everyone.
+			if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+			{
+				RCO->Server_Ping(GetScreen(), uint16(FMath::Clamp(Position.X, 0.0, 1.0) * 65535.0), uint16(FMath::Clamp(Position.Y, 0.0, 1.0) * 65535.0));
+			}
+		}
+		return;
+	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
 	if (!Host || !AcceptsInput())
 	{
@@ -570,6 +604,16 @@ void UTSScreenPlayer::BrowserMouseButton(const FVector2D& Position, uint8 Button
 
 void UTSScreenPlayer::BrowserWheel(const FVector2D& Position, int32 DeltaX, int32 DeltaY, uint32 Modifiers)
 {
+	if (!AcceptsInput() && CanSendViewerInput())
+	{
+		FTSViewerInput Input;
+		Input.Kind = uint8(EInput::Wheel);
+		Input.WheelX = DeltaX;
+		Input.WheelY = DeltaY;
+		Input.Modifiers = Modifiers;
+		SendViewerInput(Input, Position, true);
+		return;
+	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
 	if (!Host || !AcceptsInput())
 	{
@@ -587,6 +631,17 @@ void UTSScreenPlayer::BrowserWheel(const FVector2D& Position, int32 DeltaX, int3
 
 void UTSScreenPlayer::BrowserKey(EKeyType Type, int32 KeyCode, TCHAR Character, uint32 Modifiers)
 {
+	if (!AcceptsInput() && CanSendViewerInput() && GetLocalGrant() >= ETSInputScope::Typing)
+	{
+		FTSViewerInput Input;
+		Input.Kind = uint8(EInput::Key);
+		Input.Button = uint8(Type);
+		Input.KeyCode = KeyCode;
+		Input.Character = uint16(Character);
+		Input.Modifiers = Modifiers;
+		SendViewerInput(Input, FVector2D::ZeroVector, true);
+		return;
+	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
 	if (!Host || !AcceptsInput())
 	{
@@ -607,6 +662,14 @@ void UTSScreenPlayer::BrowserKey(EKeyType Type, int32 KeyCode, TCHAR Character, 
 
 void UTSScreenPlayer::BrowserText(const FString& Text)
 {
+	if (!AcceptsInput() && CanSendViewerInput() && GetLocalGrant() >= ETSInputScope::Typing && !Text.IsEmpty())
+	{
+		FTSViewerInput Input;
+		Input.Kind = uint8(EInput::Text);
+		Input.Text = Text.Left(256);
+		SendViewerInput(Input, FVector2D::ZeroVector, true);
+		return;
+	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
 	if (Host && AcceptsInput() && !Text.IsEmpty())
 	{
@@ -1042,6 +1105,160 @@ void UTSScreenPlayer::OnStreamChunk(const FTSStreamChunk& Chunk)
 	P.bActive = false;
 }
 
+ETSInputScope UTSScreenPlayer::GetLocalGrant() const
+{
+	const ATSBuildableScreen* Screen = GetScreen();
+	const APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
+	return Screen && Controller ? Screen->GetGrantFor(Controller->PlayerState) : ETSInputScope::None;
+}
+
+bool UTSScreenPlayer::CanSendViewerInput() const
+{
+	const ATSBuildableScreen* Screen = GetScreen();
+	return Screen && Screen->GetMode() != ETSScreenMode::SyncedMedia && !Screen->IsLocallyControlled() && !Screen->IsCurtainOn() && IsReceivingStream() &&
+		GetLocalGrant() != ETSInputScope::None;
+}
+
+void UTSScreenPlayer::SendViewerInput(FTSViewerInput& Input, const FVector2D& Position, bool bReliable)
+{
+	UTSRemoteCallObject* RCO = FindRemoteCallObject();
+	if (!RCO)
+	{
+		return;
+	}
+	Input.X = uint16(FMath::Clamp(Position.X, 0.0, 1.0) * 65535.0);
+	Input.Y = uint16(FMath::Clamp(Position.Y, 0.0, 1.0) * 65535.0);
+	if (bReliable)
+	{
+		RCO->Server_ViewerInput(GetScreen(), Input);
+	}
+	else
+	{
+		RCO->Server_ViewerPointer(GetScreen(), Input);
+	}
+}
+
+namespace
+{
+	// The input filter for viewers (Docs/Architecture.md, Viewer control): true if a viewer with Scope may press
+	// virtual key Vk with Modifiers. Shortcuts that could act outside the page or on the clipboard never pass.
+	bool ViewerKeyAllowed(int32 Vk, uint32 Modifiers, ETSInputScope Scope)
+	{
+		const bool bCtrl = (Modifiers & TSHostProtocol::ModControl) != 0;
+		const bool bAlt = (Modifiers & TSHostProtocol::ModAlt) != 0;
+		const bool bShift = (Modifiers & TSHostProtocol::ModShift) != 0;
+		if (Scope == ETSInputScope::Typing)
+		{
+			// Enter, Backspace, Tab, arrows, Home/End, Delete, Shift; no Ctrl or Alt combinations.
+			static const TSet<int32> Editing = {0x08, 0x09, 0x0D, 0x10, 0xA0, 0xA1, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2E};
+			return !bCtrl && !bAlt && Editing.Contains(Vk);
+		}
+		if (Scope != ETSInputScope::Full)
+		{
+			return false;
+		}
+		// Windows keys, F6 (address bar), F11 (full screen), F12 (developer tools).
+		if (Vk == 0x5B || Vk == 0x5C || Vk == 0x75 || Vk == 0x7A || Vk == 0x7B)
+		{
+			return false;
+		}
+		// Alt+Tab, Alt+F4, Alt+D (address bar).
+		if (bAlt && (Vk == 0x09 || Vk == 0x73 || Vk == 'D'))
+		{
+			return false;
+		}
+		// Ctrl+W/T/N (tabs and windows), L (address bar), S/P/O (save, print, open), C/X/V and Insert (clipboard),
+		// Ctrl+Shift+I/J/C (developer tools).
+		if (bCtrl && (Vk == 'W' || Vk == 'T' || Vk == 'N' || Vk == 'L' || Vk == 'S' || Vk == 'P' || Vk == 'O' || Vk == 'C' || Vk == 'X' || Vk == 'V' ||
+			Vk == 0x2D || (bShift && (Vk == 'I' || Vk == 'J'))))
+		{
+			return false;
+		}
+		if (bShift && Vk == 0x2D)
+		{
+			return false;
+		}
+		return true;
+	}
+
+	FLinearColor MarkerColor(const FString& Name)
+	{
+		const uint32 Hash = GetTypeHash(Name);
+		return FLinearColor::MakeFromHSV8(uint8(Hash & 0xFF), 200, 255);
+	}
+}
+
+void UTSScreenPlayer::OnViewerInput(const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen || !Screen->IsLocallyControlled() || !AcceptsInput() || Screen->IsCurtainOn())
+	{
+		return;
+	}
+	const FVector2D Position(Input.X / 65535.0, Input.Y / 65535.0);
+	switch (EInput(Input.Kind))
+	{
+	case EInput::MouseMove:
+		BrowserMouseMove(Position, Input.Modifiers & ~(TSHostProtocol::ModControl | TSHostProtocol::ModAlt));
+		break;
+	case EInput::MouseButton:
+		BrowserMouseButton(Position, Input.Button, Input.bUp, Input.Clicks, Input.Modifiers & ~(TSHostProtocol::ModControl | TSHostProtocol::ModAlt));
+		break;
+	case EInput::Wheel:
+		BrowserWheel(Position, FMath::Clamp(Input.WheelX, -1200, 1200), FMath::Clamp(Input.WheelY, -1200, 1200), 0);
+		break;
+	case EInput::MouseLeave:
+		BrowserMouseLeave();
+		break;
+	case EInput::Key:
+	{
+		const EKeyType Type = EKeyType(Input.Button);
+		if (Type == EKeyType::Char)
+		{
+			// Characters type text; control characters (Ctrl+letter) only pass in Full, through the key filter above.
+			const TCHAR Character = TCHAR(Input.Character);
+			if (Character >= 0x20 || (Character == '\r' || Character == '\b' || Character == '\t'))
+			{
+				if (!(Input.Modifiers & (TSHostProtocol::ModControl | TSHostProtocol::ModAlt)) || Scope == ETSInputScope::Full)
+				{
+					BrowserKey(Type, Input.KeyCode, Character, Input.Modifiers);
+				}
+			}
+		}
+		else if (ViewerKeyAllowed(Input.KeyCode, Input.Modifiers, Scope))
+		{
+			BrowserKey(Type, Input.KeyCode, TCHAR(Input.Character), Input.Modifiers);
+		}
+		else
+		{
+			UE_LOG(LogTelescreen, Verbose, TEXT("%s: blocked key %d (modifiers %u) from %s"), *Screen->GetName(), Input.KeyCode, Input.Modifiers, *ViewerName);
+		}
+		break;
+	}
+	case EInput::Text:
+		BrowserText(Input.Text.Left(256));
+		break;
+	default:
+		break;
+	}
+}
+
+void UTSScreenPlayer::OnScreenMarker(const FString& Name, float X, float Y, bool bPing)
+{
+	const double Now = FPlatformTime::Seconds();
+	FMarker* Marker = bPing ? nullptr : Markers.FindByPredicate([&Name](const FMarker& Each) { return !Each.bPing && Each.Name == Name; });
+	if (!Marker)
+	{
+		Marker = &Markers.AddDefaulted_GetRef();
+		Marker->Name = Name;
+		Marker->bPing = bPing;
+		Marker->Color = MarkerColor(Name);
+	}
+	Marker->Position = FVector2D(FMath::Clamp(X, 0.f, 1.f), FMath::Clamp(Y, 0.f, 1.f));
+	Marker->Until = Now + (bPing ? 3.0 : 2.0);
+	bMarkersDirty = true;
+}
+
 void UTSScreenPlayer::StartLoopback(UTSScreenPlayer* Source)
 {
 	if (!Source || Source == this || !Source->HasBrowser())
@@ -1143,6 +1360,11 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 		return;
 	}
 	PumpVideo();
+	// Markers move or fade while the picture may be still: redraw at most 30 times a second.
+	if ((bMarkersDirty || Markers.Num() > 0) && Now - LastMarkerCompose > 1.0 / 30.0 && bShowingVideo)
+	{
+		ComposeFrame();
+	}
 	if (Now >= NextSenderCheck)
 	{
 		NextSenderCheck = Now + 0.5;
@@ -1256,7 +1478,19 @@ void UTSScreenPlayer::PumpVideo()
 	{
 		return;
 	}
+	ComposeFrame();
+}
+
+void UTSScreenPlayer::ComposeFrame()
+{
+	ATSBuildableScreen* Screen = GetScreen();
 	const int32 Width = int32(Video.GetWidth()), Height = int32(Video.GetHeight());
+	if (!Screen || Width <= 0 || Height <= 0 || FrameBuffer.Num() < Width * Height * 4)
+	{
+		return;
+	}
+	LastMarkerCompose = FPlatformTime::Seconds();
+	bMarkersDirty = false;
 	const FVector2D Size = Screen->GetScreenWorldSize();
 	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
 	// The browser renders at the screen's shape, so it (and its stream) fills the screen exactly.
@@ -1306,6 +1540,46 @@ void UTSScreenPlayer::PumpVideo()
 		else
 		{
 			FMemory::Memcpy(DstRow + Fit.DstX, SrcRow, Fit.SrcWidth * 4);
+		}
+	}
+	// Viewer cursors (a small arrow) and pings (a ring), in each player's colour.
+	const double Now = FPlatformTime::Seconds();
+	Markers.RemoveAll([Now](const FMarker& Marker) { return Marker.Until < Now; });
+	const int32 Unit = FMath::Max(4, Fit.TexHeight / 60);
+	for (const FMarker& Marker : Markers)
+	{
+		const FColor C = Marker.Color.ToFColor(true);
+		const uint32 Pixel = uint32(C.B) | uint32(C.G) << 8 | uint32(C.R) << 16 | 0xFF000000u;
+		const int32 CX = int32(Marker.Position.X * Fit.TexWidth), CY = int32(Marker.Position.Y * Fit.TexHeight);
+		auto Plot = [&](int32 X, int32 Y)
+		{
+			if (X >= 0 && Y >= 0 && X < Fit.TexWidth && Y < Fit.TexHeight)
+			{
+				Dst[int64(Y) * Fit.TexWidth + X] = Pixel;
+			}
+		};
+		if (Marker.bPing)
+		{
+			const float Grow = 1.f - float((Marker.Until - Now) / 3.0);
+			const int32 Radius = int32(Unit * (1.5f + 2.f * Grow));
+			for (int32 Angle = 0; Angle < 360; Angle += 2)
+			{
+				for (int32 Thick = 0; Thick < FMath::Max(2, Unit / 3); ++Thick)
+				{
+					const float R = float(Radius - Thick);
+					Plot(CX + int32(R * FMath::Cos(FMath::DegreesToRadians(float(Angle)))), CY + int32(R * FMath::Sin(FMath::DegreesToRadians(float(Angle)))));
+				}
+			}
+		}
+		else
+		{
+			for (int32 Row = 0; Row < Unit * 2; ++Row)
+			{
+				for (int32 Col = 0; Col <= Row / 2; ++Col)
+				{
+					Plot(CX + Col, CY + Row);
+				}
+			}
 		}
 	}
 	FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(0, 0, 0, 0, Fit.TexWidth, Fit.TexHeight);

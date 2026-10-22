@@ -29,6 +29,8 @@ enum class ETSMediaCommand : uint8
 DECLARE_MULTICAST_DELEGATE(FTSOnScreenChanged);
 DECLARE_MULTICAST_DELEGATE_OneParam(FTSOnStreamChunk, const FTSStreamChunk&);
 DECLARE_MULTICAST_DELEGATE(FTSOnKeyframeRequested);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FTSOnViewerInput, const FTSViewerInput&, const FString& /*ViewerName*/, ETSInputScope);
+DECLARE_MULTICAST_DELEGATE_FourParams(FTSOnScreenMarker, const FString& /*Name*/, float /*X*/, float /*Y*/, bool /*bPing*/);
 
 // A Telescreen: a billboard-shaped sign whose face shows synced media.
 UCLASS(Abstract)
@@ -68,6 +70,33 @@ public:
 	// How many players are watching the controller's stream, and whether the controller blanked it.
 	int32 GetViewerCount() const { return mViewerCount; }
 	bool IsCurtainOn() const { return mCurtain; }
+
+	// The players watching the stream (replicated, for the controller's grant list).
+	const TArray<TObjectPtr<APlayerState>>& GetViewerStates() const { return mViewerStates; }
+
+	// Current input grants (replicated); expired ones are removed on the server.
+	const TArray<FTSInputGrant>& GetGrants() const { return mGrants; }
+
+	// What Player may do in the source right now (None without a live grant).
+	ETSInputScope GetGrantFor(const APlayerState* Player) const;
+
+	// Server only: gives Player Scope for Minutes (None revokes); Scope is clamped to the host's limit for the mode.
+	void Server_SetGrant(APlayerState* Player, ETSInputScope Scope, int32 Minutes);
+
+	// Server only: removes every grant.
+	void Server_RevokeGrants(const TCHAR* Reason);
+
+	// The most the host lets viewers do in this screen's mode.
+	ETSInputScope GetMaxGrantScope() const;
+
+	// Server only: true while Viewer stays under the viewer input rate limit.
+	bool Server_AllowViewerInput(const APlayerState* Viewer);
+
+	// Delivered on the controller's client for each viewer input event the server let through.
+	FTSOnViewerInput OnViewerInput;
+
+	// Delivered on every client watching (and the controller) for viewer cursors and pings.
+	FTSOnScreenMarker OnScreenMarker;
 
 	// Server only: the players watching the stream.
 	const TArray<TWeakObjectPtr<APlayerController>>& GetWatchers() const { return mWatchers; }
@@ -190,6 +219,16 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	bool mCurtain = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	TArray<TObjectPtr<APlayerState>> mViewerStates;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Control)
+	TArray<FTSInputGrant> mGrants;
+
+	// Recent viewer input times per player (server), for the rate limit.
+	TMap<TWeakObjectPtr<const APlayerState>, TArray<double>> mViewerInputTimes;
+	void SyncViewers();
 
 	TArray<TWeakObjectPtr<APlayerController>> mWatchers;
 	double mStreamBudget = 0.0;

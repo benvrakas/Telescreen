@@ -15,8 +15,9 @@ class UTSStreamIndicator : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	// Shows or updates the indicator for Screen, or removes it when Screen is null.
-	static void Update(const UObject* WorldContext, const ATSBuildableScreen* Screen);
+	// Shows or updates the indicator for Screen, or removes it when Screen is null. bGranted: the local player isn't
+	// sharing but was given control of Screen's source.
+	static void Update(const UObject* WorldContext, const ATSBuildableScreen* Screen, bool bGranted = false);
 
 	virtual bool Initialize() override;
 

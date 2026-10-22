@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameFramework/PlayerState.h"
 #include "TSTypes.generated.h"
 
 // How a picture with a different shape fits the screen.
@@ -37,6 +38,83 @@ enum class ETSRole : uint8
 	Trusted,
 	// The host (listen server) or server admins (dedicated server).
 	HostAndAdmins,
+};
+
+// What a viewer may do in the controller's source, granted by the controller within the host's limit.
+UENUM(BlueprintType)
+enum class ETSInputScope : uint8
+{
+	None,
+	// Mouse move, click, scroll inside the picture; no keyboard.
+	Pointer,
+	// Plus printable keys, Enter, Backspace, Tab, arrows; no shortcuts.
+	Typing,
+	// All keys the input filter allows (browser only).
+	Full,
+};
+
+// A viewer's permission to use the controller's source until ExpiresAt (server time).
+USTRUCT()
+struct TELESCREEN_API FTSInputGrant
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TObjectPtr<APlayerState> Player;
+
+	UPROPERTY()
+	FString PlayerName;
+
+	UPROPERTY()
+	ETSInputScope Scope = ETSInputScope::None;
+
+	UPROPERTY()
+	double ExpiresAt = 0.0;
+};
+
+// One input event from a viewer, relayed by the server to the controller. Positions are 0-65535 across the picture.
+USTRUCT()
+struct TELESCREEN_API FTSViewerInput
+{
+	GENERATED_BODY()
+
+	// TSHostProtocol::EInput.
+	UPROPERTY()
+	uint8 Kind = 0;
+
+	UPROPERTY()
+	uint16 X = 0;
+
+	UPROPERTY()
+	uint16 Y = 0;
+
+	// MouseButton: 0 left, 1 middle, 2 right; Key: TSHostProtocol::EKeyType.
+	UPROPERTY()
+	uint8 Button = 0;
+
+	UPROPERTY()
+	bool bUp = false;
+
+	UPROPERTY()
+	uint8 Clicks = 1;
+
+	UPROPERTY()
+	int32 WheelX = 0;
+
+	UPROPERTY()
+	int32 WheelY = 0;
+
+	UPROPERTY()
+	int32 KeyCode = 0;
+
+	UPROPERTY()
+	uint16 Character = 0;
+
+	UPROPERTY()
+	uint32 Modifiers = 0;
+
+	UPROPERTY()
+	FString Text;
 };
 
 // One piece of a live stream packet, small enough to travel as one unreliable network message.

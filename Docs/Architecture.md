@@ -194,7 +194,9 @@ panel's list (`ListShareableWindows`: visible, titled, not cloaked, not tool win
 - Positions from the mod map through the picture's letterbox/crop back to frame pixels (`ToSourcePixels`).
 - Measured with `stream_relay_test.py window:Spotify`: 1920x1044 HEVC at 1.9 Mbps, 20-31 fps at 0.5% chunk loss.
 
-## Roles and host tools
+## Roles and world host tools
+
+See Security.md for the full split between the world host (rules for everyone) and the sharer (their own PC).
 
 Host settings decide the lowest role that may use the browser (default everyone) and share a window (default
 trusted players and the host): everyone, trusted players (a comma-separated name list) or the host. The host is the
@@ -228,3 +230,36 @@ UnrealEditor-Cmd FactoryGame.uproject -run=TSDumpWidgets -out=<file> -classes=/G
 ```
 
 (In Git Bash set `MSYS_NO_PATHCONV=1`, or the first `/Game/...` path gets rewritten.)
+
+## Screen sound in Wwise
+
+Like BoomBoxPlus (its `Docs/WwiseMusic.md` has the bank format details), each screen's sound plays through the game's
+own Wwise on the screen's own `UAkComponent` (created by class name `/Script/AkAudio.AkComponent`, so the mod imports
+nothing from AkAudio), at the screen's centre, with its attenuation scaled by the screen's width (8 m = 1, times the
+Hearing range setting) through `SetAttenuationScalingFactor`. Rooms, reverb, occlusion and the game's volume sliders
+(the Boom Box mix, which the bank comes from) apply.
+
+- `TSWwiseScreens::EnsureReady` builds the bank from the first `Play_Boombox_*.bnk` with one event whose Play action
+  targets a sound: that sound's source becomes Audio Input (plugin `0x00C80002`, with its plugin settings object and
+  the 4-byte parameter size), every object gets a `TS_Screen_<old id>` id, the bank `TS_Screen_Bank`, the source
+  `TS_Screen_Input`. Then it registers the built-in Audio Input plugin (another mod may already have) and loads it.
+- **Shared callbacks.** Audio Input has one set of callbacks for the whole game, so Telescreen and BoomBoxPlus share a
+  dispatcher: each registers an `ISFModWwiseAudioInputSource` (`Private/Audio/SFModWwiseAudioInput.h`, identical in
+  both mods) with `IModularFeatures`, and whichever mod installed the callbacks asks every source in turn; a source
+  answers only for its own playing ids. Unknown ids get silence and 48 kHz stereo.
+- Samples come straight from the helper's audio ring (`FTSAudioReader`), scaled by the screen volume (0 while muted
+  in the background); the game's sliders apply on the bus.
+- A HUD picture with "Hear it everywhere" moves its emitter to the camera every frame.
+- If Wwise ends the sound itself it is posted again; two quick ends in a row switch that sound to the Unreal path
+  (`UAudioComponent` + `UTSStreamingSoundWave`), which is also used when the setting is off or Wwise isn't reachable.
+
+## Viewer control and markers (M6)
+
+Grants, the server relay and the input filter: Security.md. Input path: a granted viewer's screen window sends its
+events through `UTSScreenPlayer`'s usual input functions, which turn them into `FTSViewerInput` (positions 0-65535
+across the picture) for `Server_ViewerPointer` (moves, unreliable) or `Server_ViewerInput` (the rest, reliable); the
+server checks the grant and rate, then `Client_ViewerInput` on the sharer, whose player filters and applies them as if
+they were its own, mapping positions through the picture's fit. Markers: the server sends viewer cursors (at most 15 a
+second) and pings to everyone watching and the sharer (`Client_ScreenMarker`); each PC draws them into its screen
+texture (an arrow for a cursor, a growing ring for a ping, in a colour from the player's name) and the screen window
+labels them with the name.

@@ -6,6 +6,7 @@
 
 class ATSBuildableScreen;
 class UBorder;
+class UCanvasPanel;
 class UImage;
 class UOverlaySlot;
 class USizeBox;
@@ -79,6 +80,12 @@ private:
 	TObjectPtr<UImage> Picture;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> Title;
+	// Names next to viewer cursors and pings.
+	UPROPERTY(Transient)
+	TObjectPtr<UCanvasPanel> MarkerLayer;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> MarkerLabels;
+	void UpdateMarkerLabels(const class UTSScreenPlayer* Player);
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> Hint;
 	UPROPERTY(Transient)

@@ -86,7 +86,7 @@ bool UTSRemoteCallObject::MayEdit(const ATSBuildableScreen* Screen)
 	{
 		return true;
 	}
-	Client_Notice(TEXT("Only the host can change screen videos on this world."));
+	Client_Notice(TEXT("Only the world host can change screen videos on this world."));
 	return false;
 }
 
@@ -110,7 +110,7 @@ bool UTSRemoteCallObject::MayUseMode(const ATSBuildableScreen* Screen, ETSScreen
 	const bool bTrusted = bHost || UTSConfig::IsTrustedPlayer(Screen, GetRequesterName());
 	if ((Role == ETSRole::Trusted && !bTrusted) || (Role == ETSRole::HostAndAdmins && !bHost))
 	{
-		Client_Notice(FString::Printf(TEXT("Only %s can %s on this world."), Role == ETSRole::Trusted ? TEXT("trusted players") : TEXT("the host"), What));
+		Client_Notice(FString::Printf(TEXT("Only %s can %s on this world."), Role == ETSRole::Trusted ? TEXT("trusted players") : TEXT("the world host"), What));
 		return false;
 	}
 	const bool bSomeoneElse = Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->GetController() && Screen->GetController() != Controller->PlayerState;
@@ -384,6 +384,172 @@ void UTSRemoteCallObject::Client_RequestKeyframe_Implementation(ATSBuildableScre
 	if (Screen)
 	{
 		Screen->OnKeyframeRequested.Broadcast();
+	}
+}
+
+bool UTSRemoteCallObject::Server_SetInputGrant_Validate(ATSBuildableScreen* Screen, APlayerState* Viewer, ETSInputScope Scope, int32 Minutes)
+{
+	return uint8(Scope) <= uint8(ETSInputScope::Full);
+}
+
+void UTSRemoteCallObject::Server_SetInputGrant_Implementation(ATSBuildableScreen* Screen, APlayerState* Viewer, ETSInputScope Scope, int32 Minutes)
+{
+	const APlayerController* Controller = GetOwnerPlayerController();
+	if (!Screen || !Controller || Screen->GetController() != Controller->PlayerState)
+	{
+		return;
+	}
+	if (Scope != ETSInputScope::None && Screen->GetMaxGrantScope() == ETSInputScope::None)
+	{
+		Client_Notice(TEXT("The world host doesn't let viewers control this kind of screen."));
+		return;
+	}
+	Screen->Server_SetGrant(Viewer, Scope, Minutes);
+}
+
+bool UTSRemoteCallObject::Server_ViewerPointer_Validate(ATSBuildableScreen* Screen, const FTSViewerInput& Input)
+{
+	return Input.Text.Len() <= 256;
+}
+
+void UTSRemoteCallObject::Server_ViewerPointer_Implementation(ATSBuildableScreen* Screen, const FTSViewerInput& Input)
+{
+	RelayViewerInput(Screen, Input, false);
+}
+
+bool UTSRemoteCallObject::Server_ViewerInput_Validate(ATSBuildableScreen* Screen, const FTSViewerInput& Input)
+{
+	return Input.Text.Len() <= 256;
+}
+
+void UTSRemoteCallObject::Server_ViewerInput_Implementation(ATSBuildableScreen* Screen, const FTSViewerInput& Input)
+{
+	RelayViewerInput(Screen, Input, true);
+}
+
+void UTSRemoteCallObject::RelayViewerInput(ATSBuildableScreen* Screen, const FTSViewerInput& Input, bool bReliable)
+{
+	const APlayerController* Viewer = GetOwnerPlayerController();
+	if (!Screen || !Viewer || !Viewer->PlayerState || Screen->IsCurtainOn())
+	{
+		return;
+	}
+	const ETSInputScope Scope = Screen->GetGrantFor(Viewer->PlayerState);
+	if (Scope == ETSInputScope::None || !Screen->Server_AllowViewerInput(Viewer->PlayerState))
+	{
+		return;
+	}
+	const bool bPointerKind = Input.Kind <= uint8(TSHostProtocol::EInput::Wheel) || Input.Kind == uint8(TSHostProtocol::EInput::MouseLeave);
+	if (!bPointerKind && Scope == ETSInputScope::Pointer)
+	{
+		return;
+	}
+	const FString Name = Viewer->PlayerState->GetPlayerName();
+	const APlayerState* ControllerState = Screen->GetController();
+	APlayerController* Controller = ControllerState ? Cast<APlayerController>(ControllerState->GetOwner()) : nullptr;
+	if (Controller && Controller->IsLocalController())
+	{
+		Screen->OnViewerInput.Broadcast(Input, Name, Scope);
+	}
+	else if (AFGPlayerController* Remote = Cast<AFGPlayerController>(Controller))
+	{
+		if (UTSRemoteCallObject* RCO = Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>())
+		{
+			if (bReliable)
+			{
+				RCO->Client_ViewerInput(Screen, Input, Name, Scope);
+			}
+			else
+			{
+				RCO->Client_ViewerPointer(Screen, Input, Name, Scope);
+			}
+		}
+	}
+	// Everyone watching sees where the viewer points (at most 15 times a second).
+	const double Now = FPlatformTime::Seconds();
+	if (bPointerKind && Now - LastCursorBroadcast > 1.0 / 15.0)
+	{
+		LastCursorBroadcast = Now;
+		BroadcastMarker(Screen, Name, Input.X, Input.Y, false);
+	}
+}
+
+void UTSRemoteCallObject::Client_ViewerInput_Implementation(ATSBuildableScreen* Screen, const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope)
+{
+	if (Screen)
+	{
+		Screen->OnViewerInput.Broadcast(Input, ViewerName, Scope);
+	}
+}
+
+void UTSRemoteCallObject::Client_ViewerPointer_Implementation(ATSBuildableScreen* Screen, const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope)
+{
+	if (Screen)
+	{
+		Screen->OnViewerInput.Broadcast(Input, ViewerName, Scope);
+	}
+}
+
+bool UTSRemoteCallObject::Server_Ping_Validate(ATSBuildableScreen* Screen, uint16 X, uint16 Y)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_Ping_Implementation(ATSBuildableScreen* Screen, uint16 X, uint16 Y)
+{
+	const APlayerController* Viewer = GetOwnerPlayerController();
+	if (!Screen || !Viewer || !Viewer->PlayerState || Screen->GetMode() == ETSScreenMode::SyncedMedia)
+	{
+		return;
+	}
+	const double Now = FPlatformTime::Seconds();
+	RecentPings.RemoveAll([Now](double T) { return Now - T > 1.0; });
+	if (RecentPings.Num() >= 3)
+	{
+		return;
+	}
+	RecentPings.Add(Now);
+	BroadcastMarker(Screen, Viewer->PlayerState->GetPlayerName(), X, Y, true);
+}
+
+void UTSRemoteCallObject::Client_ScreenMarker_Implementation(ATSBuildableScreen* Screen, const FString& Name, uint16 X, uint16 Y, bool bPing)
+{
+	if (Screen)
+	{
+		Screen->OnScreenMarker.Broadcast(Name, X / 65535.f, Y / 65535.f, bPing);
+	}
+}
+
+void UTSRemoteCallObject::BroadcastMarker(ATSBuildableScreen* Screen, const FString& Name, uint16 X, uint16 Y, bool bPing)
+{
+	TArray<APlayerController*> Targets;
+	for (const TWeakObjectPtr<APlayerController>& Watcher : Screen->GetWatchers())
+	{
+		if (Watcher.IsValid())
+		{
+			Targets.AddUnique(Watcher.Get());
+		}
+	}
+	if (const APlayerState* ControllerState = Screen->GetController())
+	{
+		if (APlayerController* Controller = Cast<APlayerController>(ControllerState->GetOwner()))
+		{
+			Targets.AddUnique(Controller);
+		}
+	}
+	for (APlayerController* Target : Targets)
+	{
+		if (Target->IsLocalController())
+		{
+			Screen->OnScreenMarker.Broadcast(Name, X / 65535.f, Y / 65535.f, bPing);
+		}
+		else if (AFGPlayerController* Remote = Cast<AFGPlayerController>(Target))
+		{
+			if (UTSRemoteCallObject* RCO = Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>())
+			{
+				RCO->Client_ScreenMarker(Screen, Name, X, Y, bPing);
+			}
+		}
 	}
 }
 

@@ -89,6 +89,25 @@ public:
 	bool IsLoopback() const { return LoopbackSource.IsValid(); }
 	uint32 GetSessionId() const { return Session; }
 
+	// Viewer control: true if the local player (watching someone else's source) may send input to it now.
+	bool CanSendViewerInput() const;
+
+	// True if the screen window may take mouse and keyboard for this screen: the local player's own source, or watching
+	// someone else's (clicks become input with a grant, pings without).
+	bool CanInteract() const { return AcceptsInput() || IsReceivingStream(); }
+	ETSInputScope GetLocalGrant() const;
+
+	// Cursors of viewers with control and pings, as shown on this PC (positions 0-1 across the picture).
+	struct FMarker
+	{
+		FString Name;
+		FVector2D Position;
+		double Until = 0.0;
+		bool bPing = false;
+		FLinearColor Color;
+	};
+	const TArray<FMarker>& GetMarkers() const { return Markers; }
+
 	// Live stream: text about the running stream for the panel (controller: encoder, rate; viewer: decoder, rate).
 	FText GetStreamStats() const { return StreamStats; }
 	bool IsStreaming() const { return SenderSession != 0; }
@@ -216,6 +235,17 @@ private:
 	double LastKeyframeRequest = 0.0;
 	bool bAwaitingKeyframe = false;
 	FDelegateHandle ChunkHandle;
+	FDelegateHandle ViewerInputHandle;
+	FDelegateHandle MarkerHandle;
+	TArray<FMarker> Markers;
+	bool bMarkersDirty = false;
+	double LastMarkerCompose = 0.0;
+	void OnViewerInput(const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope);
+	void OnScreenMarker(const FString& Name, float X, float Y, bool bPing);
+	// Sends a viewer input event to the controller through the server (pointer moves unreliably).
+	void SendViewerInput(FTSViewerInput& Input, const FVector2D& Position, bool bReliable);
+	// Draws the last frame into the texture, with the markers.
+	void ComposeFrame();
 	void ReconcileViewer(ATSBuildableScreen* Screen);
 	void OpenReceiverSession(const FText& Title);
 	void SetWatching(bool bInWatching);

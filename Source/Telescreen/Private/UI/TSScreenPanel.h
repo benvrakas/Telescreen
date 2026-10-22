@@ -50,6 +50,10 @@ enum class ETSPanelAction : uint8
 	RemoteSave,
 	RemoteSavedConnect,
 	RemoteSavedRemove,
+	GrantPointer,
+	GrantTyping,
+	GrantFull,
+	GrantRevoke,
 	Tab,
 	ConfirmAccept,
 	ConfirmCancel,
@@ -116,6 +120,7 @@ private:
 		TakeOver,
 		ShareWindow,
 		ConnectRemote,
+		Grant,
 	};
 
 	void BuildTree();
@@ -168,6 +173,12 @@ private:
 	TObjectPtr<UWidget> TakeOverButton;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> HostStopButton;
+	// The controller's viewers and what each may do.
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> ViewersBox;
+	FString ShownViewers;
+	void RebuildViewers();
+	ETSInputScope PendingGrantScope = ETSInputScope::None;
 
 	// Tabs.
 	UPROPERTY(Transient)

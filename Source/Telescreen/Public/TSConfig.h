@@ -55,6 +55,11 @@ public:
 	static const FString BrowserRoleKey;
 	static const FString WindowRoleKey;
 	static const FString RemoteDesktopRoleKey;
+	static const FString ViewerInputBrowserKey;
+	static const FString ViewerInputWindowKey;
+	static const FString ViewerInputRemoteKey;
+	static const FString GrantMinutesKey;
+	static const FString GrantDisclaimerKey;
 	static const FString RemoteDisclaimerKey;
 	static const FString TrustedPlayersKey;
 	static const FString AllowTakeOverKey;

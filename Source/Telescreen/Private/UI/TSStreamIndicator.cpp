@@ -16,7 +16,7 @@ namespace
 	TWeakObjectPtr<UTSStreamIndicator> GIndicator;
 }
 
-void UTSStreamIndicator::Update(const UObject* WorldContext, const ATSBuildableScreen* Screen)
+void UTSStreamIndicator::Update(const UObject* WorldContext, const ATSBuildableScreen* Screen, bool bGranted)
 {
 	UTSStreamIndicator* Indicator = GIndicator.Get();
 	if (!Screen)
@@ -45,6 +45,24 @@ void UTSStreamIndicator::Update(const UObject* WorldContext, const ATSBuildableS
 																		 : LOCTEXT("IndicatorBrowser", "your browser");
 	const FText Key = FText::FromString(UTSConfig::GetString(Screen, UTSConfig::CurtainKeyKey, TEXT("F10")));
 	FText Text;
+	if (bGranted)
+	{
+		const APlayerController* Local = UGameplayStatics::GetPlayerController(WorldContext, 0);
+		const FTSInputGrant* Grant = Local ? Screen->GetGrants().FindByPredicate([Local](const FTSInputGrant& Each) { return Each.Player == Local->PlayerState; }) : nullptr;
+		const int32 Minutes = Grant ? FMath::Max(1, FMath::CeilToInt((Grant->ExpiresAt - Screen->GetServerTime()) / 60.0)) : 0;
+		const FText Scope = Grant && Grant->Scope == ETSInputScope::Pointer ? LOCTEXT("ScopePointer", "the mouse")
+			: Grant && Grant->Scope == ETSInputScope::Typing				  ? LOCTEXT("ScopeTyping", "mouse and typing")
+																			  : LOCTEXT("ScopeFull", "mouse and keyboard");
+		Text = FText::Format(LOCTEXT("IndicatorGranted", "{0} lets you use {1} on {2} ({3} min left): open it in a window ({4})"),
+			FText::FromString(Screen->GetControllerName()), Scope, Screen->GetDisplayName(), FText::AsNumber(Minutes),
+			FText::FromString(UTSConfig::GetString(Screen, UTSConfig::FocusKeyKey, TEXT("F8"))));
+		if (Indicator->Line)
+		{
+			Indicator->Line->SetText(Text);
+			Indicator->Line->SetColorAndOpacity(FSlateColor(FLinearColor(0.4f, 0.85f, 1.f)));
+		}
+		return;
+	}
 	if (Screen->IsCurtainOn())
 	{
 		Text = FText::Format(LOCTEXT("IndicatorCurtain", "Sharing {0} on {1}: blanked for everyone ({2} shows it again)"), What, Screen->GetDisplayName(), Key);

@@ -271,12 +271,17 @@ void UTSClientSubsystem::Tick(float DeltaTime)
 	}
 	NextIndicatorUpdate = 0.25f;
 	ATSBuildableScreen* Mine = nullptr;
+	ATSBuildableScreen* Granted = nullptr;
 	for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
 	{
 		if (It->GetMode() != ETSScreenMode::SyncedMedia && It->IsLocallyControlled())
 		{
 			Mine = *It;
 			break;
+		}
+		if (!Granted && It->GetMode() != ETSScreenMode::SyncedMedia && It->GetGrantFor(Controller->PlayerState) != ETSInputScope::None)
+		{
+			Granted = *It;
 		}
 	}
 	if (bCurtainPressed && Mine)
@@ -286,7 +291,7 @@ void UTSClientSubsystem::Tick(float DeltaTime)
 			RCO->Server_SetCurtain(Mine, !Mine->IsCurtainOn());
 		}
 	}
-	UTSStreamIndicator::Update(this, Mine);
+	UTSStreamIndicator::Update(this, Mine ? Mine : Granted, Mine == nullptr && Granted != nullptr);
 }
 
 void UTSClientSubsystem::Deinitialize()

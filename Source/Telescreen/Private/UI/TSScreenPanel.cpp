@@ -187,9 +187,11 @@ void UTSScreenPanel::BuildTree()
 	AddToHBox(SharingButtons, StopSharingButton);
 	TakeOverButton = MakeButton(LOCTEXT("TakeOver", "Use the browser myself"), ETSPanelAction::BrowserTakeOver);
 	AddToHBox(SharingButtons, TakeOverButton);
-	HostStopButton = MakeButton(LOCTEXT("HostStop", "Stop it (host)"), ETSPanelAction::HostStop);
+	HostStopButton = MakeButton(LOCTEXT("HostStop", "Stop it (world host)"), ETSPanelAction::HostStop);
 	AddToHBox(SharingButtons, HostStopButton);
 	AddRow(Sharing, SharingButtons, 6.f);
+	ViewersBox = MakeVBox();
+	AddRow(Sharing, ViewersBox, 6.f);
 	SharingBar = Sharing;
 	AddRow(Root, Sharing, 8.f);
 
@@ -581,18 +583,32 @@ void UTSScreenPanel::RefreshSharing()
 		}
 		else
 		{
-			Line = Stats.IsEmpty() ? FText::GetEmpty() : FText::Format(LOCTEXT("ViewingStats", "Stream: {0}"), Stats);
+			const UTSScreenPlayer* Me = Player;
+			const ETSInputScope Granted = Me ? Me->GetLocalGrant() : ETSInputScope::None;
+			Line = Granted != ETSInputScope::None ? FText::Format(LOCTEXT("ViewerGranted", "{0} lets you use it: open it in a window."), FText::FromString(Screen->GetControllerName()))
+												  : LOCTEXT("ViewerPing", "Open it in a window and click to point at something for everyone.");
+			if (!Stats.IsEmpty())
+			{
+				Line = FText::Format(LOCTEXT("ViewingStats", "{0}   Stream: {1}"), Line, Stats);
+			}
 		}
 		SharingText->SetText(Line);
 		Show(SharingText, !Line.IsEmpty());
-		TSVanillaUI::SetButtonText(OpenWindowButton, FText::Format(LOCTEXT("OpenWindowKey", "Use it in a window ({0})"), FText::FromString(FocusKey)));
+		const bool bGranted = !bMine && Player && Player->GetLocalGrant() != ETSInputScope::None;
+		TSVanillaUI::SetButtonText(OpenWindowButton, bMine || bGranted ? FText::Format(LOCTEXT("OpenWindowKey", "Use it in a window ({0})"), FText::FromString(FocusKey))
+																	   : LOCTEXT("WatchWindow", "Watch in a window"));
 		TSVanillaUI::SetButtonText(CurtainButton, Screen->IsCurtainOn() ? LOCTEXT("CurtainOff", "Show it again")
 																		 : FText::Format(LOCTEXT("CurtainOnKey", "Blank for everyone ({0})"), FText::FromString(CurtainKey)));
 		TSVanillaUI::SetButtonText(StopSharingButton, bWindowMode ? LOCTEXT("WindowStop", "Stop sharing")
 														: bRemoteMode ? LOCTEXT("RemoteStop", "Disconnect")
 																	  : LOCTEXT("BrowserStop", "Close the browser"));
 	}
-	Show(OpenWindowButton, bMine);
+	Show(OpenWindowButton, bMine || (bShared && Player && Player->IsReceivingStream()));
+	Show(ViewersBox, bMine);
+	if (bMine)
+	{
+		RebuildViewers();
+	}
 	Show(CurtainButton, bMine);
 	Show(StopSharingButton, bMine);
 	Show(TakeOverButton, bBrowserMode && !bMine);
@@ -647,7 +663,7 @@ void UTSScreenPanel::RefreshSharing()
 	}
 	else if (bBrowserMode)
 	{
-		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserOtherNote", "{0} is using this screen's browser. You can open yours here instead if the host allows it."),
+		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserOtherNote", "{0} is using this screen's browser. You can open yours here instead if the world host allows it."),
 			FText::FromString(Screen->GetControllerName())));
 	}
 	else
@@ -687,6 +703,63 @@ void UTSScreenPanel::RefreshSharing()
 	else
 	{
 		WindowNote->SetText(LOCTEXT("WindowPick", "Pick a window to show on this screen with its sound. Only that window is shared, not your desktop."));
+	}
+}
+
+void UTSScreenPanel::RebuildViewers()
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	if (!Screen)
+	{
+		return;
+	}
+	// Rebuilt only when a viewer, a grant or a grant's minutes change.
+	FString Signature;
+	for (const APlayerState* Viewer : Screen->GetViewerStates())
+	{
+		const FTSInputGrant* Grant = Screen->GetGrants().FindByPredicate([Viewer](const FTSInputGrant& Each) { return Each.Player == Viewer; });
+		Signature += FString::Printf(TEXT("%s|%d|%d;"), Viewer ? *Viewer->GetPlayerName() : TEXT("?"), Grant ? int32(Grant->Scope) : 0,
+			Grant ? FMath::CeilToInt((Grant->ExpiresAt - Screen->GetServerTime()) / 60.0) : 0);
+	}
+	if (Signature == ShownViewers)
+	{
+		return;
+	}
+	ShownViewers = Signature;
+	ViewersBox->ClearChildren();
+	const TArray<TObjectPtr<APlayerState>>& Viewers = Screen->GetViewerStates();
+	for (int32 I = 0; I < Viewers.Num(); ++I)
+	{
+		const APlayerState* Viewer = Viewers[I];
+		if (!Viewer)
+		{
+			continue;
+		}
+		const FTSInputGrant* Grant = Screen->GetGrants().FindByPredicate([Viewer](const FTSInputGrant& Each) { return Each.Player == Viewer; });
+		FText Label = FText::Format(LOCTEXT("ViewerRow", "{0}: watching"), FText::FromString(Viewer->GetPlayerName()));
+		if (Grant)
+		{
+			const FText Scope = Grant->Scope == ETSInputScope::Pointer ? LOCTEXT("GrantedPointer", "can use the mouse")
+				: Grant->Scope == ETSInputScope::Typing				   ? LOCTEXT("GrantedTyping", "can use the mouse and type")
+																	   : LOCTEXT("GrantedFull", "can use mouse and keyboard");
+			Label = FText::Format(LOCTEXT("ViewerRowGranted", "{0}: {1} ({2} min left)"), FText::FromString(Viewer->GetPlayerName()), Scope,
+				FText::AsNumber(FMath::Max(1, FMath::CeilToInt((Grant->ExpiresAt - Screen->GetServerTime()) / 60.0))));
+		}
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(MakeText(Label, 13));
+		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		TextSlot->SetVerticalAlignment(VAlign_Center);
+		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantPointer", "Let them use the mouse"), ETSPanelAction::GrantPointer, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantTyping", "Mouse and typing"), ETSPanelAction::GrantTyping, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		if (Screen->GetMode() == ETSScreenMode::Browser)
+		{
+			Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantFull", "Everything"), ETSPanelAction::GrantFull, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		}
+		if (Grant)
+		{
+			Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("GrantRevoke", "Revoke"), ETSPanelAction::GrantRevoke, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		}
+		ViewersBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 2.f));
 	}
 }
 
@@ -752,7 +825,10 @@ void UTSScreenPanel::ShowWindowList()
 void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
 {
 	const bool bWindow = Kind == EConfirm::ShareWindow;
-	const FString& NoticeKey = bWindow ? UTSConfig::WindowDisclaimerKey : Kind == EConfirm::ConnectRemote ? UTSConfig::RemoteDisclaimerKey : UTSConfig::StreamDisclaimerKey;
+	const FString& NoticeKey = bWindow							   ? UTSConfig::WindowDisclaimerKey
+							 : Kind == EConfirm::ConnectRemote ? UTSConfig::RemoteDisclaimerKey
+							 : Kind == EConfirm::Grant		   ? UTSConfig::GrantDisclaimerKey
+															   : UTSConfig::StreamDisclaimerKey;
 	if (UTSConfig::GetBool(this, NoticeKey, false))
 	{
 		RunConfirmed(Kind, Index);
@@ -761,7 +837,23 @@ void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
 	PendingConfirm = Kind;
 	PendingIndex = Index;
 	const FText CurtainKey = FText::FromString(UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")));
-	if (Kind == EConfirm::ConnectRemote)
+	if (Kind == EConfirm::Grant)
+	{
+		const ATSBuildableScreen* Screen = GetScreen();
+		const APlayerState* Viewer = Screen && Screen->GetViewerStates().IsValidIndex(Index) ? Screen->GetViewerStates()[Index].Get() : nullptr;
+		ConfirmTitle->SetText(LOCTEXT("ConfirmGrantTitle", "Give another player control?"));
+		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmGrant",
+			"{0} will be able to click{1} in your {2} on your PC. They can do anything you could do there, including in accounts you're signed in "
+			"to. Only do this with people you trust.\n\nIt ends by itself after {3} minutes; Revoke or {4} ends it at once. This question appears "
+			"only once."),
+			FText::FromString(Viewer ? Viewer->GetPlayerName() : FString(TEXT("They"))),
+			PendingGrantScope == ETSInputScope::Pointer ? FText::GetEmpty() : LOCTEXT("ConfirmGrantTyping", " and type"),
+			Screen && Screen->GetMode() == ETSScreenMode::Window ? LOCTEXT("ConfirmGrantWindow", "window")
+			: Screen && Screen->GetMode() == ETSScreenMode::RemoteDesktop ? LOCTEXT("ConfirmGrantRemote", "remote desktop")
+																		 : LOCTEXT("ConfirmGrantBrowser", "browser"),
+			FText::AsNumber(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::GrantMinutesKey, 15), 1, 120)), CurtainKey));
+	}
+	else if (Kind == EConfirm::ConnectRemote)
 	{
 		ConfirmTitle->SetText(LOCTEXT("ConfirmRemoteTitle", "Show a whole computer to everyone?"));
 		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmRemote",
@@ -802,6 +894,12 @@ void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
 		RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, Kind == EConfirm::OpenBrowser ? TSVanillaUI::GetInputText(BrowserUrlBox).ToString().TrimStartAndEnd() : FString());
 		OpenWindowWhenMineUntil = FPlatformTime::Seconds() + OpenWindowTimeout;
 		SetNotice(LOCTEXT("OpeningBrowser", "Opening the browser..."));
+		break;
+	case EConfirm::Grant:
+		if (Screen->GetViewerStates().IsValidIndex(Index))
+		{
+			RCO->Server_SetInputGrant(Screen, Screen->GetViewerStates()[Index], PendingGrantScope, FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::GrantMinutesKey, 15), 1, 120));
+		}
 		break;
 	case EConfirm::ConnectRemote:
 	{
@@ -989,6 +1087,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		Show(ConfirmLayer, false);
 		UTSConfig::SetBool(this, Kind == EConfirm::ShareWindow	   ? UTSConfig::WindowDisclaimerKey
 								 : Kind == EConfirm::ConnectRemote ? UTSConfig::RemoteDisclaimerKey
+								 : Kind == EConfirm::Grant		   ? UTSConfig::GrantDisclaimerKey
 																   : UTSConfig::StreamDisclaimerKey, true);
 		UE_LOG(LogTelescreen, Log, TEXT("Sharing notice %d accepted"), int32(Kind));
 		RunConfirmed(Kind, ConfirmIndex);
@@ -1048,6 +1147,18 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::BrowserTakeOver: AskConfirm(EConfirm::TakeOver, INDEX_NONE); break;
 	case ETSPanelAction::WindowShare: AskConfirm(EConfirm::ShareWindow, Index); break;
 	case ETSPanelAction::RemoteConnect: AskConfirm(EConfirm::ConnectRemote, INDEX_NONE); break;
+	case ETSPanelAction::GrantPointer:
+	case ETSPanelAction::GrantTyping:
+	case ETSPanelAction::GrantFull:
+		PendingGrantScope = Action == ETSPanelAction::GrantPointer ? ETSInputScope::Pointer : Action == ETSPanelAction::GrantTyping ? ETSInputScope::Typing : ETSInputScope::Full;
+		AskConfirm(EConfirm::Grant, Index);
+		break;
+	case ETSPanelAction::GrantRevoke:
+		if (Screen->GetViewerStates().IsValidIndex(Index))
+		{
+			RCO->Server_SetInputGrant(Screen, Screen->GetViewerStates()[Index], ETSInputScope::None, 0);
+		}
+		break;
 	case ETSPanelAction::RemoteSavedConnect: AskConfirm(EConfirm::ConnectRemote, Index); break;
 	case ETSPanelAction::RemoteSave:
 	{
