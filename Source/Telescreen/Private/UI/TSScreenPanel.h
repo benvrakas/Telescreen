@@ -8,9 +8,9 @@
 
 class ATSBuildableScreen;
 class UEditableTextBox;
-class UScrollBox;
 class UTextBlock;
 class UVerticalBox;
+class UWidgetSwitcher;
 class UTSScreenPanel;
 
 UENUM()
@@ -38,17 +38,20 @@ enum class ETSPanelAction : uint8
 	BrowserBack,
 	BrowserForward,
 	BrowserReload,
-	BrowserWindow,
-	BrowserStop,
+	OpenWindow,
+	StopSharing,
 	BrowserTakeOver,
 	LoopbackToggle,
 	CurtainToggle,
 	HostStop,
-	WindowList,
+	WindowRefresh,
 	WindowShare,
+	Tab,
+	ConfirmAccept,
+	ConfirmCancel,
 };
 
-// Routes one button's click to its panel with the button's action and queue index.
+// Routes one button's click to its panel with the button's action and index (queue row, window row or tab).
 UCLASS()
 class UTSPanelAction : public UObject
 {
@@ -65,7 +68,9 @@ public:
 	void HandleClicked();
 };
 
-// The window that opens when a player uses a Telescreen: now playing, playback controls, the shared queue, screen settings.
+// The window that opens when a player uses a Telescreen. A header says what the screen shows (with the sharing
+// controls while someone shares), and tabs hold the rest: Videos (playback, adding links, the queue), Browser, Share
+// a window, Screen (name, picture fit). First-time sharing notices are a confirm dialog over the panel.
 UCLASS()
 class UTSScreenPanel : public UFGInteractWidget
 {
@@ -83,93 +88,129 @@ public:
 	void HandleAction(ETSPanelAction Action, int32 Index);
 
 private:
+	enum class ETab : uint8
+	{
+		Videos,
+		Browser,
+		Window,
+		Screen,
+	};
+
+	enum class EConfirm : uint8
+	{
+		None,
+		OpenBrowser,
+		TakeOver,
+		ShareWindow,
+	};
+
 	void BuildTree();
 	ATSBuildableScreen* GetScreen() const;
 	void Refresh();
 	void RefreshTimes();
+	void RefreshSharing();
 	void RebuildQueue();
 	void SetNotice(const FText& Text, bool bError = false);
 	void AddLink(bool bPlayNow);
 	void Close();
+	void SelectTab(ETab Tab);
+	void RequestWindowList();
+	void ShowWindowList();
+	void AskConfirm(EConfirm Kind, int32 Index);
+	void RunConfirmed(EConfirm Kind, int32 Index);
 
 	UWidget* MakeButton(const FText& Label, ETSPanelAction Action, int32 Index = INDEX_NONE, const FLinearColor& Color = FLinearColor(0.12f, 0.13f, 0.16f));
 	UTextBlock* MakeText(const FText& Text, int32 Size, const FLinearColor& Color = FLinearColor::White);
+	static UTextBlock* ButtonLabel(UWidget* Button);
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTSPanelAction>> Actions;
 
+	// Header.
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> TitleText;
 	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> NowPlayingText;
+	TObjectPtr<UTextBlock> PipButtonText;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> StatusText;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> TimeText;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> NoticeText;
+
+	// Sharing bar (header): the controller's controls, or what a viewer can do.
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> SharingBar;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> SharingText;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> OpenWindowButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> CurtainButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> StopSharingButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> TakeOverButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> HostStopButton;
+
+	// Tabs.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> TabButtons;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidgetSwitcher> Pages;
+	ETab CurrentTab = ETab::Videos;
+
+	// Videos page.
 	UPROPERTY(Transient)
 	TObjectPtr<UEditableTextBox> LinkBox;
 	UPROPERTY(Transient)
-	TObjectPtr<UEditableTextBox> NameBox;
-	UPROPERTY(Transient)
-	TObjectPtr<UVerticalBox> QueueBox;
-	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LoadAnywayButton;
 	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> AspectText;
-	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> PipButtonText;
+	TObjectPtr<UVerticalBox> QueueBox;
+
+	// Browser page.
 	UPROPERTY(Transient)
 	TObjectPtr<UEditableTextBox> BrowserUrlBox;
 	UPROPERTY(Transient)
-	TObjectPtr<UWidget> BrowserStartRow;
+	TObjectPtr<UWidget> BrowserOpenButton;
 	UPROPERTY(Transient)
-	TObjectPtr<UWidget> BrowserOwnRow;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> BrowserOtherRow;
-	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> BrowserOtherText;
+	TObjectPtr<UWidget> BrowserNavRow;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> BrowserNote;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> BrowserUrlRow;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> BrowserOwnActions;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LoopbackRow;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> LoopbackText;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> StreamRow;
-	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> StreamText;
-	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> CurtainButtonText;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> HostStopButton;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> TakeOverButton;
-	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> StopButtonText;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> WindowSection;
-	UPROPERTY(Transient)
-	TObjectPtr<UVerticalBox> WindowListBox;
+
+	// Window page.
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> WindowNote;
-
-	// The windows last listed by "Choose a window" (this PC only).
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> WindowListBox;
 	TArray<FTSWindowInfo> Windows;
-	void ShowWindowList();
+	bool bWindowListPending = false;
 
-	// True while a sharing notice is shown and the next press of the same button accepts it.
-	bool bDisclaimerPending = false;
-	bool bWindowDisclaimerPending = false;
-	bool AcceptSharingNotice();
-	bool AcceptWindowNotice();
+	// Screen page.
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> NameBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> AspectText;
 
-	void RefreshBrowser();
+	// Confirm dialog.
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> ConfirmLayer;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ConfirmTitle;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ConfirmText;
+	EConfirm PendingConfirm = EConfirm::None;
+	int32 PendingIndex = INDEX_NONE;
+
+	// After the local player opens a browser, the interactive window opens once the server hands over control.
+	double OpenWindowWhenMineUntil = 0.0;
+
 	FDelegateHandle BrowserStateHandle;
-
 	FDelegateHandle ScreenChangedHandle;
 	FDelegateHandle NoticeHandle;
 	int32 ShownRevision = -1;

@@ -25,7 +25,8 @@
 
 1. Panel, Browser: "Open the browser on this screen" with an empty address: the screen shows the start page
    (DuckDuckGo) at the screen's shape. Typing an address + Go, Back, Forward, Reload work.
-2. "Use it in a window": a large window opens; the mouse cursor appears; clicking, scrolling, typing (including
+2. After opening the browser (and, the first time, confirming the dialog) its window opens by itself, centred with the
+   game dimmed behind it; "Use it in a window" in the panel header opens it again; the mouse cursor appears; clicking, scrolling, typing (including
    Ctrl+V paste) work in the page; the cursor changes over links and text boxes.
 3. Esc reaches the page (e.g. closes a site's menu); holding Esc for a second, or F8, returns to the game; F8 again
    opens the window again.
@@ -63,8 +64,8 @@
 
 ## M5 (window sharing) and roles
 
-1. Panel, Share a window, Choose a window: the list shows your open windows (not the game). Share one: the first
-   time a notice appears; Share again. The screen shows the window (scaled, letterboxed to its shape); the HUD line
+1. Panel, Share a window tab: the list shows your open windows (not the game). Share this window: the first time a
+   dialog asks to confirm; I understand, continue. The screen shows the window (scaled, letterboxed to its shape); the HUD line
    says "Sharing a window".
 2. A friend sees it and hears the window's sound from the screen; you hear it from the window as usual.
 3. F8: clicks and typing in the window reach a normal app (e.g. Notepad).

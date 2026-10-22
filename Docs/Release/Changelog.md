@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0 beta 4
+
+- The screen panel has tabs: Videos, Browser, Share a window, Screen. The header says what the screen shows and
+  holds the sharing controls (use it in a window, blank for everyone, stop) while you share.
+- First-time sharing notices are a dialog with "I understand, continue" and Cancel (instead of pressing twice).
+- Opening the browser opens its window by itself.
+- The Share a window tab lists your windows as soon as it opens; each has a "Share this window" button.
+- Fix: the browser window opened in the top-left corner, cut off; it is now centred (and the game behind it dimmed).
+
 ## 0.1.0 beta 3
 
 - Fix: built screens showed only the post (no billboard, no screen, nothing to use). The vanilla billboard assets

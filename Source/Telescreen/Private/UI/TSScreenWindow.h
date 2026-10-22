@@ -5,7 +5,9 @@
 #include "TSScreenWindow.generated.h"
 
 class ATSBuildableScreen;
+class UBorder;
 class UImage;
+class UOverlaySlot;
 class USizeBox;
 class UTextBlock;
 class UTexture;
@@ -65,6 +67,12 @@ private:
 	bool bHighPrecision = false;
 	double EscapeDownAt = 0.0;
 
+	// The widget covers the whole viewport; Frame (inside Size) is aligned in it, so placement doesn't depend on
+	// viewport-slot sizing.
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> Backdrop;
+	UPROPERTY(Transient)
+	TObjectPtr<UOverlaySlot> FrameSlot;
 	UPROPERTY(Transient)
 	TObjectPtr<USizeBox> Size;
 	UPROPERTY(Transient)

@@ -1,4 +1,4 @@
-# Telescreen 0.1.0 beta 3: tester guide
+# Telescreen 0.1.0 beta 4: tester guide
 
 Thanks for testing! This is an early build. Please read "What works" first, so you know what to try and what is
 deliberately missing.
@@ -26,12 +26,12 @@ exist) but isn't needed for this test.
 - **Synced videos.** Use a screen: paste a YouTube, Twitch or Vimeo link, **Play now** or **Add to queue**. Everyone
   in the session sees and hears the same video at the same moment, with 3D sound from the screen. Pause, seek (-10 s /
   +10 s), next, stop, a shared queue showing who added what, picture fit (letterbox / fill / stretch), screen names.
-- **Shared browser.** "Open the browser on this screen" starts a built-in browser. **Everyone near the screen sees
-  and hears it**, streamed from your PC through the game's connection (no ports to open). F8 opens it in a window you
-  can click and type in; hold Esc or press F8 to go back to the game. Web games that lock the mouse work. The first
-  time, a notice reminds you that others see everything in it.
-- **Shared window.** "Share a window", "Choose a window", then Share: one window of your PC (a video player, a game,
-  a VM window...) shows on the screen with its own sound. It may stay behind the game but not be minimised. In the
+- **Shared browser.** Screen panel, **Browser** tab, **Open the browser**. The first time, a dialog asks you to
+  confirm that others see everything in it. The browser's window then opens by itself: click and type in it; F8 or
+  holding Esc returns to the game, F8 opens it again. **Everyone near the screen sees and hears it**, streamed from
+  your PC through the game's connection (no ports to open). Web games that lock the mouse work.
+- **Shared window.** Screen panel, **Share a window** tab: your open windows are listed; **Share this window** shows
+  that one window of your PC (a video player, a game, a VM window...) on the screen with its own sound. It may stay behind the game but not be minimised. In the
   screen window (F8) clicks and keys are sent to it; most normal apps accept them, games and VMs usually don't. By
   default only the host and trusted players may share windows (see host settings).
 - **Privacy.** While you share, a red line at the top of your HUD says what you share and how many watch. **F10**

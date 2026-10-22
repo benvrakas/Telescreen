@@ -1,26 +1,27 @@
 #include "UI/TSScreenPanel.h"
 #include "Blueprint/WidgetTree.h"
-#include "EngineUtils.h"
 #include "Buildables/TSBuildableScreen.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/ScrollBox.h"
 #include "Components/SizeBox.h"
-#include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/WidgetSwitcher.h"
+#include "EngineUtils.h"
 #include "FGHUD.h"
 #include "GameFramework/PlayerController.h"
-#include "Host/TSHostSubsystem.h"
 #include "Screen/TSScreenPlayer.h"
 #include "Telescreen.h"
+#include "TSConfig.h"
 #include "TSRemoteCallObject.h"
 #include "UI/FGGameUI.h"
-#include "TSConfig.h"
 #include "UI/TSScreenWindow.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
@@ -30,6 +31,13 @@ namespace
 	const FLinearColor Accent(0.95f, 0.55f, 0.1f);
 	const FLinearColor Muted(0.65f, 0.7f, 0.76f);
 	const FLinearColor ErrorColor(1.f, 0.45f, 0.4f);
+	const FLinearColor ButtonColor(0.12f, 0.13f, 0.16f);
+	const FLinearColor PrimaryColor(0.25f, 0.15f, 0.05f);
+	const FLinearColor DangerColor(0.3f, 0.08f, 0.06f);
+	const FLinearColor TabColor(0.08f, 0.09f, 0.11f);
+	const FLinearColor TabSelectedColor(0.45f, 0.25f, 0.05f);
+	// The interactive window opens if control arrives within this time after asking for the browser.
+	constexpr double OpenWindowTimeout = 10.0;
 
 	FText FormatTime(double Seconds)
 	{
@@ -45,6 +53,14 @@ namespace
 		case ETSAspectMode::Fill: return LOCTEXT("AspectFill", "Fill");
 		case ETSAspectMode::Stretch: return LOCTEXT("AspectStretch", "Stretch");
 		default: return LOCTEXT("AspectLetterbox", "Letterbox");
+		}
+	}
+
+	void Show(UWidget* Widget, bool bVisible)
+	{
+		if (Widget)
+		{
+			Widget->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		}
 	}
 }
@@ -108,15 +124,22 @@ UWidget* UTSScreenPanel::MakeButton(const FText& Label, ETSPanelAction Action, i
 	return Button;
 }
 
+UTextBlock* UTSScreenPanel::ButtonLabel(UWidget* Button)
+{
+	const UButton* AsButton = Cast<UButton>(Button);
+	return AsButton ? Cast<UTextBlock>(AsButton->GetChildAt(0)) : nullptr;
+}
+
 void UTSScreenPanel::BuildTree()
 {
-	auto AddRow = [this](UVerticalBox* Box, UWidget* Child, float Top = 6.f)
+	auto AddRow = [](UVerticalBox* Box, UWidget* Child, float Top = 6.f)
 	{
 		UVerticalBoxSlot* Slot = Box->AddChildToVerticalBox(Child);
 		Slot->SetPadding(FMargin(0.f, Top, 0.f, 0.f));
 		return Slot;
 	};
 	auto MakeHBox = [this]() { return WidgetTree->ConstructWidget<UHorizontalBox>(); };
+	auto MakeVBox = [this]() { return WidgetTree->ConstructWidget<UVerticalBox>(); };
 	auto AddToHBox = [](UHorizontalBox* Box, UWidget* Child, bool bFill = false)
 	{
 		UHorizontalBoxSlot* Slot = Box->AddChildToHorizontalBox(Child);
@@ -130,151 +153,190 @@ void UTSScreenPanel::BuildTree()
 	};
 
 	USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
-	Size->SetWidthOverride(860.f);
+	Size->SetWidthOverride(880.f);
 	UBorder* Background = WidgetTree->ConstructWidget<UBorder>();
 	Background->SetBrushColor(FLinearColor(0.025f, 0.03f, 0.045f, 0.97f));
 	Background->SetPadding(FMargin(20.f));
 	Size->AddChild(Background);
-	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
-	Background->AddChild(Root);
+	UOverlay* Layers = WidgetTree->ConstructWidget<UOverlay>();
+	Background->AddChild(Layers);
+	UVerticalBox* Root = MakeVBox();
+	Layers->AddChildToOverlay(Root);
 	WidgetTree->RootWidget = Size;
 
+	// Header: name, Show on HUD, Close; what the screen shows; the sharing bar; server notices.
 	UHorizontalBox* Header = MakeHBox();
 	TitleText = MakeText(FText::GetEmpty(), 24);
 	AddToHBox(Header, TitleText, true);
+	UWidget* PipButton = MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip);
+	PipButtonText = ButtonLabel(PipButton);
+	AddToHBox(Header, PipButton);
 	AddToHBox(Header, MakeButton(LOCTEXT("Close", "Close"), ETSPanelAction::Close));
 	AddRow(Root, Header, 0.f);
-
-	NowPlayingText = MakeText(FText::GetEmpty(), 17);
-	AddRow(Root, NowPlayingText, 10.f);
+	StatusText = MakeText(FText::GetEmpty(), 17);
+	AddRow(Root, StatusText, 10.f);
 	TimeText = MakeText(FText::GetEmpty(), 13, Muted);
 	AddRow(Root, TimeText, 2.f);
 
-	UHorizontalBox* Transport = MakeHBox();
-	AddToHBox(Transport, MakeButton(LOCTEXT("PlayPause", "Play / Pause"), ETSPanelAction::PlayPause, INDEX_NONE, FLinearColor(0.25f, 0.15f, 0.05f)));
-	AddToHBox(Transport, MakeButton(LOCTEXT("Back10", "-10 s"), ETSPanelAction::Back10));
-	AddToHBox(Transport, MakeButton(LOCTEXT("Forward10", "+10 s"), ETSPanelAction::Forward10));
-	AddToHBox(Transport, MakeButton(LOCTEXT("Next", "Next"), ETSPanelAction::Next));
-	AddToHBox(Transport, MakeButton(LOCTEXT("Stop", "Stop"), ETSPanelAction::Stop));
-	UButton* PipButton = Cast<UButton>(MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip));
-	PipButtonText = PipButton ? Cast<UTextBlock>(PipButton->GetChildAt(0)) : nullptr;
-	AddToHBox(Transport, PipButton);
-	AddRow(Root, Transport, 8.f);
+	UVerticalBox* Sharing = MakeVBox();
+	SharingText = MakeText(FText::GetEmpty(), 13, Muted);
+	AddRow(Sharing, SharingText, 0.f);
+	UHorizontalBox* SharingButtons = MakeHBox();
+	OpenWindowButton = MakeButton(LOCTEXT("OpenWindow", "Use it in a window"), ETSPanelAction::OpenWindow, INDEX_NONE, PrimaryColor);
+	AddToHBox(SharingButtons, OpenWindowButton);
+	CurtainButton = MakeButton(LOCTEXT("CurtainOn", "Blank for everyone"), ETSPanelAction::CurtainToggle);
+	AddToHBox(SharingButtons, CurtainButton);
+	StopSharingButton = MakeButton(LOCTEXT("StopSharing", "Stop"), ETSPanelAction::StopSharing, INDEX_NONE, DangerColor);
+	AddToHBox(SharingButtons, StopSharingButton);
+	TakeOverButton = MakeButton(LOCTEXT("TakeOver", "Use the browser myself"), ETSPanelAction::BrowserTakeOver);
+	AddToHBox(SharingButtons, TakeOverButton);
+	HostStopButton = MakeButton(LOCTEXT("HostStop", "Stop it (host)"), ETSPanelAction::HostStop, INDEX_NONE, DangerColor);
+	AddToHBox(SharingButtons, HostStopButton);
+	AddRow(Sharing, SharingButtons, 6.f);
+	SharingBar = Sharing;
+	AddRow(Root, Sharing, 8.f);
 
-	AddRow(Root, MakeText(LOCTEXT("AddHeader", "Add a video"), 14, Accent), 16.f);
-	UHorizontalBox* AddBox = MakeHBox();
-	LinkBox = WidgetTree->ConstructWidget<UEditableTextBox>();
-	LinkBox->SetHintText(LOCTEXT("LinkHint", "Paste a YouTube, Twitch or Vimeo link, or a video file path"));
-	AddToHBox(AddBox, LinkBox, true);
-	AddToHBox(AddBox, MakeButton(LOCTEXT("PlayNow", "Play now"), ETSPanelAction::PlayNow, INDEX_NONE, FLinearColor(0.25f, 0.15f, 0.05f)));
-	AddToHBox(AddBox, MakeButton(LOCTEXT("AddToQueue", "Add to queue"), ETSPanelAction::AddToQueue));
-	AddRow(Root, AddBox);
+	// Tabs.
+	UHorizontalBox* TabRow = MakeHBox();
+	const FText TabNames[] = {LOCTEXT("TabVideos", "Videos"), LOCTEXT("TabBrowser", "Browser"), LOCTEXT("TabWindow", "Share a window"),
+		LOCTEXT("TabScreen", "Screen")};
+	for (int32 I = 0; I < UE_ARRAY_COUNT(TabNames); ++I)
+	{
+		UWidget* Tab = MakeButton(TabNames[I], ETSPanelAction::Tab, I, TabColor);
+		TabButtons.Add(Tab);
+		AddToHBox(TabRow, Tab);
+	}
+	AddRow(Root, TabRow, 14.f);
 	NoticeText = MakeText(FText::GetEmpty(), 13, Muted);
-	AddRow(Root, NoticeText, 4.f);
-	LoadAnywayButton = MakeButton(LOCTEXT("LoadAnyway", "Load it anyway on this PC"), ETSPanelAction::LoadAnyway);
-	LoadAnywayButton->SetVisibility(ESlateVisibility::Collapsed);
-	AddRow(Root, LoadAnywayButton, 4.f);
+	AddRow(Root, NoticeText, 6.f);
 
-	AddRow(Root, MakeText(LOCTEXT("BrowserHeader", "Browser"), 14, Accent), 16.f);
-	UHorizontalBox* UrlRow = MakeHBox();
-	BrowserUrlBox = WidgetTree->ConstructWidget<UEditableTextBox>();
-	BrowserUrlBox->SetHintText(LOCTEXT("BrowserUrlHint", "Web address, or leave empty for your start page"));
-	AddToHBox(UrlRow, BrowserUrlBox, true);
-	UHorizontalBox* StartRow = MakeHBox();
-	AddToHBox(StartRow, MakeButton(LOCTEXT("BrowserOpen", "Open the browser on this screen"), ETSPanelAction::BrowserOpen, INDEX_NONE,
-		FLinearColor(0.25f, 0.15f, 0.05f)));
-	BrowserStartRow = StartRow;
-	AddToHBox(UrlRow, StartRow);
-	UHorizontalBox* NavRow = MakeHBox();
-	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserGo", "Go"), ETSPanelAction::BrowserGo, INDEX_NONE, FLinearColor(0.25f, 0.15f, 0.05f)));
-	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserBack", "Back"), ETSPanelAction::BrowserBack));
-	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserForward", "Forward"), ETSPanelAction::BrowserForward));
-	AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserReload", "Reload"), ETSPanelAction::BrowserReload));
-	BrowserOwnRow = NavRow;
-	AddToHBox(UrlRow, NavRow);
-	BrowserUrlRow = UrlRow;
-	AddRow(Root, UrlRow);
-	UHorizontalBox* OwnActions = MakeHBox();
-	AddToHBox(OwnActions, MakeButton(LOCTEXT("BrowserWindow", "Use it in a window"), ETSPanelAction::BrowserWindow, INDEX_NONE,
-		FLinearColor(0.25f, 0.15f, 0.05f)));
-	UButton* StopButton = Cast<UButton>(MakeButton(LOCTEXT("BrowserStop", "Close the browser"), ETSPanelAction::BrowserStop));
-	StopButtonText = StopButton ? Cast<UTextBlock>(StopButton->GetChildAt(0)) : nullptr;
-	AddToHBox(OwnActions, StopButton);
-	AddRow(Root, OwnActions, 4.f);
-	UHorizontalBox* OtherRow = MakeHBox();
-	BrowserOtherText = MakeText(FText::GetEmpty(), 13);
-	AddToHBox(OtherRow, BrowserOtherText, true);
-	TakeOverButton = MakeButton(LOCTEXT("BrowserTakeOver", "Take over"), ETSPanelAction::BrowserTakeOver);
-	AddToHBox(OtherRow, TakeOverButton);
-	HostStopButton = MakeButton(LOCTEXT("HostStop", "Stop it (host)"), ETSPanelAction::HostStop, INDEX_NONE, FLinearColor(0.3f, 0.08f, 0.06f));
-	AddToHBox(OtherRow, HostStopButton);
-	BrowserOtherRow = OtherRow;
-	AddRow(Root, OtherRow, 4.f);
-	BrowserNote = MakeText(FText::GetEmpty(), 12, Muted);
-	AddRow(Root, BrowserNote, 4.f);
-	// The window/close actions row follows the navigation row's visibility.
-	OwnActions->SetVisibility(ESlateVisibility::Collapsed);
-	BrowserOwnActions = OwnActions;
+	Pages = WidgetTree->ConstructWidget<UWidgetSwitcher>();
+	USizeBox* PagesSize = WidgetTree->ConstructWidget<USizeBox>();
+	PagesSize->SetMaxDesiredHeight(520.f);
+	UScrollBox* PagesScroll = WidgetTree->ConstructWidget<UScrollBox>();
+	PagesScroll->AddChild(Pages);
+	PagesSize->AddChild(PagesScroll);
+	AddRow(Root, PagesSize, 6.f);
 
-	UVerticalBox* WindowBox = WidgetTree->ConstructWidget<UVerticalBox>();
-	UHorizontalBox* WindowHeader = MakeHBox();
-	AddToHBox(WindowHeader, MakeText(LOCTEXT("WindowHeader", "Share a window"), 14, Accent), true);
-	AddToHBox(WindowHeader, MakeButton(LOCTEXT("WindowList", "Choose a window"), ETSPanelAction::WindowList));
-	AddRow(WindowBox, WindowHeader, 0.f);
-	WindowNote = MakeText(LOCTEXT("WindowNoteIdle", "Show one window from your PC (a game, video player, VM window...) on this screen, with its sound."), 12, Muted);
-	AddRow(WindowBox, WindowNote, 4.f);
-	USizeBox* WindowListSize = WidgetTree->ConstructWidget<USizeBox>();
-	WindowListSize->SetMaxDesiredHeight(180.f);
-	UScrollBox* WindowScroll = WidgetTree->ConstructWidget<UScrollBox>();
-	WindowListBox = WidgetTree->ConstructWidget<UVerticalBox>();
-	WindowScroll->AddChild(WindowListBox);
-	WindowListSize->AddChild(WindowScroll);
-	AddRow(WindowBox, WindowListSize, 4.f);
-	WindowSection = WindowBox;
-	AddRow(Root, WindowBox, 16.f);
+	// Videos.
+	{
+		UVerticalBox* Page = MakeVBox();
+		UHorizontalBox* Transport = MakeHBox();
+		AddToHBox(Transport, MakeButton(LOCTEXT("PlayPause", "Play / Pause"), ETSPanelAction::PlayPause, INDEX_NONE, PrimaryColor));
+		AddToHBox(Transport, MakeButton(LOCTEXT("Back10", "-10 s"), ETSPanelAction::Back10));
+		AddToHBox(Transport, MakeButton(LOCTEXT("Forward10", "+10 s"), ETSPanelAction::Forward10));
+		AddToHBox(Transport, MakeButton(LOCTEXT("Next", "Next"), ETSPanelAction::Next));
+		AddToHBox(Transport, MakeButton(LOCTEXT("Stop", "Stop"), ETSPanelAction::Stop));
+		AddRow(Page, Transport, 0.f);
+		AddRow(Page, MakeText(LOCTEXT("AddHeader", "Add a video"), 14, Accent), 14.f);
+		UHorizontalBox* AddBox = MakeHBox();
+		LinkBox = WidgetTree->ConstructWidget<UEditableTextBox>();
+		LinkBox->SetHintText(LOCTEXT("LinkHint", "Paste a YouTube, Twitch or Vimeo link, or a video file path"));
+		AddToHBox(AddBox, LinkBox, true);
+		AddToHBox(AddBox, MakeButton(LOCTEXT("PlayNow", "Play now"), ETSPanelAction::PlayNow, INDEX_NONE, PrimaryColor));
+		AddToHBox(AddBox, MakeButton(LOCTEXT("AddToQueue", "Add to queue"), ETSPanelAction::AddToQueue));
+		AddRow(Page, AddBox);
+		LoadAnywayButton = MakeButton(LOCTEXT("LoadAnyway", "Load it anyway on this PC"), ETSPanelAction::LoadAnyway);
+		Show(LoadAnywayButton, false);
+		AddRow(Page, LoadAnywayButton, 4.f);
+		UHorizontalBox* QueueHeader = MakeHBox();
+		AddToHBox(QueueHeader, MakeText(LOCTEXT("QueueHeader", "Queue"), 14, Accent), true);
+		AddToHBox(QueueHeader, MakeButton(LOCTEXT("ClearQueue", "Clear"), ETSPanelAction::ClearQueue));
+		AddRow(Page, QueueHeader, 14.f);
+		QueueBox = MakeVBox();
+		AddRow(Page, QueueBox, 4.f);
+		Pages->AddChild(Page);
+	}
 
-	UHorizontalBox* Stream = MakeHBox();
-	StreamText = MakeText(FText::GetEmpty(), 12, Muted);
-	AddToHBox(Stream, StreamText, true);
-	UButton* CurtainButton = Cast<UButton>(MakeButton(LOCTEXT("CurtainOn", "Blank for everyone"), ETSPanelAction::CurtainToggle));
-	CurtainButtonText = CurtainButton ? Cast<UTextBlock>(CurtainButton->GetChildAt(0)) : nullptr;
-	AddToHBox(Stream, CurtainButton);
-	StreamRow = Stream;
-	AddRow(Root, Stream, 4.f);
+	// Browser.
+	{
+		UVerticalBox* Page = MakeVBox();
+		UHorizontalBox* UrlRow = MakeHBox();
+		BrowserUrlBox = WidgetTree->ConstructWidget<UEditableTextBox>();
+		BrowserUrlBox->SetHintText(LOCTEXT("BrowserUrlHint", "Web address, or leave empty for your start page"));
+		AddToHBox(UrlRow, BrowserUrlBox, true);
+		BrowserOpenButton = MakeButton(LOCTEXT("BrowserOpen", "Open the browser"), ETSPanelAction::BrowserOpen, INDEX_NONE, PrimaryColor);
+		AddToHBox(UrlRow, BrowserOpenButton);
+		UHorizontalBox* NavRow = MakeHBox();
+		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserGo", "Go"), ETSPanelAction::BrowserGo, INDEX_NONE, PrimaryColor));
+		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserBack", "Back"), ETSPanelAction::BrowserBack));
+		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserForward", "Forward"), ETSPanelAction::BrowserForward));
+		AddToHBox(NavRow, MakeButton(LOCTEXT("BrowserReload", "Reload"), ETSPanelAction::BrowserReload));
+		BrowserNavRow = NavRow;
+		AddToHBox(UrlRow, NavRow);
+		AddRow(Page, UrlRow, 0.f);
+		BrowserNote = MakeText(FText::GetEmpty(), 12, Muted);
+		AddRow(Page, BrowserNote, 6.f);
+		UHorizontalBox* Loopback = MakeHBox();
+		LoopbackText = MakeText(FText::GetEmpty(), 12, Muted);
+		AddToHBox(Loopback, LoopbackText, true);
+		AddToHBox(Loopback, MakeButton(LOCTEXT("LoopbackToggle", "Stream test"), ETSPanelAction::LoopbackToggle));
+		LoopbackRow = Loopback;
+		AddRow(Page, Loopback, 10.f);
+		Pages->AddChild(Page);
+	}
 
-	UHorizontalBox* Loopback = MakeHBox();
-	LoopbackText = MakeText(FText::GetEmpty(), 12, Muted);
-	AddToHBox(Loopback, LoopbackText, true);
-	AddToHBox(Loopback, MakeButton(LOCTEXT("LoopbackToggle", "Stream test"), ETSPanelAction::LoopbackToggle));
-	LoopbackRow = Loopback;
-	AddRow(Root, Loopback, 4.f);
+	// Share a window.
+	{
+		UVerticalBox* Page = MakeVBox();
+		UHorizontalBox* Top = MakeHBox();
+		WindowNote = MakeText(FText::GetEmpty(), 13, Muted);
+		AddToHBox(Top, WindowNote, true);
+		AddToHBox(Top, MakeButton(LOCTEXT("WindowRefresh", "Refresh list"), ETSPanelAction::WindowRefresh));
+		AddRow(Page, Top, 0.f);
+		WindowListBox = MakeVBox();
+		AddRow(Page, WindowListBox, 8.f);
+		Pages->AddChild(Page);
+	}
 
-	UHorizontalBox* QueueHeader = MakeHBox();
-	AddToHBox(QueueHeader, MakeText(LOCTEXT("QueueHeader", "Queue"), 14, Accent), true);
-	AddToHBox(QueueHeader, MakeButton(LOCTEXT("ClearQueue", "Clear"), ETSPanelAction::ClearQueue));
-	AddRow(Root, QueueHeader, 16.f);
-	USizeBox* QueueSize = WidgetTree->ConstructWidget<USizeBox>();
-	QueueSize->SetMaxDesiredHeight(260.f);
-	UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>();
-	QueueBox = WidgetTree->ConstructWidget<UVerticalBox>();
-	Scroll->AddChild(QueueBox);
-	QueueSize->AddChild(Scroll);
-	AddRow(Root, QueueSize, 4.f);
+	// Screen.
+	{
+		UVerticalBox* Page = MakeVBox();
+		AddRow(Page, MakeText(LOCTEXT("NameHeader", "Name"), 14, Accent), 0.f);
+		UHorizontalBox* NameRow = MakeHBox();
+		NameBox = WidgetTree->ConstructWidget<UEditableTextBox>();
+		NameBox->SetHintText(LOCTEXT("NameHint", "Screen name, e.g. Main Hall"));
+		AddToHBox(NameRow, NameBox, true);
+		AddToHBox(NameRow, MakeButton(LOCTEXT("SaveName", "Save name"), ETSPanelAction::SaveName));
+		AddRow(Page, NameRow);
+		AddRow(Page, MakeText(LOCTEXT("FitHeader", "Picture fit (videos and shared windows)"), 14, Accent), 14.f);
+		UHorizontalBox* AspectRow = MakeHBox();
+		AspectText = MakeText(FText::GetEmpty(), 13, Muted);
+		AddToHBox(AspectRow, AspectText, true);
+		AddToHBox(AspectRow, MakeButton(LOCTEXT("Letterbox", "Letterbox"), ETSPanelAction::AspectLetterbox));
+		AddToHBox(AspectRow, MakeButton(LOCTEXT("Fill", "Fill"), ETSPanelAction::AspectFill));
+		AddToHBox(AspectRow, MakeButton(LOCTEXT("Stretch", "Stretch"), ETSPanelAction::AspectStretch));
+		AddRow(Page, AspectRow);
+		Pages->AddChild(Page);
+	}
 
-	AddRow(Root, MakeText(LOCTEXT("SettingsHeader", "Screen settings"), 14, Accent), 16.f);
-	UHorizontalBox* NameRow = MakeHBox();
-	NameBox = WidgetTree->ConstructWidget<UEditableTextBox>();
-	NameBox->SetHintText(LOCTEXT("NameHint", "Screen name, e.g. Main Hall"));
-	AddToHBox(NameRow, NameBox, true);
-	AddToHBox(NameRow, MakeButton(LOCTEXT("SaveName", "Save name"), ETSPanelAction::SaveName));
-	AddRow(Root, NameRow);
-	UHorizontalBox* AspectRow = MakeHBox();
-	AspectText = MakeText(FText::GetEmpty(), 13, Muted);
-	AddToHBox(AspectRow, AspectText, true);
-	AddToHBox(AspectRow, MakeButton(LOCTEXT("Letterbox", "Letterbox"), ETSPanelAction::AspectLetterbox));
-	AddToHBox(AspectRow, MakeButton(LOCTEXT("Fill", "Fill"), ETSPanelAction::AspectFill));
-	AddToHBox(AspectRow, MakeButton(LOCTEXT("Stretch", "Stretch"), ETSPanelAction::AspectStretch));
-	AddRow(Root, AspectRow);
+	// Confirm dialog over the whole panel.
+	UBorder* Shade = WidgetTree->ConstructWidget<UBorder>();
+	Shade->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.7f));
+	Shade->SetHorizontalAlignment(HAlign_Center);
+	Shade->SetVerticalAlignment(VAlign_Center);
+	USizeBox* DialogSize = WidgetTree->ConstructWidget<USizeBox>();
+	DialogSize->SetWidthOverride(560.f);
+	UBorder* Dialog = WidgetTree->ConstructWidget<UBorder>();
+	Dialog->SetBrushColor(FLinearColor(0.06f, 0.065f, 0.08f, 1.f));
+	Dialog->SetPadding(FMargin(18.f));
+	UVerticalBox* DialogBox = MakeVBox();
+	ConfirmTitle = MakeText(FText::GetEmpty(), 18, Accent);
+	AddRow(DialogBox, ConfirmTitle, 0.f);
+	ConfirmText = MakeText(FText::GetEmpty(), 13);
+	AddRow(DialogBox, ConfirmText, 10.f);
+	UHorizontalBox* DialogButtons = MakeHBox();
+	AddToHBox(DialogButtons, MakeButton(LOCTEXT("ConfirmAccept", "I understand, continue"), ETSPanelAction::ConfirmAccept, INDEX_NONE, PrimaryColor));
+	AddToHBox(DialogButtons, MakeButton(LOCTEXT("ConfirmCancel", "Cancel"), ETSPanelAction::ConfirmCancel));
+	AddRow(DialogBox, DialogButtons, 14.f);
+	Dialog->AddChild(DialogBox);
+	DialogSize->AddChild(Dialog);
+	Shade->AddChild(DialogSize);
+	UOverlaySlot* ShadeSlot = Layers->AddChildToOverlay(Shade);
+	ShadeSlot->SetHorizontalAlignment(HAlign_Fill);
+	ShadeSlot->SetVerticalAlignment(VAlign_Fill);
+	ConfirmLayer = Shade;
+	Show(ConfirmLayer, false);
 }
 
 ATSBuildableScreen* UTSScreenPanel::GetScreen() const
@@ -285,14 +347,18 @@ ATSBuildableScreen* UTSScreenPanel::GetScreen() const
 void UTSScreenPanel::NativeConstruct()
 {
 	Super::NativeConstruct();
-	if (ATSBuildableScreen* Screen = GetScreen())
+	ATSBuildableScreen* Screen = GetScreen();
+	if (Screen)
 	{
 		ScreenChangedHandle = Screen->OnScreenChanged.AddUObject(this, &UTSScreenPanel::Refresh);
 		NameBox->SetText(FText::FromString(Screen->GetScreenName()));
 	}
 	NoticeHandle = UTSRemoteCallObject::OnNotice.AddWeakLambda(this, [this](const FText& Text) { SetNotice(Text, true); });
+	// Open on the tab for what the screen does now.
+	const ETSScreenMode Mode = Screen ? Screen->GetMode() : ETSScreenMode::SyncedMedia;
+	SelectTab(Mode == ETSScreenMode::Browser ? ETab::Browser : Mode == ETSScreenMode::Window ? ETab::Window : ETab::Videos);
 	Refresh();
-	UE_LOG(LogTelescreen, Log, TEXT("Screen panel opened for %s"), *GetNameSafe(GetScreen()));
+	UE_LOG(LogTelescreen, Log, TEXT("Screen panel opened for %s"), *GetNameSafe(Screen));
 }
 
 void UTSScreenPanel::NativeDestruct()
@@ -322,6 +388,11 @@ void UTSScreenPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 
 void UTSScreenPanel::OnEscapePressed_Implementation()
 {
+	if (PendingConfirm != EConfirm::None)
+	{
+		HandleAction(ETSPanelAction::ConfirmCancel, INDEX_NONE);
+		return;
+	}
 	Close();
 }
 
@@ -339,6 +410,24 @@ void UTSScreenPanel::Close()
 	}
 }
 
+void UTSScreenPanel::SelectTab(ETab Tab)
+{
+	CurrentTab = Tab;
+	Pages->SetActiveWidgetIndex(int32(Tab));
+	for (int32 I = 0; I < TabButtons.Num(); ++I)
+	{
+		if (UButton* Button = Cast<UButton>(TabButtons[I]))
+		{
+			Button->SetBackgroundColor(I == int32(Tab) ? TabSelectedColor : TabColor);
+		}
+	}
+	if (Tab == ETab::Window && Windows.Num() == 0)
+	{
+		RequestWindowList();
+	}
+	RefreshSharing();
+}
+
 void UTSScreenPanel::Refresh()
 {
 	ATSBuildableScreen* Screen = GetScreen();
@@ -347,22 +436,26 @@ void UTSScreenPanel::Refresh()
 		return;
 	}
 	TitleText->SetText(Screen->GetDisplayName());
-	const FTSMediaState& State = Screen->GetMediaState();
-	const FTSMediaItem* Item = State.GetCurrent();
-	NowPlayingText->SetText(Item ? FText::Format(LOCTEXT("NowPlaying", "Now playing: {0}"), FText::FromString(Item->GetDisplayTitle()))
-								 : LOCTEXT("NothingPlaying", "Nothing playing"));
-	AspectText->SetText(FText::Format(LOCTEXT("AspectNow", "Picture fit: {0}"), AspectName(Screen->GetAspectMode())));
+	AspectText->SetText(FText::Format(LOCTEXT("AspectNow", "Now: {0}"), AspectName(Screen->GetAspectMode())));
 	if (PipButtonText)
 	{
 		PipButtonText->SetText(UTSScreenWindow::IsShowing(Screen) ? LOCTEXT("RemoveFromHud", "Remove from HUD") : LOCTEXT("ShowOnHud", "Show on HUD"));
 	}
-	if (State.Revision != ShownRevision)
+	if (Screen->GetMediaState().Revision != ShownRevision)
 	{
-		ShownRevision = State.Revision;
+		ShownRevision = Screen->GetMediaState().Revision;
 		RebuildQueue();
 	}
 	RefreshTimes();
-	RefreshBrowser();
+
+	// The browser this player asked for is now theirs: go straight to its window.
+	if (OpenWindowWhenMineUntil > 0.0 && Screen->GetMode() == ETSScreenMode::Browser && Screen->IsLocallyControlled())
+	{
+		OpenWindowWhenMineUntil = 0.0;
+		UE_LOG(LogTelescreen, Log, TEXT("%s: browser is ours; opening its window"), *Screen->GetName());
+		Close();
+		UTSScreenWindow::OpenInteractive(Screen);
+	}
 }
 
 void UTSScreenPanel::RefreshTimes()
@@ -372,37 +465,58 @@ void UTSScreenPanel::RefreshTimes()
 	{
 		return;
 	}
+	if (OpenWindowWhenMineUntil > 0.0 && FPlatformTime::Seconds() > OpenWindowWhenMineUntil)
+	{
+		OpenWindowWhenMineUntil = 0.0;
+	}
 	const FTSMediaState& State = Screen->GetMediaState();
 	const FTSMediaItem* Item = State.GetCurrent();
-	FText Times = FText::GetEmpty();
-	if (Item)
-	{
-		const FText Position = FormatTime(Screen->GetPlaybackPosition());
-		Times = Item->bIsLive ? LOCTEXT("Live", "Live")
-			: Item->Duration > 0.f ? FText::Format(LOCTEXT("PositionOf", "{0} / {1}"), Position, FormatTime(Item->Duration))
-								   : Position;
-		if (State.bPaused)
-		{
-			Times = FText::Format(LOCTEXT("PausedTimes", "{0}  (paused)"), Times);
-		}
-		if (!Item->AddedBy.IsEmpty())
-		{
-			Times = FText::Format(LOCTEXT("AddedByTimes", "{0}   added by {1}"), Times, FText::FromString(Item->AddedBy));
-		}
-	}
 	const UTSScreenPlayer* Player = Screen->GetPlayer();
+	const FText Controller = FText::FromString(Screen->GetControllerName());
+	const bool bMine = Screen->GetMode() != ETSScreenMode::SyncedMedia && Screen->IsLocallyControlled();
+
+	FText Status;
+	FText Times = FText::GetEmpty();
+	switch (Screen->GetMode())
+	{
+	case ETSScreenMode::Browser:
+		Status = bMine ? LOCTEXT("StatusMyBrowser", "Showing your browser") : FText::Format(LOCTEXT("StatusBrowser", "Showing {0}'s browser"), Controller);
+		break;
+	case ETSScreenMode::Window:
+		Status = bMine ? LOCTEXT("StatusMyWindow", "Showing your window") : FText::Format(LOCTEXT("StatusWindow", "Showing a window from {0}"), Controller);
+		break;
+	default:
+		Status = Item ? FText::Format(LOCTEXT("NowPlaying", "Now playing: {0}"), FText::FromString(Item->GetDisplayTitle()))
+					  : LOCTEXT("NothingPlaying", "Nothing playing. Add a video, open the browser or share a window.");
+		if (Item)
+		{
+			const FText Position = FormatTime(Screen->GetPlaybackPosition());
+			Times = Item->bIsLive ? LOCTEXT("Live", "Live")
+				: Item->Duration > 0.f ? FText::Format(LOCTEXT("PositionOf", "{0} / {1}"), Position, FormatTime(Item->Duration))
+									   : Position;
+			if (State.bPaused)
+			{
+				Times = FText::Format(LOCTEXT("PausedTimes", "{0}  (paused)"), Times);
+			}
+			if (!Item->AddedBy.IsEmpty())
+			{
+				Times = FText::Format(LOCTEXT("AddedByTimes", "{0}   added by {1}"), Times, FText::FromString(Item->AddedBy));
+			}
+		}
+		break;
+	}
+	StatusText->SetText(Status);
 	const FText Local = Player ? Player->GetLocalStatus() : FText::GetEmpty();
 	if (!Local.IsEmpty())
 	{
-		Times = FText::Format(LOCTEXT("TimesWithStatus", "{0}   {1}"), Times, Local);
+		Times = Times.IsEmpty() ? Local : FText::Format(LOCTEXT("TimesWithStatus", "{0}   {1}"), Times, Local);
 	}
 	TimeText->SetText(Times);
-	RefreshBrowser();
-	const bool bBlocked = Player && !Player->GetBlockedReason().IsEmpty();
-	LoadAnywayButton->SetVisibility(bBlocked ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	Show(LoadAnywayButton, Player && !Player->GetBlockedReason().IsEmpty());
+	RefreshSharing();
 }
 
-void UTSScreenPanel::RefreshBrowser()
+void UTSScreenPanel::RefreshSharing()
 {
 	ATSBuildableScreen* Screen = GetScreen();
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
@@ -413,187 +527,253 @@ void UTSScreenPanel::RefreshBrowser()
 	UTSScreenPlayer* Player = Screen->GetPlayer();
 	if (Player && !BrowserStateHandle.IsValid())
 	{
-		BrowserStateHandle = Player->OnBrowserStateChanged.AddUObject(this, &UTSScreenPanel::RefreshBrowser);
+		BrowserStateHandle = Player->OnBrowserStateChanged.AddUObject(this, &UTSScreenPanel::RefreshSharing);
 	}
 	const bool bBrowserMode = Screen->GetMode() == ETSScreenMode::Browser;
 	const bool bWindowMode = Screen->GetMode() == ETSScreenMode::Window;
 	const bool bShared = bBrowserMode || bWindowMode;
-	const bool bMineAny = bShared && Screen->IsLocallyControlled();
-	const bool bMine = bBrowserMode && bMineAny;
-	const bool bAvailable = Host && Host->IsBrowserAvailable();
-	BrowserUrlRow->SetVisibility(bAvailable && (!bShared || bMine) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	BrowserStartRow->SetVisibility(!bBrowserMode ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	BrowserOwnRow->SetVisibility(bMine ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	BrowserOwnActions->SetVisibility(bMineAny ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (StopButtonText)
-	{
-		StopButtonText->SetText(bWindowMode ? LOCTEXT("WindowStop", "Stop sharing") : LOCTEXT("BrowserStop", "Close the browser"));
-	}
-	BrowserOtherRow->SetVisibility(bShared && !bMineAny ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	if (bShared && !bMineAny)
-	{
-		BrowserOtherText->SetText(bWindowMode ? FText::Format(LOCTEXT("WindowOther", "{0} is sharing a window on this screen."), FText::FromString(Screen->GetControllerName()))
-											  : FText::Format(LOCTEXT("BrowserOther", "{0} is using this screen's browser."), FText::FromString(Screen->GetControllerName())));
-	}
-	TakeOverButton->SetVisibility(bBrowserMode && !bMineAny ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	HostStopButton->SetVisibility(bShared && !bMineAny && UTSRemoteCallObject::IsLocalHostOrAdmin(this) ? ESlateVisibility::Visible
-																									  : ESlateVisibility::Collapsed);
-#if PLATFORM_WINDOWS
-	WindowSection->SetVisibility(Host && !bMine ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-#else
-	WindowSection->SetVisibility(ESlateVisibility::Collapsed);
-#endif
-	if (bWindowDisclaimerPending)
-	{
-		WindowNote->SetText(LOCTEXT("WindowNotice",
-			"Everything that appears in the window you share is visible to every player near this screen, including notifications and anything "
-			"you open in it. Press Share again to accept; this notice appears once."));
-	}
-	else if (bWindowMode && bMineAny)
-	{
-		WindowNote->SetText(FText::Format(LOCTEXT("WindowMine",
-			"Others see this window and hear its sound. It can stay behind the game, but not minimised. In the screen window, clicks and keys are "
-			"sent to it (most apps accept them; games and VMs usually don't). {0} blanks it for everyone."),
-			FText::FromString(UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")))));
-	}
-	else if (Windows.Num() == 0)
-	{
-		WindowNote->SetText(LOCTEXT("WindowNoteIdle", "Show one window from your PC (a game, video player, VM window...) on this screen, with its sound."));
-	}
-	if (bMine && Player && !BrowserUrlBox->HasKeyboardFocus())
-	{
-		BrowserUrlBox->SetText(FText::FromString(Player->GetBrowserState().Url));
-	}
-	// The stream test shows the local player's browser from another screen here, through the encoder and decoder.
-	UTSScreenPlayer* Source = nullptr;
-	for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
-	{
-		if (*It != Screen && It->IsLocallyControlled() && It->GetPlayer() && It->GetPlayer()->HasBrowser())
-		{
-			Source = It->GetPlayer();
-			break;
-		}
-	}
-	const bool bLooping = Player && Player->IsLoopback();
-	LoopbackRow->SetVisibility(Source || bLooping ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	LoopbackText->SetText(bLooping ? Player->GetLoopbackStats()
-								   : LOCTEXT("LoopbackHint", "Stream test: show your browser from another screen here, encoded and decoded like a live stream."));
+	const bool bMine = bShared && Screen->IsLocallyControlled();
+	const bool bMyBrowser = bBrowserMode && bMine;
+	const bool bHostTools = UTSRemoteCallObject::IsLocalHostOrAdmin(this);
+	const FString FocusKey = UTSConfig::GetString(this, UTSConfig::FocusKeyKey, TEXT("F8"));
+	const FString CurtainKey = UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10"));
 
-	if (!bAvailable)
-	{
-		BrowserNote->SetText(LOCTEXT("BrowserMissing", "The browser component isn't installed on this PC."));
-	}
-	else if (bDisclaimerPending)
-	{
-		BrowserNote->SetText(LOCTEXT("SharingNotice",
-			"Everything you show in your browser is visible to every player near this screen, including anything you're signed in to. Don't show passwords or "
-			"private messages. Press the button again to accept; this notice appears once."));
-	}
-	else if (bMine)
-	{
-		const FString FocusKey = UTSConfig::GetString(this, UTSConfig::FocusKeyKey, TEXT("F8"));
-		const FString CurtainKey = UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10"));
-		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserMine",
-			"Other players near this screen see your browser. {0} switches the window between the browser and the game; {1} blanks it for everyone."),
-			FText::FromString(FocusKey), FText::FromString(CurtainKey)));
-	}
-	else
-	{
-		BrowserNote->SetText(LOCTEXT("BrowserNote",
-			"Whatever you open here is visible to other players near this screen. A notice asks you to accept that the first time."));
-	}
-
-	// Live stream status: the controller's viewers and encoder, or the viewer's decoder.
-	StreamRow->SetVisibility(bShared ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	// Sharing bar.
+	Show(SharingBar, bShared);
 	if (bShared)
 	{
 		const FText Stats = Player ? Player->GetStreamStats() : FText::GetEmpty();
-		if (bMineAny)
+		FText Line;
+		if (bMine)
 		{
 			const int32 Viewers = Screen->GetViewerCount();
-			FText Line = Viewers == 0 ? (bWindowMode ? LOCTEXT("NoViewersWindow", "No one is watching your window yet.") : LOCTEXT("NoViewers", "No one is watching your browser yet."))
-									  : FText::Format(LOCTEXT("StreamingTo", "Streaming to {0} player(s)."), FText::AsNumber(Viewers));
-			if (Screen->IsCurtainOn())
+			Line = Screen->IsCurtainOn() ? FText::Format(LOCTEXT("CurtainActive", "Blanked: others see \"paused\" while you keep using it. {0} shows it again."),
+											   FText::FromString(CurtainKey))
+				: Viewers == 0			 ? LOCTEXT("NoViewers", "No one is close enough to watch yet.")
+										 : FText::Format(LOCTEXT("StreamingTo", "{0} player(s) watching."), FText::AsNumber(Viewers));
+			if (!Stats.IsEmpty() && !Screen->IsCurtainOn())
 			{
-				Line = LOCTEXT("CurtainActive", "Blanked: viewers see \"paused\". You still see it.");
-			}
-			else if (!Stats.IsEmpty())
-			{
-				Line = FText::Format(LOCTEXT("StreamingStats", "{0}  {1}"), Line, Stats);
-			}
-			StreamText->SetText(Line);
-			if (CurtainButtonText)
-			{
-				CurtainButtonText->SetText(Screen->IsCurtainOn() ? LOCTEXT("CurtainOff", "Show again") : LOCTEXT("CurtainOn2", "Blank for everyone"));
+				Line = FText::Format(LOCTEXT("StreamingStats", "{0}   {1}"), Line, Stats);
 			}
 		}
 		else
 		{
-			StreamText->SetText(Stats.IsEmpty() ? FText::GetEmpty() : FText::Format(LOCTEXT("ViewingStats", "Watching: {0}"), Stats));
+			Line = Stats.IsEmpty() ? FText::GetEmpty() : FText::Format(LOCTEXT("ViewingStats", "Stream: {0}"), Stats);
 		}
-		if (CurtainButtonText && CurtainButtonText->GetParent())
+		SharingText->SetText(Line);
+		Show(SharingText, !Line.IsEmpty());
+		if (UTextBlock* Label = ButtonLabel(OpenWindowButton))
 		{
-			CurtainButtonText->GetParent()->SetVisibility(bMineAny ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+			Label->SetText(FText::Format(LOCTEXT("OpenWindowKey", "Use it in a window ({0})"), FText::FromString(FocusKey)));
+		}
+		if (UTextBlock* Label = ButtonLabel(CurtainButton))
+		{
+			Label->SetText(Screen->IsCurtainOn() ? LOCTEXT("CurtainOff", "Show it again") : FText::Format(LOCTEXT("CurtainOnKey", "Blank for everyone ({0})"), FText::FromString(CurtainKey)));
+		}
+		if (UTextBlock* Label = ButtonLabel(StopSharingButton))
+		{
+			Label->SetText(bWindowMode ? LOCTEXT("WindowStop", "Stop sharing") : LOCTEXT("BrowserStop", "Close the browser"));
 		}
 	}
+	Show(OpenWindowButton, bMine);
+	Show(CurtainButton, bMine);
+	Show(StopSharingButton, bMine);
+	Show(TakeOverButton, bBrowserMode && !bMine);
+	Show(HostStopButton, bShared && !bMine && bHostTools);
+
+	// Tabs: what can be done here right now.
+	const bool bBrowserAvailable = Host && Host->IsBrowserAvailable();
+#if PLATFORM_WINDOWS
+	const bool bWindowsAvailable = Host != nullptr;
+#else
+	const bool bWindowsAvailable = false;
+#endif
+	if (TabButtons.Num() == 4)
+	{
+		Show(TabButtons[int32(ETab::Window)], bWindowsAvailable);
+	}
+
+	// Browser page.
+	Show(BrowserOpenButton, bBrowserAvailable && !bMyBrowser);
+	Show(BrowserNavRow, bMyBrowser);
+	if (UTextBlock* Label = ButtonLabel(BrowserOpenButton))
+	{
+		Label->SetText(bShared && !bMine ? LOCTEXT("BrowserOpenInstead", "Open my browser here instead") : LOCTEXT("BrowserOpen", "Open the browser"));
+	}
+	if (bMyBrowser && Player && !BrowserUrlBox->HasKeyboardFocus())
+	{
+		BrowserUrlBox->SetText(FText::FromString(Player->GetBrowserState().Url));
+	}
+	if (!bBrowserAvailable)
+	{
+		BrowserNote->SetText(LOCTEXT("BrowserMissing", "The browser component isn't installed on this PC."));
+	}
+	else if (bMyBrowser)
+	{
+		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserMine",
+			"Type an address and Go, or use the browser in its window ({0}: mouse and keyboard go to it; {0} again or hold Esc returns to the game). "
+			"Everyone near the screen sees and hears it."), FText::FromString(FocusKey)));
+	}
+	else if (bBrowserMode)
+	{
+		BrowserNote->SetText(FText::Format(LOCTEXT("BrowserOtherNote", "{0} is using this screen's browser. You can open yours here instead if the host allows it."),
+			FText::FromString(Screen->GetControllerName())));
+	}
+	else
+	{
+		BrowserNote->SetText(LOCTEXT("BrowserNote",
+			"A built-in browser on this screen: web pages, videos, web games. You use it in a window; everyone near the screen sees and hears it."));
+	}
+	UTSScreenPlayer* LoopSource = nullptr;
+	for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+	{
+		if (*It != Screen && It->IsLocallyControlled() && It->GetPlayer() && It->GetPlayer()->HasBrowser())
+		{
+			LoopSource = It->GetPlayer();
+			break;
+		}
+	}
+	const bool bLooping = Player && Player->IsLoopback();
+	Show(LoopbackRow, LoopSource || bLooping);
+	LoopbackText->SetText(bLooping ? Player->GetLoopbackStats()
+								   : LOCTEXT("LoopbackHint", "Stream test: show your browser from another screen here, encoded and decoded like a live stream."));
+
+	// Window page.
+	if (bWindowMode && bMine)
+	{
+		WindowNote->SetText(LOCTEXT("WindowMine",
+			"Others see this window and hear its sound. It can stay behind the game, but not minimised. In its window (button above) clicks and "
+			"keys are sent to it; most apps accept them, games and VMs usually don't. Pick another window below to switch."));
+	}
+	else if (bWindowListPending)
+	{
+		WindowNote->SetText(LOCTEXT("WindowListing", "Looking for windows..."));
+	}
+	else if (Windows.Num() == 0)
+	{
+		WindowNote->SetText(LOCTEXT("NoWindows", "No windows found. Open the program you want to share, then Refresh list."));
+	}
+	else
+	{
+		WindowNote->SetText(LOCTEXT("WindowPick", "Pick a window to show on this screen with its sound. Only that window is shared, not your desktop."));
+	}
 }
 
-bool UTSScreenPanel::AcceptSharingNotice()
+void UTSScreenPanel::RequestWindowList()
 {
-	if (UTSConfig::GetBool(this, UTSConfig::StreamDisclaimerKey, false))
+	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
+	if (!Host)
 	{
-		return true;
+		return;
 	}
-	if (!bDisclaimerPending)
+	bWindowListPending = true;
+	RefreshSharing();
+	TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+	const bool bReady = Host->EnsureConnected();
+	auto OnList = [WeakThis](const TArray<FTSWindowInfo>& List)
 	{
-		bDisclaimerPending = true;
-		RefreshBrowser();
-		return false;
-	}
-	UTSConfig::SetBool(this, UTSConfig::StreamDisclaimerKey, true);
-	bDisclaimerPending = false;
-	return true;
-}
-
-bool UTSScreenPanel::AcceptWindowNotice()
-{
-	if (UTSConfig::GetBool(this, UTSConfig::WindowDisclaimerKey, false))
+		if (UTSScreenPanel* Panel = WeakThis.Get())
+		{
+			Panel->bWindowListPending = false;
+			Panel->Windows = List;
+			Panel->ShowWindowList();
+		}
+	};
+	if (bReady)
 	{
-		return true;
+		Host->ListWindows(OnList);
+		return;
 	}
-	if (!bWindowDisclaimerPending)
+	// The helper is starting: ask again once it is up.
+	FTimerHandle Retry;
+	GetWorld()->GetTimerManager().SetTimer(Retry, FTimerDelegate::CreateWeakLambda(this, [this, OnList]()
 	{
-		bWindowDisclaimerPending = true;
-		RefreshBrowser();
-		return false;
-	}
-	UTSConfig::SetBool(this, UTSConfig::WindowDisclaimerKey, true);
-	bWindowDisclaimerPending = false;
-	return true;
+		if (UTSHostSubsystem* Later = UTSHostSubsystem::Get(this))
+		{
+			Later->ListWindows(OnList);
+		}
+	}), 1.5f, false);
 }
 
 void UTSScreenPanel::ShowWindowList()
 {
 	WindowListBox->ClearChildren();
-	if (Windows.Num() == 0)
-	{
-		WindowNote->SetText(LOCTEXT("NoWindows", "No windows to share (or Telescreen's player isn't running yet; try again in a moment)."));
-		return;
-	}
-	WindowNote->SetText(LOCTEXT("WindowPick", "Pick the window to show. Only that window is shared, not your desktop."));
 	for (int32 I = 0; I < Windows.Num(); ++I)
 	{
 		const FTSWindowInfo& Info = Windows[I];
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-		const FText Label = Info.Exe.IsEmpty() ? FText::FromString(Info.Title)
-											   : FText::Format(LOCTEXT("WindowRow", "{0}   ({1})"), FText::FromString(Info.Title), FText::FromString(Info.Exe));
-		UTextBlock* Text = MakeText(Label, 13);
-		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(Text);
-		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		TextSlot->SetVerticalAlignment(VAlign_Center);
-		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("WindowShare", "Share"), ETSPanelAction::WindowShare, I, FLinearColor(0.25f, 0.15f, 0.05f)))
+		UVerticalBox* Labels = WidgetTree->ConstructWidget<UVerticalBox>();
+		Labels->AddChildToVerticalBox(MakeText(FText::FromString(Info.Title), 14));
+		if (!Info.Exe.IsEmpty())
+		{
+			Labels->AddChildToVerticalBox(MakeText(FText::FromString(Info.Exe), 11, Muted));
+		}
+		UHorizontalBoxSlot* LabelSlot = Row->AddChildToHorizontalBox(Labels);
+		LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		LabelSlot->SetVerticalAlignment(VAlign_Center);
+		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("WindowShare", "Share this window"), ETSPanelAction::WindowShare, I, PrimaryColor))
 			->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
-		WindowListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 2.f));
+		WindowListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 3.f));
+	}
+	RefreshSharing();
+}
+
+void UTSScreenPanel::AskConfirm(EConfirm Kind, int32 Index)
+{
+	const bool bWindow = Kind == EConfirm::ShareWindow;
+	if (UTSConfig::GetBool(this, bWindow ? UTSConfig::WindowDisclaimerKey : UTSConfig::StreamDisclaimerKey, false))
+	{
+		RunConfirmed(Kind, Index);
+		return;
+	}
+	PendingConfirm = Kind;
+	PendingIndex = Index;
+	const FText CurtainKey = FText::FromString(UTSConfig::GetString(this, UTSConfig::CurtainKeyKey, TEXT("F10")));
+	if (bWindow)
+	{
+		ConfirmTitle->SetText(LOCTEXT("ConfirmWindowTitle", "Share a window with everyone?"));
+		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmWindow",
+			"Everything that appears in the window you share is visible to every player near this screen, and they hear its sound. That includes "
+			"notifications and anything you open in it. Only that window is shared, not your desktop.\n\n{0} blanks it for everyone at any time. "
+			"This question appears only once."), CurtainKey));
+	}
+	else
+	{
+		ConfirmTitle->SetText(LOCTEXT("ConfirmBrowserTitle", "Share your browser with everyone?"));
+		ConfirmText->SetText(FText::Format(LOCTEXT("ConfirmBrowser",
+			"Everything you show in this browser is visible to every player near this screen, including anything you're signed in to. Don't show "
+			"passwords or private messages.\n\n{0} blanks it for everyone at any time. This question appears only once."), CurtainKey));
+	}
+	Show(ConfirmLayer, true);
+}
+
+void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this);
+	if (!Screen || !RCO)
+	{
+		SetNotice(LOCTEXT("NoRCOConfirm", "Telescreen isn't installed on the server."), true);
+		return;
+	}
+	switch (Kind)
+	{
+	case EConfirm::OpenBrowser:
+	case EConfirm::TakeOver:
+		RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, Kind == EConfirm::OpenBrowser ? BrowserUrlBox->GetText().ToString().TrimStartAndEnd() : FString());
+		OpenWindowWhenMineUntil = FPlatformTime::Seconds() + OpenWindowTimeout;
+		SetNotice(LOCTEXT("OpeningBrowser", "Opening the browser..."));
+		break;
+	case EConfirm::ShareWindow:
+		if (Windows.IsValidIndex(Index))
+		{
+			UE_LOG(LogTelescreen, Log, TEXT("%s: sharing window \"%s\" (%s)"), *Screen->GetName(), *Windows[Index].Title, *Windows[Index].Exe);
+			RCO->Server_TakeControl(Screen, ETSScreenMode::Window, FString::Printf(TEXT("%llu"), Windows[Index].Window));
+			SetNotice(FText::Format(LOCTEXT("SharingWindow", "Sharing \"{0}\"..."), FText::FromString(Windows[Index].Title)));
+		}
+		break;
+	default:
+		break;
 	}
 }
 
@@ -699,18 +879,44 @@ void UTSScreenPanel::AddLink(bool bPlayNow)
 void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 {
 	ATSBuildableScreen* Screen = GetScreen();
-	UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this);
-	if (Action == ETSPanelAction::Close)
+	switch (Action)
 	{
+	case ETSPanelAction::Close:
 		Close();
 		return;
-	}
-	if (Action == ETSPanelAction::TogglePip)
-	{
+	case ETSPanelAction::TogglePip:
 		UTSScreenWindow::TogglePinned(Screen);
 		Refresh();
 		return;
+	case ETSPanelAction::Tab:
+		SelectTab(ETab(FMath::Clamp(Index, 0, 3)));
+		return;
+	case ETSPanelAction::ConfirmAccept:
+	{
+		const EConfirm Kind = PendingConfirm;
+		const int32 ConfirmIndex = PendingIndex;
+		PendingConfirm = EConfirm::None;
+		Show(ConfirmLayer, false);
+		UTSConfig::SetBool(this, Kind == EConfirm::ShareWindow ? UTSConfig::WindowDisclaimerKey : UTSConfig::StreamDisclaimerKey, true);
+		UE_LOG(LogTelescreen, Log, TEXT("Sharing notice %d accepted"), int32(Kind));
+		RunConfirmed(Kind, ConfirmIndex);
+		return;
 	}
+	case ETSPanelAction::ConfirmCancel:
+		PendingConfirm = EConfirm::None;
+		Show(ConfirmLayer, false);
+		return;
+	case ETSPanelAction::WindowRefresh:
+		RequestWindowList();
+		return;
+	case ETSPanelAction::OpenWindow:
+		Close();
+		UTSScreenWindow::OpenInteractive(Screen);
+		return;
+	default:
+		break;
+	}
+	UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this);
 	if (!Screen || !RCO)
 	{
 		SetNotice(LOCTEXT("NoRCOAction", "Telescreen isn't installed on the server."), true);
@@ -741,49 +947,16 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::ClearQueue: RCO->Server_MediaCommand(Screen, ETSMediaCommand::Clear, 0, 0.0); break;
 	case ETSPanelAction::SaveName:
 		RCO->Server_SetScreenSettings(Screen, NameBox->GetText().ToString().Left(64), Screen->GetAspectMode());
+		SetNotice(LOCTEXT("NameSaved", "Name saved."));
 		break;
 	case ETSPanelAction::AspectLetterbox: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Letterbox); break;
 	case ETSPanelAction::AspectFill: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Fill); break;
 	case ETSPanelAction::AspectStretch: RCO->Server_SetScreenSettings(Screen, Screen->GetScreenName(), ETSAspectMode::Stretch); break;
-	case ETSPanelAction::BrowserOpen:
-		if (AcceptSharingNotice())
-		{
-			RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, BrowserUrlBox->GetText().ToString().TrimStartAndEnd());
-		}
-		break;
-	case ETSPanelAction::BrowserTakeOver:
-		if (AcceptSharingNotice())
-		{
-			RCO->Server_TakeControl(Screen, ETSScreenMode::Browser, FString());
-		}
-		break;
-	case ETSPanelAction::WindowList:
-		if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
-		{
-			TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
-			Host->ListWindows([WeakThis](const TArray<FTSWindowInfo>& List)
-			{
-				if (UTSScreenPanel* Panel = WeakThis.Get())
-				{
-					Panel->Windows = List;
-					Panel->ShowWindowList();
-				}
-			});
-		}
-		break;
-	case ETSPanelAction::WindowShare:
-		if (Windows.IsValidIndex(Index) && AcceptWindowNotice())
-		{
-			UE_LOG(LogTelescreen, Log, TEXT("%s: sharing window \"%s\" (%s)"), *Screen->GetName(), *Windows[Index].Title, *Windows[Index].Exe);
-			RCO->Server_TakeControl(Screen, ETSScreenMode::Window, FString::Printf(TEXT("%llu"), Windows[Index].Window));
-			Windows.Reset();
-			WindowListBox->ClearChildren();
-		}
-		break;
-	case ETSPanelAction::CurtainToggle:
-		RCO->Server_SetCurtain(Screen, !Screen->IsCurtainOn());
-		break;
-	case ETSPanelAction::BrowserStop:
+	case ETSPanelAction::BrowserOpen: AskConfirm(EConfirm::OpenBrowser, INDEX_NONE); break;
+	case ETSPanelAction::BrowserTakeOver: AskConfirm(EConfirm::TakeOver, INDEX_NONE); break;
+	case ETSPanelAction::WindowShare: AskConfirm(EConfirm::ShareWindow, Index); break;
+	case ETSPanelAction::CurtainToggle: RCO->Server_SetCurtain(Screen, !Screen->IsCurtainOn()); break;
+	case ETSPanelAction::StopSharing:
 	case ETSPanelAction::HostStop:
 		RCO->Server_ReleaseControl(Screen);
 		break;
@@ -803,10 +976,6 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 																		: TSHostProtocol::ECommand::Reload);
 		}
 		break;
-	case ETSPanelAction::BrowserWindow:
-		Close();
-		UTSScreenWindow::OpenInteractive(Screen);
-		return;
 	case ETSPanelAction::LoopbackToggle:
 		if (UTSScreenPlayer* Player = Screen->GetPlayer())
 		{
@@ -834,7 +1003,8 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 			Player->LoadAnyway();
 		}
 		break;
-	default: break;
+	default:
+		break;
 	}
 }
 

@@ -179,7 +179,14 @@ bool UTSScreenWindow::Initialize()
 
 void UTSScreenWindow::BuildTree()
 {
+	UOverlay* Layer = WidgetTree->ConstructWidget<UOverlay>();
+	Backdrop = WidgetTree->ConstructWidget<UBorder>();
+	Backdrop->SetBrushColor(FLinearColor::Transparent);
+	UOverlaySlot* BackdropSlot = Layer->AddChildToOverlay(Backdrop);
+	BackdropSlot->SetHorizontalAlignment(HAlign_Fill);
+	BackdropSlot->SetVerticalAlignment(VAlign_Fill);
 	Size = WidgetTree->ConstructWidget<USizeBox>();
+	FrameSlot = Layer->AddChildToOverlay(Size);
 	UBorder* Frame = WidgetTree->ConstructWidget<UBorder>();
 	Frame->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.9f));
 	Frame->SetPadding(FMargin(3.f));
@@ -213,7 +220,7 @@ void UTSScreenWindow::BuildTree()
 	TitleSlot->SetHorizontalAlignment(HAlign_Left);
 	TitleSlot->SetVerticalAlignment(VAlign_Top);
 	TitleSlot->SetPadding(FMargin(6.f, 4.f));
-	WidgetTree->RootWidget = Size;
+	WidgetTree->RootWidget = Layer;
 }
 
 void UTSScreenWindow::SetInteractive(bool bInInteractive)
@@ -289,11 +296,12 @@ void UTSScreenWindow::Place()
 	}
 	Aspect = FMath::Clamp(Aspect, 0.25f, 8.f);
 
-	FVector2D NewSize, Anchor, Position;
+	const float Scale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(this), 0.1f);
+	const FVector2D Viewport = UWidgetLayoutLibrary::GetViewportSize(this) / Scale;
+	FVector2D NewSize, Anchor;
+	FMargin FramePadding;
 	if (bInteractive)
 	{
-		const float Scale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(this), 0.1f);
-		const FVector2D Viewport = UWidgetLayoutLibrary::GetViewportSize(this) / Scale;
 		float Width = Viewport.X * 0.72f;
 		if (Width / Aspect > Viewport.Y * 0.8f)
 		{
@@ -301,17 +309,16 @@ void UTSScreenWindow::Place()
 		}
 		NewSize = FVector2D(Width + 6.f, Width / Aspect + 26.f);
 		Anchor = FVector2D(0.5f, 0.5f);
-		Position = FVector2D::ZeroVector;
 	}
 	else
 	{
-		const float Width = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::PipWidthKey, 420.f), 160.f, 1600.f);
+		const float Width = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::PipWidthKey, 420.f), 160.f, FMath::Max(160.f, Viewport.X * 0.5f));
 		const int32 Corner = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::PipCornerKey, 0), 0, 3);
 		const bool bRight = Corner == 0 || Corner == 2;
 		const bool bBottom = Corner == 0 || Corner == 1;
 		NewSize = FVector2D(Width + 6.f, Width / Aspect + 6.f);
 		Anchor = FVector2D(bRight ? 1.f : 0.f, bBottom ? 1.f : 0.f);
-		Position = FVector2D(bRight ? -Margin : Margin, bBottom ? -BottomMargin : Margin);
+		FramePadding = FMargin(bRight ? 0.f : Margin, bBottom ? 0.f : Margin, bRight ? Margin : 0.f, bBottom ? BottomMargin : 0.f);
 	}
 	if (NewSize.Equals(PlacedSize, 0.5f) && Anchor == PlacedAnchor && bPlacedInteractive == bInteractive)
 	{
@@ -322,9 +329,13 @@ void UTSScreenWindow::Place()
 	bPlacedInteractive = bInteractive;
 	Size->SetWidthOverride(NewSize.X);
 	Size->SetHeightOverride(NewSize.Y);
-	SetAnchorsInViewport(FAnchors(Anchor.X, Anchor.Y));
-	SetAlignmentInViewport(Anchor);
-	SetPositionInViewport(Position, false);
+	FrameSlot->SetHorizontalAlignment(Anchor.X < 0.25f ? HAlign_Left : Anchor.X > 0.75f ? HAlign_Right : HAlign_Center);
+	FrameSlot->SetVerticalAlignment(Anchor.Y < 0.25f ? VAlign_Top : Anchor.Y > 0.75f ? VAlign_Bottom : VAlign_Center);
+	FrameSlot->SetPadding(FramePadding);
+	// Interactive: dim the game behind the window, so it reads as a dialog.
+	Backdrop->SetBrushColor(bInteractive ? FLinearColor(0.f, 0.f, 0.f, 0.45f) : FLinearColor::Transparent);
+	UE_LOG(LogTelescreen, Verbose, TEXT("Screen window placed: %.0fx%.0f, %s, viewport %.0fx%.0f"), NewSize.X, NewSize.Y, bInteractive ? TEXT("centred") : TEXT("corner"),
+		Viewport.X, Viewport.Y);
 }
 
 UTSScreenPlayer* UTSScreenWindow::GetBrowserPlayer() const
