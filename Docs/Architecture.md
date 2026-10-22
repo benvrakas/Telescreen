@@ -94,6 +94,30 @@ yt-dlp.
 - **Browser size** follows the screen's real aspect ratio at the "Video quality" height, and resizes when the screen
   is rescaled.
 
+## Stream encoding (M3)
+
+`FStreamEncoder` / `FStreamDecoder` (`Helper/src/StreamCodec.cpp`) are the encoder ladder M4 streams with: AV1, HEVC,
+H.264 on NVENC / AMF / QuickSync, then SVT-AV1 in software (opt-in). Settings are for low latency: no B-frames,
+constant bitrate, zero-latency/ultra-low-latency tuning, a two-frame rate buffer, keyframes on demand. SVT-AV1 needs
+its low-delay prediction structure (`pred-struct=1`) to accept a bitrate cap.
+
+Measured with `--selftest-encode` on Big Buck Bunny (RTX 3080 Ti, which has no AV1 encoder; 2026-10-22):
+
+| Encoder -> decoder | Size, fps | Encode | Decode | Bitrate | Luma PSNR |
+|---|---|---|---|---|---|
+| hevc_nvenc -> hevc | 1440x720, 60 | 6.1 ms | 4.7 ms | 2.9 Mbps | 42.2 dB |
+| hevc_nvenc -> hevc | 1920x1080, 60 | 8.4 ms | 9.7 ms | 5.7 Mbps | 43.4 dB |
+| h264_nvenc -> h264 | 1920x1080, 60 | 8.0 ms | 5.2 ms | 6.0 Mbps | 42.6 dB |
+| libsvtav1 -> libdav1d | 1440x720, 30 | 9.5 ms | 1.8 ms | 1.1 Mbps | 42.2 dB |
+| libsvtav1 -> libdav1d | 1920x1080, 30 | 16.6 ms | 3.1 ms | 1.8 Mbps | 43.1 dB |
+
+Conclusions for M4: default 720p at 30 fps (2-3 Mbps HEVC, or about 40% less with AV1); 60 fps as a game option;
+viewers decode HEVC/H.264 with D3D11VA at 1080p60 (software decoding uses most of the frame budget there); software
+AV1 is a sensible opt-in for controllers with CPU to spare.
+
+The panel's **Stream test** (on a second screen while your browser runs on another) shows your browser through the
+encoder and decoder on this PC, with live encoder, size, frame rate, bitrate and timing (`FLoopbackSession`).
+
 ### HUD picture and screen window
 
 `UTSScreenWindow` shows one screen on the HUD in two states. **Pass-through** ("Show on HUD"): a small

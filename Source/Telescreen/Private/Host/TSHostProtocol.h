@@ -26,6 +26,7 @@ namespace TSHostProtocol
 		BrowserInput = 13,
 		BrowserCommand = 14,
 		BrowserState = 15,
+		OpenLoopback = 16,
 	};
 
 	// BrowserInput kinds.

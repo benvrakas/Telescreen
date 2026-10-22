@@ -1,4 +1,5 @@
 #include "BrowserSession.h"
+#include "LoopbackSession.h"
 
 #include <algorithm>
 #include <cstring>
@@ -549,6 +550,7 @@ void FBrowserSession::Publish()
 	}
 	VideoWriter->Publish(Frame, NowSeconds());
 	++FramesPublished;
+	FrameTaps::Publish(Params.SessionId, Frame, ViewWidth, ViewHeight);
 }
 
 void FBrowserSession::OnAudioStarted(int Channels)

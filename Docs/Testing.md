@@ -37,6 +37,13 @@
 8. Blocked: `chrome://version` and `file:///C:/` in the address box don't open; a page asking for the microphone gets
    refused; a download link does nothing.
 
+## M3 (stream test)
+
+1. Open the browser on one screen, then open a second screen's panel: "Stream test" appears. Pressing it shows your
+   browser on the second screen after encoding and decoding, with the encoder, bitrate and timings under the button.
+   Judge text sharpness and motion (e.g. scroll a page, play a video).
+2. Pressing it again stops the test; closing the browser stops it too.
+
 ## M1 multiplayer
 
 1. Listen server: a client sees and hears the same video, within about a quarter of a second of the host.

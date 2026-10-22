@@ -10,9 +10,11 @@
 
 using namespace TSHostProtocol;
 
+// The helper only runs on Windows clients; other platforms (the Linux dedicated server) get stubs.
+#if PLATFORM_WINDOWS
+
 TSharedPtr<FTSSharedMapping, ESPMode::ThreadSafe> FTSSharedMapping::Open(const FString& Name)
 {
-#if PLATFORM_WINDOWS
 	HANDLE Handle = OpenFileMappingW(FILE_MAP_ALL_ACCESS, false, *Name);
 	if (!Handle)
 	{
@@ -30,17 +32,12 @@ TSharedPtr<FTSSharedMapping, ESPMode::ThreadSafe> FTSSharedMapping::Open(const F
 	Mapping->Handle = Handle;
 	Mapping->Data = static_cast<uint8*>(View);
 	return Mapping;
-#else
-	return nullptr;
-#endif
 }
 
 FTSSharedMapping::~FTSSharedMapping()
 {
-#if PLATFORM_WINDOWS
 	if (Data) UnmapViewOfFile(Data);
 	if (Handle) CloseHandle(Handle);
-#endif
 }
 
 bool FTSVideoReader::Open(const FString& MappingName)
@@ -136,3 +133,15 @@ int32 FTSAudioReader::Read(float* Out, int32 Frames)
 	FPlatformAtomics::InterlockedExchange(&Header->ReadFrames, ReadFrames + Available);
 	return Available;
 }
+
+#else
+
+TSharedPtr<FTSSharedMapping, ESPMode::ThreadSafe> FTSSharedMapping::Open(const FString& Name) { return nullptr; }
+FTSSharedMapping::~FTSSharedMapping() {}
+bool FTSVideoReader::Open(const FString& MappingName) { return false; }
+void FTSVideoReader::Close() { Mapping.Reset(); }
+bool FTSVideoReader::FetchNewFrame(TArray<uint8>& OutBgra, double& OutPts) { return false; }
+TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe> FTSAudioReader::Open(const FString& MappingName) { return nullptr; }
+int32 FTSAudioReader::Read(float* Out, int32 Frames) { return 0; }
+
+#endif

@@ -1,5 +1,6 @@
 #include "UI/TSScreenPanel.h"
 #include "Blueprint/WidgetTree.h"
+#include "EngineUtils.h"
 #include "Buildables/TSBuildableScreen.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -210,6 +211,13 @@ void UTSScreenPanel::BuildTree()
 	OwnActions->SetVisibility(ESlateVisibility::Collapsed);
 	BrowserOwnActions = OwnActions;
 
+	UHorizontalBox* Loopback = MakeHBox();
+	LoopbackText = MakeText(FText::GetEmpty(), 12, Muted);
+	AddToHBox(Loopback, LoopbackText, true);
+	AddToHBox(Loopback, MakeButton(LOCTEXT("LoopbackToggle", "Stream test"), ETSPanelAction::LoopbackToggle));
+	LoopbackRow = Loopback;
+	AddRow(Root, Loopback, 4.f);
+
 	UHorizontalBox* QueueHeader = MakeHBox();
 	AddToHBox(QueueHeader, MakeText(LOCTEXT("QueueHeader", "Queue"), 14, Accent), true);
 	AddToHBox(QueueHeader, MakeButton(LOCTEXT("ClearQueue", "Clear"), ETSPanelAction::ClearQueue));
@@ -391,6 +399,21 @@ void UTSScreenPanel::RefreshBrowser()
 	{
 		BrowserUrlBox->SetText(FText::FromString(Player->GetBrowserState().Url));
 	}
+	// The stream test shows the local player's browser from another screen here, through the encoder and decoder.
+	UTSScreenPlayer* Source = nullptr;
+	for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+	{
+		if (*It != Screen && It->IsLocallyControlled() && It->GetPlayer() && It->GetPlayer()->HasBrowser())
+		{
+			Source = It->GetPlayer();
+			break;
+		}
+	}
+	const bool bLooping = Player && Player->IsLoopback();
+	LoopbackRow->SetVisibility(Source || bLooping ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	LoopbackText->SetText(bLooping ? Player->GetLoopbackStats()
+								   : LOCTEXT("LoopbackHint", "Stream test: show your browser from another screen here, encoded and decoded like a live stream."));
+
 	if (!bAvailable)
 	{
 		BrowserNote->SetText(LOCTEXT("BrowserMissing", "The browser component isn't installed on this PC."));
@@ -586,6 +609,27 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		Close();
 		UTSScreenWindow::OpenInteractive(Screen);
 		return;
+	case ETSPanelAction::LoopbackToggle:
+		if (UTSScreenPlayer* Player = Screen->GetPlayer())
+		{
+			if (Player->IsLoopback())
+			{
+				Player->StopLoopback();
+			}
+			else
+			{
+				for (TActorIterator<ATSBuildableScreen> It(GetWorld()); It; ++It)
+				{
+					if (*It != Screen && It->IsLocallyControlled() && It->GetPlayer() && It->GetPlayer()->HasBrowser())
+					{
+						Player->StartLoopback(It->GetPlayer());
+						break;
+					}
+				}
+			}
+		}
+		Refresh();
+		break;
 	case ETSPanelAction::LoadAnyway:
 		if (UTSScreenPlayer* Player = Screen->GetPlayer())
 		{

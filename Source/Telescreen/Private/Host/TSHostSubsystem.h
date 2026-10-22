@@ -110,6 +110,9 @@ public:
 	// Sends one navigation command; Body is the payload after the session id and command.
 	void SendBrowserCommand(uint32 Session, TSHostProtocol::ECommand Command, const TArray<uint8>& Body);
 
+	// M3 test: shows SourceSession's frames after the stream encoder and decoder; returns the new session id.
+	uint32 OpenLoopback(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener);
+
 	// True if the browser component is installed (the built-in browser can be used).
 	bool IsBrowserAvailable() const;
 	void CloseSession(uint32 Session);

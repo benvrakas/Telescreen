@@ -230,6 +230,20 @@ void UTSScreenPlayer::Reconcile()
 	{
 		return;
 	}
+	if (LoopbackSource.IsValid())
+	{
+		if (Session == 0 && LoopbackSource->HasBrowser())
+		{
+			if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this))
+			{
+				Session = Host->OpenLoopback(LoopbackSource->GetSessionId(), 30, 3000, this);
+				SessionKey = TEXT("loopback");
+				SetStatus(LOCTEXT("LoopbackTitle", "Loopback test"), LOCTEXT("LoopbackStarting", "Encoding your browser..."));
+			}
+		}
+		return;
+	}
+
 	if (Screen->GetMode() == ETSScreenMode::Browser)
 	{
 		BlockedReason = FText::GetEmpty();
@@ -498,6 +512,30 @@ void UTSScreenPlayer::BrowserCommand(ECommand Command)
 	}
 }
 
+void UTSScreenPlayer::StartLoopback(UTSScreenPlayer* Source)
+{
+	if (!Source || Source == this || !Source->HasBrowser())
+	{
+		return;
+	}
+	CloseSession();
+	LoopbackSource = Source;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: loopback test of %s"), *GetNameSafe(GetOwner()), *GetNameSafe(Source->GetOwner()));
+	Reconcile();
+}
+
+void UTSScreenPlayer::StopLoopback()
+{
+	if (!LoopbackSource.IsValid() && SessionKey != TEXT("loopback"))
+	{
+		return;
+	}
+	LoopbackSource.Reset();
+	CloseSession();
+	Reconcile();
+	ShowStatus();
+}
+
 void UTSScreenPlayer::OnHostBrowserState(const FTSBrowserState& State)
 {
 	if (State.bPointerLocked != BrowserState.bPointerLocked)
@@ -541,6 +579,10 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 		return;
 	}
 	const double Now = FPlatformTime::Seconds();
+	if (SessionKey == TEXT("loopback") && (!LoopbackSource.IsValid() || !LoopbackSource->HasBrowser()))
+	{
+		StopLoopback();
+	}
 	if (Now >= NextRank)
 	{
 		NextRank = Now + RankInterval;
@@ -819,6 +861,10 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 			*Message);
 	}
 	HostState = State;
+	if (LoopbackSource.IsValid() && State == ESessionState::Playing)
+	{
+		LoopbackStats = FText::FromString(Message);
+	}
 	switch (State)
 	{
 	case ESessionState::Error:

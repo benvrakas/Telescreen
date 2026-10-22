@@ -40,6 +40,7 @@ enum class ETSPanelAction : uint8
 	BrowserWindow,
 	BrowserStop,
 	BrowserTakeOver,
+	LoopbackToggle,
 };
 
 // Routes one button's click to its panel with the button's action and queue index.
@@ -128,6 +129,10 @@ private:
 	TObjectPtr<UWidget> BrowserUrlRow;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> BrowserOwnActions;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> LoopbackRow;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> LoopbackText;
 
 	void RefreshBrowser();
 	FDelegateHandle BrowserStateHandle;

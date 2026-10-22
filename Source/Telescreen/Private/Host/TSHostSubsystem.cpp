@@ -596,6 +596,25 @@ uint32 UTSHostSubsystem::OpenBrowser(const FString& Url, uint32 Width, uint32 He
 	return Session;
 }
 
+uint32 UTSHostSubsystem::OpenLoopback(uint32 SourceSession, uint32 Fps, uint32 Kbps, ITSHostSessionListener* Listener)
+{
+	if (!EnsureConnected())
+	{
+		return 0;
+	}
+	const uint32 Session = NextSessionId++;
+	Listeners.Add(Session, Listener);
+	FTSPayloadWriter W;
+	W.U32(Session);
+	W.U32(SourceSession);
+	W.U32(Fps);
+	W.U32(Kbps);
+	W.Str(FString());
+	Send(EMsg::OpenLoopback, W.Bytes);
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u loops back session %u at %u fps, %u kbps"), Session, SourceSession, Fps, Kbps);
+	return Session;
+}
+
 void UTSHostSubsystem::SendBrowserInput(uint32 Session, EInput Kind, const TArray<uint8>& Body)
 {
 	if (!bConnected || !Listeners.Contains(Session))

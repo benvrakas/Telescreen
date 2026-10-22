@@ -2,10 +2,13 @@
 
 #include "BrowserSession.h"
 #include "Common.h"
+#include "EncodeBench.h"
+#include "LoopbackSession.h"
 #include "MediaSession.h"
 #include "Pipe.h"
 #include "YtDlp.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -32,6 +35,8 @@ namespace
 		std::string SelfTest;
 		bool SelfTestLocal = false;
 		bool SelfTestBrowser = false;
+		FEncodeBenchArgs Bench;
+		bool bBench = false;
 		double Seconds = 12.0, Start = 0.0, SeekAt = -1.0, SeekTo = 0.0, PauseAt = -1.0, ResumeAt = -1.0;
 	};
 
@@ -57,7 +62,15 @@ namespace
 			else if (Key == L"--seek-to") Args.SeekTo = _wtof(Value.c_str());
 			else if (Key == L"--pause-at") Args.PauseAt = _wtof(Value.c_str());
 			else if (Key == L"--resume-at") Args.ResumeAt = _wtof(Value.c_str());
-			else if (Key == L"--out") Args.Out = Value;
+			else if (Key == L"--out") { Args.Out = Value; Args.Bench.Out = Value; }
+			else if (Key == L"--selftest-encode") { Args.Bench.Input = Narrow(Value); Args.bBench = true; }
+			else if (Key == L"--width") Args.Bench.Settings.Width = _wtoi(Value.c_str());
+			else if (Key == L"--height") Args.Bench.Settings.Height = _wtoi(Value.c_str());
+			else if (Key == L"--fps") Args.Bench.Settings.Fps = _wtoi(Value.c_str());
+			else if (Key == L"--kbps") Args.Bench.Settings.BitrateKbps = _wtoi(Value.c_str());
+			else if (Key == L"--frames") Args.Bench.Frames = _wtoi(Value.c_str());
+			else if (Key == L"--prefer") Args.Bench.Settings.Prefer = Narrow(Value);
+			else if (Key == L"--software") Args.Bench.Settings.bAllowSoftware = Value == L"1";
 		}
 		return Args;
 	}
@@ -282,6 +295,25 @@ namespace
 					Sessions.erase(Existing);
 				}
 				Sessions[Params.SessionId] = std::make_unique<FBrowserSession>(Params, Events);
+				break;
+			}
+			case EMsg::OpenLoopback:
+			{
+				FLoopbackParams Params;
+				Params.SessionId = R.U32();
+				Params.SourceSessionId = R.U32();
+				Params.Fps = int(std::clamp<uint32_t>(R.U32(), 1, 120));
+				Params.BitrateKbps = int(std::clamp<uint32_t>(R.U32(), 100, 100000));
+				Params.Prefer = R.Str();
+				if (!R.Ok) break;
+				std::lock_guard<std::mutex> Lock(SessionsMutex);
+				auto Existing = Sessions.find(Params.SessionId);
+				if (Existing != Sessions.end())
+				{
+					Retire(std::move(Existing->second));
+					Sessions.erase(Existing);
+				}
+				Sessions[Params.SessionId] = std::make_unique<FLoopbackSession>(Params, Events);
 				break;
 			}
 			case EMsg::BrowserInput:
@@ -652,6 +684,7 @@ int wmain(int Argc, wchar_t** Argv)
 	if (Args.Parent) WatchParent(Args.Parent);
 	SetYtDlpJsRuntime(Args.JsRuntime);
 
+	if (Args.bBench) return RunEncodeBench(Args.Bench);
 	if (!Args.SelfTest.empty()) return RunSelfTest(Args);
 	if (Args.Pipe.empty())
 	{

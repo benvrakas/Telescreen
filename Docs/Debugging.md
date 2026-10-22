@@ -29,6 +29,10 @@ in the console.
   side of the shared buffers, prints target vs. position once a second and saves the last frame. `--selftest-file`
   plays a local file.
 - `python Tools\host_pipe_test.py <url> [seconds]` drives the staged helper over its pipe like the mod does.
+- `TelescreenHost.exe --selftest-browser <url> --browserdir <Runtimerowser> --browserdata <dir> --seconds 10` runs a
+  browser session with scripted input against `Tools/browser_test.html` (page console lines appear as `page:`).
+- `TelescreenHost.exe --selftest-encode <video> --width 1440 --height 720 --fps 60 --kbps 3000 --frames 600
+  [--prefer libsvtav1 --software 1] [--out frame.bmp]` benchmarks the stream encoder and decoder.
 
 ## Common problems
 

@@ -69,6 +69,12 @@ public:
 	void BrowserNavigate(const FString& Url);
 	void BrowserCommand(TSHostProtocol::ECommand Command);
 
+	// M3 test: shows Source's browser on this screen through the stream encoder and decoder (on this PC only).
+	void StartLoopback(UTSScreenPlayer* Source);
+	void StopLoopback();
+	bool IsLoopback() const { return LoopbackSource.IsValid(); }
+	uint32 GetSessionId() const { return Session; }
+
 private:
 	ATSBuildableScreen* GetScreen() const;
 	void OnScreenChanged();
@@ -114,6 +120,14 @@ private:
 	bool bActive = false;
 	bool bPinned = false;
 	bool bBrowserSession = false;
+	TWeakObjectPtr<UTSScreenPlayer> LoopbackSource;
+	FText LoopbackStats;
+
+public:
+	// The loopback test's live encoder statistics, or empty.
+	FText GetLoopbackStats() const { return LoopbackSource.IsValid() ? LoopbackStats : FText::GetEmpty(); }
+
+private:
 	FTSBrowserState BrowserState;
 	FIntPoint BrowserSize = FIntPoint(1280, 720);
 	double NextSync = 0.0;
