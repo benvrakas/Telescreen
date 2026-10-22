@@ -173,5 +173,33 @@ The helper's sender seeds itself with the browser's current frame when it opens 
 viewer joining an unchanging page sees it at once; unchanged pages are re-encoded once per frame interval and get a
 keyframe at least every 4 s.
 
-Not done yet: WebRTC / direct connections to offload the server, per-player roles for who may stream, CEF's process
-sandbox.
+Not done yet: WebRTC / direct connections to offload the server, CEF's process sandbox.
+
+## Window mode (M5)
+
+`FWindowSession` (`Helper/src/WindowSession.cpp`) shares one top-level window the controller picks from the
+panel's list (`ListShareableWindows`: visible, titled, not cloaked, not tool windows, not the game itself).
+
+- **Picture:** Windows Graphics Capture (C++/WinRT, free-threaded frame pool on a D3D11 device). Frames are copied
+  through a staging texture, scaled with swscale's area filter to fit 1920x1080, published at most 60 times a
+  second to the session's video buffer (the controller's own screen) and the frame taps (the stream sender). The
+  capture reads the window's own surface, so the window can sit behind the game; a minimised window stops
+  producing frames, and the session says so.
+- **Sound:** process loopback (`ActivateAudioInterfaceAsync` with `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`,
+  the window's process tree, 48 kHz float stereo). Windows mutes/volume apply before the capture, so the window
+  can't be silenced locally; the controller hears it from the window and only viewers get it from the screen.
+  Needs Windows 10 build 20348+ / Windows 11; otherwise there is no sound and the log says why.
+- **Input:** posted window messages (mouse to the deepest child under the point, keys and characters to the
+  window thread's focused control). Apps that read raw input (games, VM consoles) ignore it.
+- Positions from the mod map through the picture's letterbox/crop back to frame pixels (`ToSourcePixels`).
+- Measured with `stream_relay_test.py window:Spotify`: 1920x1044 HEVC at 1.9 Mbps, 20-31 fps at 0.5% chunk loss.
+
+## Roles and host tools
+
+Host settings decide the lowest role that may use the browser (default everyone) and share a window (default
+trusted players and the host): everyone, trusted players (a comma-separated name list) or the host. The host is the
+listen server's own player; on dedicated servers, players the server marks as admins (`AFGPlayerState::IsServerAdmin`).
+Other limits: taking over a screen in use (on/off), screens in use at once in the world (default 4), and each
+player controls one screen (taking another releases the first). The host and admins can stop any screen's browser or
+window from the panel. All checks run on the server (`UTSRemoteCallObject::MayUseMode`); RPC validation only rejects
+messages the mod never sends, because a failed validation disconnects the player.

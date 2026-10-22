@@ -34,8 +34,11 @@ in the console.
   side of the shared buffers, prints target vs. position once a second and saves the last frame. `--selftest-file`
   plays a local file.
 - `python Tools\host_pipe_test.py <url> [seconds]` drives the staged helper over its pipe like the mod does.
-- `python Tools\stream_relay_test.py [url] [seconds] [loss-percent]` runs browser -> stream sender -> the mod's
-  chunking, random chunk loss, reassembly and keyframe recovery -> stream receiver, and prints both sides' rates.
+- `python Tools\stream_relay_test.py [url | window:<title part>] [seconds] [loss-percent]` runs browser (or a
+  shared window) -> stream sender -> the mod's chunking, random chunk loss, reassembly and keyframe recovery ->
+  stream receiver (consuming its sound like the game), and prints both sides' rates.
+- `TelescreenHost.exe --selftest-window "<title part>" --seconds 5` lists the shareable windows and captures the first
+  match, printing frames and seconds of sound.
 - `TelescreenHost.exe --selftest-browser <url> --browserdir <Runtime\browser> --browserdata <dir> --seconds 10` runs a
   browser session with scripted input against `Tools/browser_test.html` (page console lines appear as `page:`).
 - `TelescreenHost.exe --selftest-encode <video> --width 1440 --height 720 --fps 60 --kbps 3000 --frames 600
@@ -51,5 +54,7 @@ in the console.
 - A viewer sees "Connecting..." forever: the controller's log should show `streaming my browser`; if it does, the
   server may be dropping the chunks (sharing turned off, curtain on, or the rate cap); `-LogCmds="LogNet Verbose"`
   shows `Network saturated` drops.
+- Window sharing: `session N: sharing window ...`, `capture started at WxH`, `window video WxH`, `capturing the sound
+  of pid P` (or `no window sound (process loopback 0x...)`), `window minimised/restored`, `the shared window closed`.
 - Stream freezes often: lower "Stream quality (kbps)" on the controller's PC; each lost packet waits for a keyframe.
 - Not in the AWESOME Shop: look for the schematic line (`cost entries 1, shop subcategories 1, unlocks 1`).

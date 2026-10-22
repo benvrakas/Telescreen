@@ -61,6 +61,22 @@
 9. Note in the report: both players' upload and download speeds, the controller's GPU, what B saw (freezes, blur),
    and whether movement lagged for A while streaming.
 
+## M5 (window sharing) and roles
+
+1. Panel, Share a window, Choose a window: the list shows your open windows (not the game). Share one: the first
+   time a notice appears; Share again. The screen shows the window (scaled, letterboxed to its shape); the HUD line
+   says "Sharing a window".
+2. A friend sees it and hears the window's sound from the screen; you hear it from the window as usual.
+3. F8: clicks and typing in the window reach a normal app (e.g. Notepad).
+4. Minimise the window: your screen says to restore it; restore: it continues. Close the window: the screen goes
+   back to its videos with a notice.
+5. Roles: as a client with default host settings, Share gives "Only trusted players can share a window"; with your
+   name in Trusted players it works. "Who can use the browser" = 2 blocks clients from the browser.
+6. "Players can take over" off: a client can't take over the host's browser; the host's panel shows "Stop it (host)"
+   on a client's screen and it works.
+7. Taking control of a second screen releases your first one.
+8. Dedicated server: an admin (server manager login) counts as host for the settings above.
+
 ## M1 multiplayer
 
 1. Listen server: a client sees and hears the same video, within about a quarter of a second of the host.

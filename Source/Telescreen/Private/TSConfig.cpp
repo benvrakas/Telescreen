@@ -165,7 +165,7 @@ UTSConfig::UTSConfig()
 		LOCTEXT("StreamKbpsTip", "Video bitrate when you share your browser with other players. 2500 is sharp at 720p; lower it if your upload is slow."), 2500);
 	AddInt(BrowserSection, StreamFpsKey, LOCTEXT("StreamFps", "Stream frame rate"),
 		LOCTEXT("StreamFpsTip", "Frames per second of the shared browser: 30 or 60."), 30);
-	AddInt(BrowserSection, ReceiveStreamsKey, LOCTEXT("ReceiveStreams", "Watch other players' browsers"),
+	AddInt(BrowserSection, ReceiveStreamsKey, LOCTEXT("ReceiveStreams", "Watch other players' browsers and windows"),
 		LOCTEXT("ReceiveStreamsTip", "0: show them automatically; 1: never (you see who is using the screen only)."), 0);
 	AddString(BrowserSection, CurtainKeyKey, LOCTEXT("CurtainKey", "Privacy curtain key"),
 		LOCTEXT("CurtainKeyTip", "Blanks your shared browser for everyone (you still see it) and back. Key name, e.g. F10."), TEXT("F10"));

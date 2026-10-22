@@ -845,7 +845,7 @@ void UTSScreenPlayer::ReconcileViewer(ATSBuildableScreen* Screen)
 	{
 		WantedKey.Reset();
 		CloseSession();
-		SetStatus(Title, LOCTEXT("StreamsOff", "Watching other players' browsers is turned off in your settings."));
+		SetStatus(Title, LOCTEXT("StreamsOff", "Watching other players' browsers and windows is turned off in your settings."));
 		return;
 	}
 	if (!bActive)

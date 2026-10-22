@@ -38,6 +38,16 @@ handles serialize reads and writes on one pipe.
 | StreamPacket | both | u32 session, u8 kind (0 video, 1 audio), u8 flags (1 keyframe), u32 pts ms, u32 codec (AVCodecID), then the packet bytes to the end of the payload. Host → mod from senders, mod → host for receivers |
 | StreamControl | mod → host | u32 session, u8 command (0 keyframe, 1 bitrate kbps, 2 reset: drop video until the next keyframe), u32 value |
 | BrowserState | host → mod | u32 session, str url, str title, u8 loading, u8 can go back, u8 can go forward, u8 cursor type (cef_cursor_type_t), u8 pointer locked |
+| OpenWindow | mod → host | u32 session, u32 window handle low, u32 window handle high, u8 include cursor, u8 capture sound, u32 max width, u32 max height |
+| ListWindows | mod → host | u32 request |
+| WindowList | host → mod | u32 request, u32 count, then per window: u32 handle low, u32 handle high, u32 process id, str title, str exe name |
+
+Protocol version 3 added the three window messages.
+
+Window sessions take BrowserInput (mouse, wheel, key, text; positions in the session's frame pixels) and post it to
+the window; their sound goes only to the frame and audio taps (the stream sender), not to a SessionAudio ring,
+because the controller already hears the window directly. SessionState Buffering with a message means the window is
+minimised; Error means it closed or can't be captured.
 
 CEF's off-screen mode rejects `requestPointerLock()`, so the helper injects a small script into every page before
 its own scripts run (DevTools `Page.addScriptToEvaluateOnNewDocument`). It stands in for the Pointer Lock API:
