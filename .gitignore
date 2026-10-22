@@ -72,3 +72,6 @@ Plugins/*/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+# Helper build output and staged runtime components
+Helper/out/
+Resources/Runtime/
