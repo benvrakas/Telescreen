@@ -1,0 +1,33 @@
+{
+	"FileVersion": 3,
+	"Version": 0,
+	"VersionName": "0.1.0",
+	"SemVersion": "0.1.0",
+	"GameVersion": ">=513885",
+	"FriendlyName": "Telescreen",
+	"Description": "Billboard-sized screens that play synced videos, a shared built-in browser, windows and remote desktops for every player, with 3D audio.",
+	"Category": "Modding",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "Telescreen",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "SML",
+			"Enabled": true,
+			"SemVersion": "^3.12.0"
+		}
+	]
+}
