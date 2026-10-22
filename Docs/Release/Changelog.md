@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0
+
+First public release (everything from the betas below). Not yet tested in multiplayer.
+
+- New mod icon; the mod page has screenshots.
+
 ## 0.1.0 beta 11
 
 - Fix: a screen could stay black while its panel's preview showed the picture (most often a VM, whose desktop changes

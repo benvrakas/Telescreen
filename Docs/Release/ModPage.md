@@ -1,16 +1,27 @@
-# Telescreen
+<!--
+Text for the Telescreen page on ficsit.app (Satisfactory Mod Repository).
+- "Short description" field: the line under SHORT DESCRIPTION (at most 128 characters).
+- "Full description" field: everything under FULL DESCRIPTION.
+- The two transparency fields: the text under NETWORK ACTIVITY TRANSPARENCY and AI USAGE TRANSPARENCY.
+Replace the [bracketed] placeholders before publishing.
+-->
 
-**Short description (SMR, at most 128 characters):**
+# SHORT DESCRIPTION
+
 Billboard screens for synced videos, a shared browser, shared windows and VM desktops that every player sees and hears.
 
----
+# FULL DESCRIPTION
+
 
 Billboard-sized screens for Satisfactory. Put a screen up, paste a video link, and everyone near it watches the same
 video at the same moment, with sound that comes from the screen. Or open a browser on it, share a window from your
 PC, or show a virtual machine's desktop, and everyone watches that live.
 
-**This is a beta.** It works in single player and on listen servers in our tests, but expect rough edges. Please
-report problems with your logs (see below).
+![A YouTube video on a Large Telescreen, seen from the factory](https://raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/screen-video.jpg)
+
+**Multiplayer hasn't been tested yet.** Everything below is built for multiplayer (synced videos, streams to other
+players, viewer control, the world host's rules), but so far it has only been tried in single player. If you play
+it with friends, please tell me how it went, with your logs (see "Reporting problems").
 
 ## Features
 
@@ -32,6 +43,14 @@ report problems with your logs (see below).
 - **Picture-in-picture** of any screen on your HUD, with sound that follows you. **F9** lists every screen.
 - **Stream quality settings**: resolution, bitrate, frame rate and encoder (AV1, HEVC or H.264 on your graphics card,
   or AV1 in software), within the world host's limits.
+
+## Screenshots
+
+![The screen panel: the screen's picture, volumes and settings on the left; Videos, Browser, Share a window and Remote desktop tabs on the right](https://raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/panel-videos.jpg)
+
+![The built-in browser on a screen, searching the web](https://raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/screen-browser.jpg)
+
+![A Debian virtual machine's desktop on a screen over VNC](https://raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/screen-vm.jpg)
 
 ## Who decides what
 
@@ -67,14 +86,15 @@ report problems with your logs (see below).
   limit who may share.
 - Downloading or streaming from YouTube may be against its terms of service; use it responsibly.
 
-## Known limitations (beta)
+## Known limitations
 
 - Streams go through the world host's connection; a slow host upload lowers quality (the stream adapts), and lost
   packets freeze the picture until the next full frame. Lower the stream bitrate if that happens often.
 - The first video on a PC takes 5-10 seconds to start (link lookup). If YouTube links stop loading, the bundled yt-dlp
   may need an update (a mod update).
 - Clicking the 3D screen directly isn't supported: use its panel and window.
-- The browser's process sandbox is off in this beta. RDP isn't supported yet (VNC is).
+- Not yet tested with more than one player (see above).
+- The browser's process sandbox is off. RDP isn't supported yet (VNC is). Subtitles are planned for the next update.
 
 ## Reporting problems
 
@@ -95,6 +115,50 @@ Telescreen bundles, unmodified:
 
 Each component's licence and source notes are in the mod's `Resources/Runtime/<component>/` folders.
 
-## AI disclosure
+## Network use and privacy
 
-Written with the help of Claude (Anthropic).
+Telescreen connects only to the video sites, web pages and VNC servers players choose, plus the browser's search
+engine; see the network activity section for the full list. Everything between players goes through the game's own
+connection. No telemetry or analytics.
+
+# NETWORK ACTIVITY TRANSPARENCY
+
+Telescreen connects to these services. Everything between players (the video queue and position, live streams of
+browsers, windows and desktops, viewer input and pointers) goes through the game's own connection to the world host:
+the mod opens no ports and makes no direct connections between players.
+
+- **Video sites** (YouTube, Twitch, Vimeo and others, through the bundled yt-dlp and FFmpeg): when you add a link, your
+  PC looks it up (title, length); when a video plays on a screen near you, your PC fetches it from the site and its
+  video servers. This includes videos other players added: by default your PC loads those only from the sites on
+  your allowed list (Mods > Telescreen > Privacy; you can also choose any site, or never). The world host's list
+  decides which sites can be added at all (unless the host allows any site). QuickJS, which yt-dlp uses for YouTube, runs locally and connects nowhere.
+- **Web pages in the built-in browser** (Chromium Embedded Framework): only on the PC of the player using the
+  browser, to the pages they open, as any browser does. Words typed in its address box go to the search engine in the
+  settings (default DuckDuckGo, duckduckgo.com); its start page is also DuckDuckGo by default. Players watching the
+  screen receive the picture and sound through the game and don't connect to those pages. Logins and cookies are
+  forgotten when the browser closes unless "Keep browser logins" is on (then kept in
+  `%LOCALAPPDATA%\FactoryGame\Saved\Telescreen\Browser`). Extensions are disabled.
+- **VNC servers** (Remote desktop tab): only the address you enter, from your PC, while your screen shows it. Plain
+  VNC isn't encrypted; use it on your own network. Saved connections are stored locally in
+  `%LOCALAPPDATA%\FactoryGame\Saved\Telescreen\RemoteConnections.json`, passwords encrypted for your Windows user;
+  only a random token, never the address or password, is sent to the other players.
+- **Shared windows** are captured on your PC and sent only through the game's connection; no other service is
+  contacted.
+
+The helper program talks to the game through a local pipe and shared memory on your PC. The mod downloads no updates
+or other files, and has no telemetry or analytics.
+
+# AI USAGE TRANSPARENCY
+
+[Edit to match how you made the mod.]
+
+This mod was built with the help of an AI coding assistant (Anthropic's Claude):
+
+- **Source code:** most of the mod's C++ source code (the mod and its helper program) was written by the AI,
+  directed, reviewed and tested in game by the author.
+- **Mod page text:** this description was drafted by the AI and edited by the author.
+- **Developer documentation** in the source repository was written by the AI.
+- **Art:** the mod icon is a flat drawing generated by a small script the AI wrote (no image-generation AI). The
+  screenshots are from the author's game. No other AI-generated assets: the UI uses the game's own widgets, fonts and
+  icons, and the screens use the game's billboard models.
+- **In game:** the mod doesn't use or give access to generative AI.

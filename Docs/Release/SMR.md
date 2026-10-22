@@ -10,7 +10,9 @@ version.
 | Name | Telescreen |
 | Mod reference | `Telescreen` (must match `Telescreen.uplugin`; can't be changed later) |
 | Short description | Billboard screens for synced videos, a shared browser, shared windows and VM desktops that every player sees and hears. |
-| Full description | everything below the `---` line in `Docs/Release/ModPage.md` |
+| Full description | the FULL DESCRIPTION section of `Docs/Release/ModPage.md` |
+| Network activity transparency | the NETWORK ACTIVITY TRANSPARENCY section |
+| AI usage transparency | the AI USAGE TRANSPARENCY section (edit the `[bracketed]` line first) |
 | Logo | `Docs/Images/icon-1080.png` (1080x1080) |
 | Source URL | `https://github.com/benvrakas/Telescreen` only once the repository is public (it is private now); otherwise leave empty |
 | Tags | `multiplayer`, `decoration`, `api` (it fetches from video sites) |
@@ -21,23 +23,23 @@ version.
 | Field | Value |
 |---|---|
 | File | `D:\SFMod\SatisfactoryModLoader\Saved\ArchivedPlugins\Telescreen\Telescreen.zip` (the combined zip: Windows client, Windows and Linux servers) |
-| Version | read from the zip's `Telescreen.uplugin`: SemVersion `0.1.0` (VersionName `0.1.0-beta.11`) |
-| Stability | **Beta** |
+| Version | read from the zip's `Telescreen.uplugin`: `1.0.0` |
+| Stability | **Release** |
 | Changelog | the text below |
 
 Changelog for the first upload:
 
 ```
-First public beta.
+First release. Not yet tested in multiplayer: please report how it goes with friends.
 
 - Small and Large Telescreen (AWESOME Shop, Signs, Telescreen Set).
 - Synced videos (YouTube, Twitch, Vimeo, files) with a shared queue, seek bar and 3D sound through the game's audio.
 - Shared built-in browser, shared windows and remote desktops (VNC), streamed to every player through the game's connection.
 - Viewer control and pointers, privacy curtain (F10), picture-in-picture on the HUD, screens list (F9).
-- Stream resolution, bitrate, frame rate and encoder settings; world host rules and limits.
+- Per-player and per-screen volume; stream resolution, bitrate, frame rate and encoder settings; world host rules and limits.
 ```
 
-Later versions: the next SemVersion after the newest on SMR (`0.1.1`, `0.2.0`...), with `VersionName` matching it.
+Later versions: the next version after the newest on SMR (`1.0.1` for fixes, `1.1.0` for features such as subtitles).
 
 ## 3. Before uploading: open points for you
 
@@ -50,6 +52,8 @@ Later versions: the next SemVersion after the newest on SMR (`0.1.1`, `0.2.0`...
   If SMR refuses the file size, tell me: the browser could become a separate download.
 - **Licences.** Each runtime folder carries its licence and a `SOURCE.txt` (FFmpeg LGPL v3 with its source link,
   CEF/Chromium credits, yt-dlp, QuickJS, miniz). The mod page's "Credits and licences" lists them.
-- **Test first, in multiplayer too.** Single player was tried on beta 10 (fixes in beta 11). Nothing has been tested
-  with a second player yet: streaming to viewers, viewer control, the world host's limits and the screen volume all
-  depend on it. Upload after a multiplayer session with beta 11 or later (and repackage the full zip then).
+- **Multiplayer is untested** (your decision for 1.0, 2026-10-22); the mod page says so at the top.
+- **Screenshots.** The mod page's images link to `raw.githubusercontent.com/benvrakas/Telescreen/main/Docs/Images/`,
+  which only load once the repository is public (`gh repo edit benvrakas/Telescreen --visibility public
+  --accept-visibility-change-consequences`). Otherwise upload the four `Docs/Images/*.jpg` somewhere public and change
+  the links.
