@@ -5,7 +5,6 @@
 #include "Components/Button.h"
 #include "Components/EditableText.h"
 #include "Components/EditableTextBox.h"
-#include "Components/CanvasPanel.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/ScrollBox.h"
@@ -130,41 +129,6 @@ namespace
 		return Property ? Property->GetObjectPropertyValue_InContainer(Object) : nullptr;
 	}
 
-	void BindDispatcher(UObject* Object, FName Dispatcher, UObject* Handler, FName Function)
-	{
-		FMulticastDelegateProperty* Property = Object && Handler && !Function.IsNone() ? FindFProperty<FMulticastDelegateProperty>(Object->GetClass(), Dispatcher) : nullptr;
-		if (!Property)
-		{
-			if (Object)
-			{
-				UE_LOG(LogTelescreen, Warning, TEXT("UI: %s has no event %s"), *Object->GetClass()->GetName(), *Dispatcher.ToString());
-			}
-			return;
-		}
-		FScriptDelegate Delegate;
-		Delegate.BindUFunction(Handler, Function);
-		Property->AddDelegate(Delegate, Object);
-	}
-
-	// Sets each parameter in order: ints to int properties, bools to bool properties.
-	bool CallIntBool(UObject* Object, FName Name, int32 Int, bool Bool)
-	{
-		return Call(Object, Name, [&](UFunction* Function, uint8* Params)
-		{
-			for (TFieldIterator<FProperty> It(Function); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
-			{
-				if (FIntProperty* AsInt = CastField<FIntProperty>(*It))
-				{
-					AsInt->SetPropertyValue_InContainer(Params, Int);
-				}
-				else if (FBoolProperty* AsBool = CastField<FBoolProperty>(*It))
-				{
-					AsBool->SetPropertyValue_InContainer(Params, Bool);
-				}
-			}
-		});
-	}
-
 	void SetVisibilityProperty(UObject* Object, FName Name, ESlateVisibility Value)
 	{
 		FProperty* Property = Object ? FindFProperty<FProperty>(Object->GetClass(), Name) : nullptr;
@@ -176,12 +140,6 @@ namespace
 		{
 			AsByte->SetPropertyValue_InContainer(Object, uint8(Value));
 		}
-	}
-
-	// The generated header tab buttons of a vanilla window (children of its tabs container's canvas).
-	UPanelWidget* TabButtonsPanel(UWidget* Window)
-	{
-		return Cast<UPanelWidget>(GetObjectProperty(GetObjectProperty(Window, TEXT("Widget_TabsContainer")), TEXT("mContainer")));
 	}
 
 	void BindClick(UButton* Button, UObject* Handler, FName Function)
@@ -267,84 +225,6 @@ void TSVanillaUI::SetWindowTitle(UWidget* Window, const FText& Title)
 	{
 		SetTextProperty(AsUser, TEXT("mTitleText"), Title);
 		CallText(AsUser, TEXT("SetTitle"), Title);
-	}
-}
-
-bool TSVanillaUI::SetWindowTabs(UWidget* Window, TArrayView<const FText> Names, TArrayView<const TCHAR* const> Icons, UObject* Handler, FName ClickFunction,
-	FName GeneratedFunction)
-{
-	UUserWidget* AsUser = Cast<UUserWidget>(Window);
-	FArrayProperty* Tabs = AsUser ? FindFProperty<FArrayProperty>(AsUser->GetClass(), TEXT("mTabs")) : nullptr;
-	FStructProperty* Inner = Tabs ? CastField<FStructProperty>(Tabs->Inner) : nullptr;
-	if (!Inner)
-	{
-		UE_LOG(LogTelescreen, Warning, TEXT("UI: the vanilla window has no header tabs; using tab buttons"));
-		return false;
-	}
-	FTextProperty* TextMember = nullptr;
-	FObjectPropertyBase* TextureMember = nullptr;
-	for (TFieldIterator<FProperty> It(Inner->Struct); It; ++It)
-	{
-		if (!TextMember && It->GetName().StartsWith(TEXT("Text")))
-		{
-			TextMember = CastField<FTextProperty>(*It);
-		}
-		if (!TextureMember && It->GetName().StartsWith(TEXT("Texture")))
-		{
-			TextureMember = CastField<FObjectPropertyBase>(*It);
-		}
-	}
-	if (!TextMember)
-	{
-		UE_LOG(LogTelescreen, Warning, TEXT("UI: the window's tab entries have no text member; using tab buttons"));
-		return false;
-	}
-	FScriptArrayHelper Array(Tabs, Tabs->ContainerPtrToValuePtr<void>(AsUser));
-	Array.EmptyValues();
-	for (int32 I = 0; I < Names.Num(); ++I)
-	{
-		uint8* Entry = Array.GetRawPtr(Array.AddValue());
-		TextMember->SetPropertyValue_InContainer(Entry, Names[I]);
-		if (TextureMember && Icons.IsValidIndex(I) && Icons[I])
-		{
-			UTexture* Icon = LoadObject<UTexture>(nullptr, Icons[I]);
-			if (!Icon)
-			{
-				UE_LOG(LogTelescreen, Warning, TEXT("UI: tab icon %s not found"), Icons[I]);
-			}
-			TextureMember->SetObjectPropertyValue_InContainer(Entry, Icon);
-		}
-	}
-	BindDispatcher(AsUser, TEXT("OnTabButtonClicked"), Handler, ClickFunction);
-	if (UObject* Container = GetObjectProperty(AsUser, TEXT("Widget_TabsContainer")))
-	{
-		BindDispatcher(Container, TEXT("OnButtonClicked"), Handler, ClickFunction);
-		BindDispatcher(Container, TEXT("OnTabsGenerated"), Handler, GeneratedFunction);
-	}
-	UE_LOG(LogTelescreen, Log, TEXT("UI: %d header tabs set on the window"), Names.Num());
-	return true;
-}
-
-bool TSVanillaUI::SelectWindowTab(UWidget* Window, int32 Index)
-{
-	UPanelWidget* Panel = TabButtonsPanel(Window);
-	for (int32 I = 0; Panel && I < Panel->GetChildrenCount(); ++I)
-	{
-		UWidget* Button = Panel->GetChildAt(I);
-		FIntProperty* Target = Button ? FindFProperty<FIntProperty>(Button->GetClass(), TEXT("mTargetIndex")) : nullptr;
-		if (Target && Target->GetPropertyValue_InContainer(Button) == Index && Button->GetVisibility() != ESlateVisibility::Collapsed)
-		{
-			return Call(Button, TEXT("SimulateClick"), [](UFunction*, uint8*) {});
-		}
-	}
-	return false;
-}
-
-void TSVanillaUI::SetWindowTabVisible(UWidget* Window, int32 Index, bool bVisible)
-{
-	if (UUserWidget* AsUser = Cast<UUserWidget>(Window))
-	{
-		CallIntBool(AsUser, TEXT("SetTabVisibility"), Index, bVisible);
 	}
 }
 

@@ -45,6 +45,7 @@ namespace
 		std::string VncPassword;
 		double LossPercent = 0.0;
 		int StreamHeight = 0;
+		int VncWantWidth = 0, VncWantHeight = 0;
 		FEncodeBenchArgs Bench;
 		bool bBench = false;
 		double Seconds = 12.0, Start = 0.0, SeekAt = -1.0, SeekTo = 0.0, PauseAt = -1.0, ResumeAt = -1.0;
@@ -60,6 +61,7 @@ namespace
 			else if (Key == L"--log") Args.Log = Value;
 			else if (Key == L"--ytdlp") Args.YtDlp = Value;
 			else if (Key == L"--stream-height") Args.StreamHeight = _wtoi(Value.c_str());
+			else if (Key == L"--vnc-size") swscanf_s(Value.c_str(), L"%dx%d", &Args.VncWantWidth, &Args.VncWantHeight);
 			else if (Key == L"--jsruntime") Args.JsRuntime = Value;
 			else if (Key == L"--browserdir") Args.BrowserDir = Value;
 			else if (Key == L"--browserdata") Args.BrowserData = Value;
@@ -358,6 +360,8 @@ namespace
 				Params.MaxWidth = std::clamp<uint32_t>(R.U32(), 320, 3840);
 				Params.MaxHeight = std::clamp<uint32_t>(R.U32(), 180, 2160);
 				Params.bAudio = R.U8() != 0;
+				Params.WantWidth = std::min<uint32_t>(R.U32(), 8192);
+				Params.WantHeight = std::min<uint32_t>(R.U32(), 8192);
 				if (!R.Ok) break;
 				std::lock_guard<std::mutex> Lock(SessionsMutex);
 				auto Existing = Sessions.find(Params.SessionId);
@@ -510,6 +514,8 @@ namespace
 		Params.Host = Colon == std::string::npos ? Args.SelfTest : Args.SelfTest.substr(0, Colon);
 		Params.Port = Colon == std::string::npos ? 5900 : uint16_t(std::atoi(Args.SelfTest.c_str() + Colon + 1));
 		Params.Password = Args.VncPassword;
+		Params.WantWidth = uint32_t(std::max(0, Args.VncWantWidth));
+		Params.WantHeight = uint32_t(std::max(0, Args.VncWantHeight));
 		std::atomic<int> Frames{0};
 		std::atomic<int> Width{0}, Height{0};
 		std::mutex LastMutex;

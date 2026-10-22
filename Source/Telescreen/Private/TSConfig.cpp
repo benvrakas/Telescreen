@@ -34,6 +34,7 @@ const FString UTSConfig::StreamFpsKey = TEXT("StreamFps");
 const FString UTSConfig::StreamHeightKey = TEXT("StreamHeight");
 const FString UTSConfig::StreamEncoderKey = TEXT("StreamEncoder");
 const FString UTSConfig::BrowserHeightKey = TEXT("BrowserHeight");
+const FString UTSConfig::RemoteMatchScreenKey = TEXT("RemoteMatchScreen");
 const FString UTSConfig::MaxStreamHeightKey = TEXT("MaxStreamHeight");
 const FString UTSConfig::MaxStreamFpsKey = TEXT("MaxStreamFps");
 const FString UTSConfig::ReceiveStreamsKey = TEXT("ReceiveStreams");
@@ -192,6 +193,8 @@ UTSConfig::UTSConfig()
 		LOCTEXT("StreamEncoderTip", "0: best your graphics card has (AV1, then HEVC, then H.264); 1: prefer AV1; 2: prefer HEVC; 3: prefer H.264; 4: software AV1 (no graphics card encoder, uses the CPU). Every player can watch any of them."), 0);
 	AddInt(BrowserSection, BrowserHeightKey, LOCTEXT("BrowserHeight", "Browser page size (lines)"),
 		LOCTEXT("BrowserHeightTip", "Height the built-in browser draws pages at (its width follows the screen's shape). Bigger shows more of a page in smaller text. Applies to browsers opened after the change."), 720);
+	AddBool(BrowserSection, RemoteMatchScreenKey, LOCTEXT("RemoteMatchScreen", "Ask remote desktops for the screen's shape"),
+		LOCTEXT("RemoteMatchScreenTip", "When connecting, ask the VNC server to change its desktop to the screen's shape (at the stream resolution). TigerVNC, x11vnc and QEMU with a virtio display usually follow; others keep their size and show with bars (or use Fill)."), true);
 	AddString(BrowserSection, CurtainKeyKey, LOCTEXT("CurtainKey", "Privacy curtain key"),
 		LOCTEXT("CurtainKeyTip", "Blanks your shared browser for everyone (you still see it) and back. Key name, e.g. F10."), TEXT("F10"));
 	AddBool(BrowserSection, StreamDisclaimerKey, LOCTEXT("StreamDisclaimer", "I understand that shared browsers are visible to everyone"),

@@ -137,7 +137,9 @@ public:
 	uint32 OpenWindow(uint64 Window, bool bCursor, bool bAudio, uint32 MaxWidth, uint32 MaxHeight, ITSHostSessionListener* Listener);
 
 	// Connects to a VNC server; frames larger than MaxWidth x MaxHeight are scaled down.
-	uint32 OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio, ITSHostSessionListener* Listener);
+	// WantWidth x WantHeight: the desktop size to ask the server for (0 x 0: none).
+	uint32 OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio, uint32 WantWidth, uint32 WantHeight,
+		ITSHostSessionListener* Listener);
 
 	// Asks the helper for the windows that can be shared; OnDone runs on the game thread (empty if the helper isn't
 	// running).

@@ -21,6 +21,11 @@ Our own RFB client: libvncclient is GPL, and the mod ships no GPL code.
   published frame at the controller's pointer position) and QEMU Audio (-259, when the session asks for sound).
   ZRLE's zlib stream lasts for the whole connection; inflating uses miniz (`Helper/third_party/miniz`, MIT, 3.0.2).
   ZRLE CPIXELs are 3 bytes (the low bytes of BGRX).
+- **Screen shape:** with ExtendedDesktopSize (-308) the client asks once, after the server's first layout, for the
+  screen's shape at the stream resolution (SetDesktopSize, message 251, keeping the server's screen id and flags).
+  Answers are logged ("done", "not allowed", "invalid layout", "passed on to the guest"). Tested 2026-10-22: QEMU
+  11.1's VNC with `-vga std` answers "invalid layout" (it forwards sizes only for displays with UI info, such as
+  virtio-gpu); Fill crops such desktops to the screen instead.
 - **Updates:** a full FramebufferUpdateRequest after login, then an incremental one after each update. Frames are
   published at most 60 times a second, scaled with swscale's area filter to fit the mod's limit (1920x1080), to the
   session's video buffer (the controller's screen) and the frame taps (the stream sender).

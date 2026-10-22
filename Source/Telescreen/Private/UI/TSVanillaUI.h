@@ -23,15 +23,6 @@ namespace TSVanillaUI
 	UWidget* MakeWindow(UWidgetTree* Tree, const FText& Title, UWidget* Body, UObject* Handler, FName CloseFunction);
 	void SetWindowTitle(UWidget* Window, const FText& Title);
 
-	// The window's own header tabs (icon and name each), set before the window is shown. A click calls
-	// Handler.ClickFunction(int32 ButtonIndex); Handler.GeneratedFunction() is called once the tab buttons exist.
-	// Icons are texture paths (nullptr: none). Returns false if the window has no header tabs.
-	bool SetWindowTabs(UWidget* Window, TArrayView<const FText> Names, TArrayView<const TCHAR* const> Icons, UObject* Handler, FName ClickFunction,
-		FName GeneratedFunction);
-	// Makes header tab Index the active one (as if clicked); false if its button isn't there.
-	bool SelectWindowTab(UWidget* Window, int32 Index);
-	void SetWindowTabVisible(UWidget* Window, int32 Index, bool bVisible);
-
 	// Body on the vanilla content background, with padding.
 	UWidget* MakeContentBackground(UWidgetTree* Tree, UWidget* Body);
 

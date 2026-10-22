@@ -21,7 +21,7 @@ version.
 | Field | Value |
 |---|---|
 | File | `D:\SFMod\SatisfactoryModLoader\Saved\ArchivedPlugins\Telescreen\Telescreen.zip` (the combined zip: Windows client, Windows and Linux servers) |
-| Version | read from the zip's `Telescreen.uplugin`: SemVersion `0.1.0` (VersionName `0.1.0-beta.10`) |
+| Version | read from the zip's `Telescreen.uplugin`: SemVersion `0.1.0` (VersionName `0.1.0-beta.11`) |
 | Stability | **Beta** |
 | Changelog | the text below |
 
@@ -50,5 +50,6 @@ Later versions: the next SemVersion after the newest on SMR (`0.1.1`, `0.2.0`...
   If SMR refuses the file size, tell me: the browser could become a separate download.
 - **Licences.** Each runtime folder carries its licence and a `SOURCE.txt` (FFmpeg LGPL v3 with its source link,
   CEF/Chromium credits, yt-dlp, QuickJS, miniz). The mod page's "Credits and licences" lists them.
-- **Test first.** Beta 10's new panel layout (header tabs, list entries) and the stream settings haven't been seen in
-  the game yet. Install and try it once before uploading.
+- **Test first, in multiplayer too.** Single player was tried on beta 10 (fixes in beta 11). Nothing has been tested
+  with a second player yet: streaming to viewers, viewer control, the world host's limits and the screen volume all
+  depend on it. Upload after a multiplayer session with beta 11 or later (and repackage the full zip then).

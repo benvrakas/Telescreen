@@ -24,6 +24,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetScreenSettings(ATSBuildableScreen* Screen, const FString& Name, ETSAspectMode AspectMode);
 
+	// The screen's volume for everyone (sent when the slider is let go).
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetScreenVolume(ATSBuildableScreen* Screen, float Volume);
+
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_TakeControl(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url);
 

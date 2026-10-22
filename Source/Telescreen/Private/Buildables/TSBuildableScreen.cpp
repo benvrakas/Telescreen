@@ -49,6 +49,7 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mMediaState);
 	DOREPLIFETIME(ATSBuildableScreen, mScreenName);
 	DOREPLIFETIME(ATSBuildableScreen, mAspectMode);
+	DOREPLIFETIME(ATSBuildableScreen, mScreenVolume);
 	DOREPLIFETIME(ATSBuildableScreen, mMode);
 	DOREPLIFETIME(ATSBuildableScreen, mController);
 	DOREPLIFETIME(ATSBuildableScreen, mControllerName);
@@ -715,6 +716,19 @@ void ATSBuildableScreen::Server_SetScreenSettings(const FString& Name, ETSAspect
 	mScreenName = Name.Left(64).TrimStartAndEnd();
 	mAspectMode = AspectMode;
 	UE_LOG(LogTelescreen, Log, TEXT("%s: renamed to \"%s\", aspect %d"), *GetName(), *mScreenName, int32(mAspectMode));
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
+}
+
+void ATSBuildableScreen::Server_SetScreenVolume(float Volume)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	mScreenVolume = FMath::Clamp(Volume, 0.f, 1.f);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: screen volume %.0f%%"), *GetName(), mScreenVolume * 100.f);
 	FlushNetDormancy();
 	ForceNetUpdate();
 	OnScreenChanged.Broadcast();

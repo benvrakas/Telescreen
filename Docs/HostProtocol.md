@@ -41,8 +41,9 @@ handles serialize reads and writes on one pipe.
 | OpenWindow | mod → host | u32 session, u32 window handle low, u32 window handle high, u8 include cursor, u8 capture sound, u32 max width, u32 max height |
 | ListWindows | mod → host | u32 request |
 | WindowList | host → mod | u32 request, u32 count, then per window: u32 handle low, u32 handle high, u32 process id, str title, str exe name |
+| OpenVnc | mod → host | u32 session, str host, u32 port, str password, u32 max width, u32 max height, u8 sound, u32 wanted width, u32 wanted height (asked of the server with ExtendedDesktopSize; 0: none) |
 
-Protocol version 3 added the three window messages.
+Protocol version 3 added the three window messages. Version 5 added the stream sender's max height, version 6 OpenVnc's wanted size.
 
 Window sessions take BrowserInput (mouse, wheel, key, text; positions in the session's frame pixels) and post it to
 the window; their sound goes only to the frame and audio taps (the stream sender), not to a SessionAudio ring,

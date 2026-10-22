@@ -253,6 +253,9 @@ private:
 	FDelegateHandle MarkerHandle;
 	TArray<FMarker> Markers;
 	bool bMarkersDirty = false;
+	// The fit and screen size the shown picture was composed for.
+	ETSAspectMode ComposedAspect = ETSAspectMode::Letterbox;
+	FVector2D ComposedSize = FVector2D::ZeroVector;
 	double LastMarkerCompose = 0.0;
 	void OnViewerInput(const FTSViewerInput& Input, const FString& ViewerName, ETSInputScope Scope);
 	void OnScreenMarker(const FString& Name, float X, float Y, bool bPing);

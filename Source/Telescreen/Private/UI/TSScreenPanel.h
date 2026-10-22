@@ -86,9 +86,10 @@ public:
 };
 
 // The window that opens when a player uses a Telescreen, sized to the viewport. The left column shows the screen's
-// picture, what it shows, my volume and, while someone shares, the sharing card (controls, viewers); the window's
-// header tabs pick the right column's page: Videos (playback, adding links, the queue), Browser, Share a window,
-// Remote desktop, Screen (name, picture fit). First-time sharing notices are a confirm dialog over the panel.
+// picture, what it shows, my volume and the screen's volume, Screen settings and, while someone shares, the sharing
+// card (controls, viewers); mode tabs pick the right column's page: Videos (playback, adding links, the queue),
+// Browser, Share a window, Remote desktop; Screen settings shows the name and picture fit there. First-time sharing
+// notices are a confirm dialog over the panel.
 UCLASS()
 class UTSScreenPanel : public UFGInteractWidget
 {
@@ -109,11 +110,13 @@ public:
 	UFUNCTION()
 	void OnWindowClosed();
 
-	// The window's header tabs: a click, and the buttons being made (our own tab row then hides).
+	// Screen volume (everyone): letting go sends it to the server.
 	UFUNCTION()
-	void OnHeaderTab(int32 ButtonIndex);
+	void OnScreenVolumeBegin();
 	UFUNCTION()
-	void OnHeaderTabsGenerated();
+	void OnScreenVolumeChanged(float Value);
+	UFUNCTION()
+	void OnScreenVolumeEnd();
 
 	// Seek bar: dragging previews the time; letting go seeks everyone there.
 	UFUNCTION()
@@ -158,8 +161,7 @@ private:
 	void SetNotice(const FText& Text, bool bError = false);
 	void AddLink(bool bPlayNow);
 	void Close();
-	// bSyncHeader: also make the window's header tab match (not when the header tab was clicked).
-	void SelectTab(ETab Tab, bool bSyncHeader = true);
+	void SelectTab(ETab Tab);
 	void FitToViewport();
 	void RequestWindowList();
 	void ShowWindowList();
@@ -175,7 +177,7 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTSPanelAction>> Actions;
 
-	static constexpr float LeftColumnWidth = 360.f;
+	static constexpr float LeftColumnWidth = 380.f;
 
 	// Frame and left column.
 	UPROPERTY(Transient)
@@ -223,12 +225,11 @@ private:
 	void RebuildViewers();
 	ETSInputScope PendingGrantScope = ETSInputScope::None;
 
-	// Tabs: the window's header tabs, or our own row of tab buttons when the window has none.
-	bool bHeaderTabs = false;
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> TabRow;
+	// The mode tabs (Videos, Browser, Share a window, Remote desktop); Screen settings is a button in the left column.
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UWidget>> TabButtons;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> SettingsButton;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidgetSwitcher> Pages;
 	ETab CurrentTab = ETab::Videos;
@@ -249,6 +250,11 @@ private:
 	TObjectPtr<USlider> VolumeSlider;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> VolumeText;
+	UPROPERTY(Transient)
+	TObjectPtr<USlider> ScreenVolumeSlider;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ScreenVolumeText;
+	bool bScreenVolumeDragging = false;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LinkBox;
 	UPROPERTY(Transient)
@@ -282,7 +288,7 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> RemoteAddressBox;
 	UPROPERTY(Transient)
-	TObjectPtr<UEditableTextBox> RemotePasswordBox;
+	TObjectPtr<UWidget> RemotePasswordBox;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> RemoteNote;
 	UPROPERTY(Transient)
@@ -299,6 +305,8 @@ private:
 	TObjectPtr<UWidget> NameBox;
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> AspectText;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> AspectButtons;
 
 	// Confirm dialog.
 	UPROPERTY(Transient)

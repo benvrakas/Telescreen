@@ -51,6 +51,7 @@ public:
 	static const FString StreamHeightKey;
 	static const FString StreamEncoderKey;
 	static const FString BrowserHeightKey;
+	static const FString RemoteMatchScreenKey;
 	static const FString MaxStreamHeightKey;
 	static const FString MaxStreamFpsKey;
 	static const FString ReceiveStreamsKey;

@@ -28,7 +28,7 @@ report problems with your logs (see below).
 - **Let others help**: the player sharing can give a watching player the mouse, or mouse and typing, for a limited
   time. Viewers' pointers show on the screen, and anyone watching can click to point at something for everyone.
 - **Sound through the game's audio engine**, like the game's own sounds: rooms, reverb and the game's volume sliders
-  apply. Works alongside BoomBoxPlus. A per-screen **My volume** slider in each screen's panel.
+  apply. Works alongside BoomBoxPlus. Each screen has a volume for everyone and your own **My volume**.
 - **Picture-in-picture** of any screen on your HUD, with sound that follows you. **F9** lists every screen.
 - **Stream quality settings**: resolution, bitrate, frame rate and encoder (AV1, HEVC or H.264 on your graphics card,
   or AV1 in software), within the world host's limits.

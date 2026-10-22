@@ -250,6 +250,13 @@ void UTSScreenPlayer::OnScreenChanged()
 	{
 		ShowStatus();
 	}
+	// A still picture (a paused video, an idle desktop) gets no new frame: redraw it in the new fit.
+	const ATSBuildableScreen* Screen = GetScreen();
+	if (bShowingVideo && Screen && (Screen->GetAspectMode() != ComposedAspect || !Screen->GetScreenWorldSize().Equals(ComposedSize, 1.0)))
+	{
+		ComposeFrame();
+	}
+	UpdateAudio();
 }
 
 bool UTSScreenPlayer::ShouldLoad(const FTSMediaItem& Item, FText& OutReason) const
@@ -502,7 +509,17 @@ void UTSScreenPlayer::OpenRemoteSession()
 		}
 		return;
 	}
-	Session = Host->OpenVnc(Connection->Host, Connection->Port, Connection->Password, 1920, 1080, true, this);
+	// Servers that allow it switch to the screen's shape at up to the stream resolution (setting).
+	FIntPoint Want(0, 0);
+	if (UTSConfig::GetBool(this, UTSConfig::RemoteMatchScreenKey, true))
+	{
+		const FVector2D Size = Screen->GetScreenWorldSize();
+		const double Aspect = Size.Y > 1.0 ? FMath::Clamp(Size.X / Size.Y, 0.5, 4.0) : 2.0;
+		const int32 Height = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::StreamHeightKey, 720), 480, 1080);
+		Want.X = FMath::Min(1920, int32(FMath::RoundToInt(Height * Aspect)) & ~7);
+		Want.Y = int32(FMath::RoundToInt(Want.X / Aspect)) & ~1;
+	}
+	Session = Host->OpenVnc(Connection->Host, Connection->Port, Connection->Password, 1920, 1080, true, Want.X, Want.Y, this);
 	if (Session == 0)
 	{
 		SetStatus(Title, Host->GetUnavailableReason());
@@ -1538,6 +1555,8 @@ void UTSScreenPlayer::ComposeFrame()
 	}
 	LastMarkerCompose = FPlatformTime::Seconds();
 	bMarkersDirty = false;
+	ComposedAspect = Screen->GetAspectMode();
+	ComposedSize = Screen->GetScreenWorldSize();
 	const FVector2D Size = Screen->GetScreenWorldSize();
 	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
 	// The browser renders at the screen's shape, so it (and its stream) fills the screen exactly.
@@ -1556,7 +1575,9 @@ void UTSScreenPlayer::ComposeFrame()
 
 	if (!VideoTexture || VideoTexture->GetSizeX() != Fit.TexWidth || VideoTexture->GetSizeY() != Fit.TexHeight)
 	{
-		VideoTexture = UTexture2D::CreateTransient(Fit.TexWidth, Fit.TexHeight, PF_B8G8R8A8, TEXT("TelescreenVideo"));
+		// A unique name: a shared one would replace another screen's (or the previous) texture in place.
+		VideoTexture = UTexture2D::CreateTransient(Fit.TexWidth, Fit.TexHeight, PF_B8G8R8A8, MakeUniqueObjectName(GetTransientPackage(), UTexture2D::StaticClass(),
+			TEXT("TelescreenVideo")));
 		if (!VideoTexture)
 		{
 			UE_LOG(LogTelescreen, Error, TEXT("%s: could not create a %dx%d video texture"), *Screen->GetName(), Fit.TexWidth, Fit.TexHeight);
@@ -1681,7 +1702,9 @@ void UTSScreenPlayer::UpdateAudio()
 {
 	const bool bMuted = UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true) && !FPlatformApplicationMisc::IsThisApplicationForeground();
 	// The global screen volume times this player's own volume for this screen (0-200%).
-	const float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f) * TSScreenVolumes::Get(GetOwner());
+	const ATSBuildableScreen* VolumeScreen = GetScreen();
+	const float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f) * TSScreenVolumes::Get(GetOwner()) *
+		(VolumeScreen ? VolumeScreen->GetScreenVolume() : 1.f);
 	if (WwisePlayingId != 0)
 	{
 		// The game's Master and Boom Box sliders apply on the Wwise bus.

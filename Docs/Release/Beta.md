@@ -1,4 +1,4 @@
-# Telescreen 0.1.0 beta 10: tester guide
+# Telescreen 0.1.0 beta 11: tester guide
 
 Thanks for testing! This is an early build. Please read "What works" first, so you know what to try and what is
 deliberately missing.
@@ -23,8 +23,9 @@ exist) but isn't needed for this test.
 
 - **Screens.** AWESOME Shop, Signs: **Telescreen Set** (25 FICSIT Coupons) unlocks the **Small Telescreen** (8 m x
   4 m) and **Large Telescreen** (16 m x 8 m), built like billboards. They can be rescaled with scaling mods.
-- **The screen panel** (use a screen): the screen's live picture, what it shows, **My volume** and **Show on HUD** on
-  the left; the tabs in the window's header pick the page on the right.
+- **The screen panel** (use a screen): the screen's live picture, what it shows, **My volume**, the screen's volume
+  for everyone, **Show on HUD** and **Screen settings** (name, picture fit) on the left; the mode tabs pick the page
+  on the right.
 - **Videos tab.** Paste a YouTube, Twitch or Vimeo link, **Play now** or **Add to queue**. Everyone in the session
   sees and hears the same video at the same moment, with 3D sound from the screen. Seek bar, pause, next, stop, a
   shared queue showing who added what (click an entry to play it). Playing a video on a screen that shows a browser,
@@ -76,7 +77,7 @@ Host a world with one friend joining (listen server). Everybody does the same ch
 11. Leave and rejoin; close the game while sharing (the helper should stop with it; check Task Manager for a leftover
     `TelescreenHost.exe` afterwards, there should be none).
 12. While sharing, does movement or building lag for the one sharing or the one watching? Tell us your upload speed.
-13. **New in beta 10:** do the panel's header tabs (with icons) switch pages? Is the panel a good size on your screen?
+13. **New in beta 10-11:** is the panel a good size on your screen, and does nothing get cut off? Does the screen volume (everyone) change it for the other player too?
     Change the stream resolution (e.g. 480 and 1080) while sharing: the viewer's picture should get softer / sharper
     after a second. The world host lowers "Highest stream resolution" to 480: the sharer's stream follows.
 

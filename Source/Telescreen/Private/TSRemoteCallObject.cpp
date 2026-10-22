@@ -259,6 +259,20 @@ void UTSRemoteCallObject::Server_SetScreenSettings_Implementation(ATSBuildableSc
 	}
 }
 
+bool UTSRemoteCallObject::Server_SetScreenVolume_Validate(ATSBuildableScreen* Screen, float Volume)
+{
+	return FMath::IsFinite(Volume);
+}
+
+void UTSRemoteCallObject::Server_SetScreenVolume_Implementation(ATSBuildableScreen* Screen, float Volume)
+{
+	UE_LOG(LogTelescreen, Log, TEXT("Server_SetScreenVolume from %s on %s: %.2f"), *GetRequesterName(), *GetNameSafe(Screen), Volume);
+	if (Screen && MayEdit(Screen))
+	{
+		Screen->Server_SetScreenVolume(Volume);
+	}
+}
+
 bool UTSRemoteCallObject::Server_TakeControl_Validate(ATSBuildableScreen* Screen, ETSScreenMode Mode, const FString& Url)
 {
 	return uint8(Mode) <= uint8(ETSScreenMode::RemoteDesktop);

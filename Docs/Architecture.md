@@ -223,18 +223,18 @@ bound to each widget's inner `UButton`):
 | Vanilla widget | Used for | Members used |
 |---|---|---|
 | `Widget_Window_DarkMode` (`UFGWindow`) | window frame, title, close button | `WindowBody` named slot, `mTitleText`, `SetTitle`, `OnClose` |
-| `Widget_Window_DarkMode` header tabs | the panel's tabs (icon and name) | `mTabs` (`FImageAndText {Texture, Text}`, set before construction), `OnTabButtonClicked(ButtonIndex)`, `SetTabVisibility`; its `Widget_TabsContainer`'s `OnButtonClicked`, `OnTabsGenerated` and `mContainer` children (`Widget_SlidingTabs_Button`: `mTargetIndex`, `SimulateClick` to select a tab from code) |
 | `Widget_ListButton` | queue, shareable windows, saved remote desktops | `mTitle`, `mDescription`, `DescVisibility`, `iconVisibility` (collapsed), `mIsSelected` (the playing video), `mRecipeButton` |
 | `Widget_Window_ContentBackground_DarkMode` | panel and dialog background | (layered under the content) |
 | `Widget_StandardButton` | buttons | `mText`, `SetText`, `SetButtonStyle(orange, light, no background)`, `SetIsDisabled`, `mButton` |
-| `Widget_StandardButton` (orange = selected) | fallback tabs, shown only if the window makes no header tabs | as buttons. `Widget_SlidingTabs_Button` takes its label and width from a `Widget_TabsContainer`, so standalone it shows as an empty box; it is only probed for the bold font |
+| `Widget_StandardButton` (orange = selected) | mode tabs, picture fit, Screen settings | as buttons. `Widget_SlidingTabs_Button` takes its label and width from a `Widget_TabsContainer`, so standalone it shows as an empty box; it is only probed for the bold font |
 | `Widget_InputBox` | text fields | `mPreviewText`, `SetPreviewText`, `isSearchbar` (off), `mInputBox` (UEditableText) |
 | `Widget_Scrollbox` | scrolling pages and lists | `mScrollableContent` named slot |
 
 The panel is sized to the viewport (about 62% wide, 1000-1400 UI units; pages up to 80% of the height) in two
-columns: the screen's live picture, status, My volume, Show on HUD and the sharing card (controls and viewers) on the
-left, the selected tab's page on the right. Header tab icons are the game's monochrome icons (Play, Explorer,
-Portal, PortalSatellite, Cogwheel).
+columns: the screen's live picture, status, My volume and the screen's volume for everyone, Show on HUD, Screen
+settings and the sharing card (controls and viewers) on the left; the mode tabs and the selected page on the right.
+Beta 10 tried the window's own header tabs (`mTabs` on `Widget_Window_DarkMode`): in game the header showed only the
+first tab's name as the title and generated no buttons, so they were dropped in beta 11.
 
 Plain text uses the game's UI font, read from the input box's and tab button's text blocks. Every maker falls back to
 a plain UMG widget (and logs `UI: vanilla widget ... not found`) if a class is missing after a game update. The

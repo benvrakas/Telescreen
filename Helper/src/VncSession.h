@@ -21,6 +21,9 @@ struct FVncParams
 	uint32_t MaxWidth = 1920;
 	uint32_t MaxHeight = 1080;
 	bool bAudio = true;
+	// The desktop size to ask the server for (ExtendedDesktopSize), e.g. the screen's shape; 0 asks for nothing.
+	uint32_t WantWidth = 0;
+	uint32_t WantHeight = 0;
 };
 
 // A VNC (RFB) client: connects to a VNC server (QEMU/Proxmox consoles, TigerVNC, x11vnc...), shows its desktop in the
@@ -49,6 +52,7 @@ private:
 	bool DecodeZrle(int X, int Y, int W, int H);
 	bool DecodeCursor(int HotX, int HotY, int W, int H);
 	bool HandleQemuMessage();
+	bool HandleExtendedDesktopSize(int Reason, int Status, int W, int H);
 	void Resize(int W, int H);
 	void Fill(int X, int Y, int W, int H, uint32_t Pixel);
 	void RequestUpdate(bool bIncremental);
@@ -85,6 +89,10 @@ private:
 	// Pointer state sent with every PointerEvent (framebuffer pixels, RFB button mask).
 	std::atomic<int> PointerX{0}, PointerY{0};
 	std::atomic<uint8_t> Buttons{0};
+
+	// ExtendedDesktopSize: the server's first screen, and whether the wanted size was asked for already.
+	uint32_t ScreenId = 0, ScreenFlags = 0;
+	bool bAskedSize = false;
 
 	// ZRLE's zlib stream lasts for the whole connection.
 	void* Zrle = nullptr;

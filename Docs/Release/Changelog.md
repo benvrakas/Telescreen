@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0 beta 11
+
+- Fix: a screen could stay black while its panel's preview showed the picture (most often a VM, whose desktop changes
+  size while it boots). Every screen's picture now has its own texture.
+- Fix: Letterbox / Fill / Stretch apply at once, also to a still picture (a paused video or an idle desktop). The
+  chosen one is highlighted.
+- The window title is the screen's name again (it said "Videos"). The tabs are the four modes; **Screen settings**
+  (name, picture fit) is a button under the volume sliders.
+- **Screen volume for everyone** next to My volume (who may change it follows "Who can change screen videos").
+- The VNC password field is a game-style text field; the panel is a little wider so nothing is cut off.
+- Remote desktops are asked to switch to the screen's shape (ExtendedDesktopSize). TigerVNC and x11vnc follow;
+  QEMU's standard VGA display refuses, so use **Fill** for those. Setting: When you share, "Ask remote desktops for the
+  screen's shape".
+
 ## 0.1.0 beta 10
 
 - **Bigger screen panel** in two columns: the screen's live picture, what it shows, My volume and the sharing card

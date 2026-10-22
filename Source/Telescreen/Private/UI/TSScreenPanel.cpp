@@ -48,16 +48,6 @@ namespace
 		return FText::FromString(Hours > 0 ? FString::Printf(TEXT("%d:%02d:%02d"), Hours, Minutes, Secs) : FString::Printf(TEXT("%d:%02d"), Minutes, Secs));
 	}
 
-	FText AspectName(ETSAspectMode Mode)
-	{
-		switch (Mode)
-		{
-		case ETSAspectMode::Fill: return LOCTEXT("AspectFill", "Fill");
-		case ETSAspectMode::Stretch: return LOCTEXT("AspectStretch", "Stretch");
-		default: return LOCTEXT("AspectLetterbox", "Letterbox");
-		}
-	}
-
 	void Show(UWidget* Widget, bool bVisible)
 	{
 		if (Widget)
@@ -180,6 +170,26 @@ void UTSScreenPanel::OnVolumeChanged(float Value)
 	}
 }
 
+void UTSScreenPanel::OnScreenVolumeBegin()
+{
+	bScreenVolumeDragging = true;
+}
+
+void UTSScreenPanel::OnScreenVolumeChanged(float Value)
+{
+	ScreenVolumeText->SetText(FText::Format(LOCTEXT("VolumePercent", "{0}%"), FText::AsNumber(FMath::RoundToInt(Value * 100.f))));
+}
+
+void UTSScreenPanel::OnScreenVolumeEnd()
+{
+	bScreenVolumeDragging = false;
+	ATSBuildableScreen* Screen = GetScreen();
+	if (UTSRemoteCallObject* RCO = Screen ? UTSRemoteCallObject::GetLocal(this) : nullptr)
+	{
+		RCO->Server_SetScreenVolume(Screen, ScreenVolumeSlider->GetValue());
+	}
+}
+
 void UTSScreenPanel::OnVolumeEnd()
 {
 	TSScreenVolumes::Set(GetScreen(), VolumeSlider->GetValue(), true);
@@ -223,7 +233,7 @@ void UTSScreenPanel::BuildTree()
 	UHorizontalBox* Columns = MakeHBox();
 	Layers->AddChildToOverlay(Columns);
 	PanelSize = WidgetTree->ConstructWidget<USizeBox>();
-	PanelSize->SetWidthOverride(1180.f);
+	PanelSize->SetWidthOverride(1280.f);
 	Window = TSVanillaUI::MakeWindow(WidgetTree, LOCTEXT("PanelTitle", "Telescreen"), TSVanillaUI::MakeContentBackground(WidgetTree, Layers), this,
 		GET_FUNCTION_NAME_CHECKED(UTSScreenPanel, OnWindowClosed));
 	PanelSize->AddChild(Window);
@@ -254,23 +264,47 @@ void UTSScreenPanel::BuildTree()
 	TimeText = MakeText(FText::GetEmpty(), 13, Muted);
 	AddRow(Left, TimeText, 2.f);
 
-	UHorizontalBox* VolumeRow = MakeHBox();
-	AddToHBox(VolumeRow, MakeText(LOCTEXT("MyVolume", "My volume"), 13, Muted));
+	// Label, slider, percentage.
+	auto AddVolumeRow = [&](const FText& Label, USlider* Slider, TObjectPtr<UTextBlock>& OutText, float Top)
+	{
+		UHorizontalBox* Row = MakeHBox();
+		UTextBlock* LabelText = MakeText(Label, 13, Muted);
+		LabelText->SetAutoWrapText(false);
+		USizeBox* LabelSize = WidgetTree->ConstructWidget<USizeBox>();
+		LabelSize->SetWidthOverride(150.f);
+		LabelSize->AddChild(LabelText);
+		AddToHBox(Row, LabelSize);
+		AddToHBox(Row, Slider, true);
+		OutText = MakeText(FText::GetEmpty(), 13);
+		OutText->SetAutoWrapText(false);
+		USizeBox* TextSize = WidgetTree->ConstructWidget<USizeBox>();
+		TextSize->SetWidthOverride(44.f);
+		TextSize->AddChild(OutText);
+		AddToHBox(Row, TextSize);
+		AddRow(Left, Row, Top);
+	};
 	VolumeSlider = MakeSlider(0.f, 2.f);
 	VolumeSlider->SetStepSize(0.05f);
 	VolumeSlider->OnValueChanged.AddDynamic(this, &UTSScreenPanel::OnVolumeChanged);
 	VolumeSlider->OnMouseCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnVolumeEnd);
 	VolumeSlider->OnControllerCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnVolumeEnd);
-	AddToHBox(VolumeRow, VolumeSlider, true);
-	VolumeText = MakeText(FText::GetEmpty(), 13);
-	VolumeText->SetAutoWrapText(false);
-	USizeBox* VolumeTextSize = WidgetTree->ConstructWidget<USizeBox>();
-	VolumeTextSize->SetWidthOverride(44.f);
-	VolumeTextSize->AddChild(VolumeText);
-	AddToHBox(VolumeRow, VolumeTextSize);
-	AddRow(Left, VolumeRow, 10.f);
+	AddVolumeRow(LOCTEXT("MyVolume", "My volume"), VolumeSlider, VolumeText, 10.f);
+	ScreenVolumeSlider = MakeSlider(0.f, 1.f);
+	ScreenVolumeSlider->SetStepSize(0.05f);
+	ScreenVolumeSlider->OnMouseCaptureBegin.AddDynamic(this, &UTSScreenPanel::OnScreenVolumeBegin);
+	ScreenVolumeSlider->OnControllerCaptureBegin.AddDynamic(this, &UTSScreenPanel::OnScreenVolumeBegin);
+	ScreenVolumeSlider->OnValueChanged.AddDynamic(this, &UTSScreenPanel::OnScreenVolumeChanged);
+	ScreenVolumeSlider->OnMouseCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnScreenVolumeEnd);
+	ScreenVolumeSlider->OnControllerCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnScreenVolumeEnd);
+	AddVolumeRow(LOCTEXT("ScreenVolume", "Screen (everyone)"), ScreenVolumeSlider, ScreenVolumeText, 4.f);
+	UHorizontalBox* ScreenButtons = MakeHBox();
 	PipButton = MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip);
-	AddRow(Left, PipButton, 6.f);
+	AddToHBox(ScreenButtons, PipButton, true);
+	SettingsButton = MakeButton(LOCTEXT("ScreenSettings", "Screen settings"), ETSPanelAction::Tab, int32(ETab::Screen));
+	UHorizontalBoxSlot* SettingsSlot = ScreenButtons->AddChildToHorizontalBox(SettingsButton);
+	SettingsSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	SettingsSlot->SetVerticalAlignment(VAlign_Center);
+	AddRow(Left, ScreenButtons, 8.f);
 
 	// Sharing card: the sharer's controls, or what a viewer can do.
 	UVerticalBox* Sharing = MakeVBox();
@@ -295,20 +329,13 @@ void UTSScreenPanel::BuildTree()
 	SharingBar = Sharing;
 	AddRow(Left, Sharing, 14.f);
 
-	// Right column: tabs (in the window header; buttons here if the window has none), notices, the tab page.
+	// Right column: the mode tabs, notices, the selected page (or the screen's settings).
 	UVerticalBox* Right = MakeVBox();
 	UHorizontalBoxSlot* RightSlot = Columns->AddChildToHorizontalBox(Right);
 	RightSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
 	const FText TabNames[] = {LOCTEXT("TabVideos", "Videos"), LOCTEXT("TabBrowser", "Browser"), LOCTEXT("TabWindow", "Share a window"),
-		LOCTEXT("TabRemote", "Remote desktop"), LOCTEXT("TabScreen", "Screen")};
-	static const TCHAR* const TabIcons[] = {TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Play.TXUI_MIcon_Play"),
-		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Explorer.TXUI_MIcon_Explorer"),
-		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Portal.TXUI_MIcon_Portal"),
-		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_PortalSatellite.TXUI_MIcon_PortalSatellite"),
-		TEXT("/Game/FactoryGame/Interface/UI/Assets/MonochromeIcons/TXUI_MIcon_Cogwheel.TXUI_MIcon_Cogwheel")};
-	TSVanillaUI::SetWindowTabs(Window, TabNames, TabIcons, this, GET_FUNCTION_NAME_CHECKED(UTSScreenPanel, OnHeaderTab),
-		GET_FUNCTION_NAME_CHECKED(UTSScreenPanel, OnHeaderTabsGenerated));
+		LOCTEXT("TabRemote", "Remote desktop")};
 	UHorizontalBox* Tabs = MakeHBox();
 	for (int32 I = 0; I < UE_ARRAY_COUNT(TabNames); ++I)
 	{
@@ -316,7 +343,6 @@ void UTSScreenPanel::BuildTree()
 		TabButtons.Add(Tab);
 		AddToHBox(Tabs, Tab);
 	}
-	TabRow = Tabs;
 	AddRow(Right, Tabs, 0.f);
 	NoticeText = MakeText(FText::GetEmpty(), 13, Muted);
 	AddRow(Right, NoticeText, 0.f);
@@ -424,11 +450,10 @@ void UTSScreenPanel::BuildTree()
 		UHorizontalBox* ConnectRow = MakeHBox();
 		RemoteAddressBox = MakeInput(LOCTEXT("RemoteAddressHint", "VNC address, e.g. 192.168.1.20:5901 or myvm:1"), ETSPanelAction::RemoteConnect);
 		AddToHBox(ConnectRow, RemoteAddressBox, true);
-		RemotePasswordBox = WidgetTree->ConstructWidget<UEditableTextBox>();
-		RemotePasswordBox->SetHintText(LOCTEXT("RemotePasswordHint", "Password (if any)"));
-		RemotePasswordBox->SetIsPassword(true);
+		RemotePasswordBox = MakeInput(LOCTEXT("RemotePasswordHint", "Password, if any"), ETSPanelAction::RemoteConnect);
+		TSVanillaUI::SetInputPassword(RemotePasswordBox, true);
 		USizeBox* PasswordSize = WidgetTree->ConstructWidget<USizeBox>();
-		PasswordSize->SetWidthOverride(200.f);
+		PasswordSize->SetWidthOverride(240.f);
 		PasswordSize->AddChild(RemotePasswordBox);
 		AddToHBox(ConnectRow, PasswordSize);
 		AddRow(Page, ConnectRow, 10.f);
@@ -446,7 +471,10 @@ void UTSScreenPanel::BuildTree()
 	// Screen.
 	{
 		UVerticalBox* Page = MakeVBox();
-		AddRow(Page, Heading(LOCTEXT("NameHeader", "Name")), 0.f);
+		AddRow(Page, Heading(LOCTEXT("SettingsPageHeader", "Screen settings")), 0.f);
+		AddRow(Page, MakeText(LOCTEXT("SettingsPageNote", "For this screen, for everyone. Pick a mode above to go back."), 13, Muted), 4.f);
+		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 12.f);
+		AddRow(Page, Heading(LOCTEXT("NameHeader", "Name")), 10.f);
 		UHorizontalBox* NameRow = MakeHBox();
 		NameBox = MakeInput(LOCTEXT("NameHint", "Screen name, e.g. Main Hall"), ETSPanelAction::SaveName);
 		AddToHBox(NameRow, NameBox, true);
@@ -454,12 +482,17 @@ void UTSScreenPanel::BuildTree()
 		AddRow(Page, NameRow);
 		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
 		AddRow(Page, Heading(LOCTEXT("FitHeader", "Picture fit (videos and shared windows)")), 10.f);
-		AspectText = MakeText(FText::GetEmpty(), 13, Muted);
+		AspectText = MakeText(LOCTEXT("FitNote", "Letterbox shows the whole picture with bars, Fill crops it to the screen, Stretch "
+			"distorts it to the screen. Shared browsers always match the screen."), 13, Muted);
 		AddRow(Page, AspectText, 4.f);
 		UHorizontalBox* AspectRow = MakeHBox();
-		AddToHBox(AspectRow, MakeButton(LOCTEXT("Letterbox", "Letterbox"), ETSPanelAction::AspectLetterbox));
-		AddToHBox(AspectRow, MakeButton(LOCTEXT("Fill", "Fill"), ETSPanelAction::AspectFill));
-		AddToHBox(AspectRow, MakeButton(LOCTEXT("Stretch", "Stretch"), ETSPanelAction::AspectStretch));
+		AspectButtons.Add(MakeButton(LOCTEXT("Letterbox", "Letterbox"), ETSPanelAction::AspectLetterbox));
+		AspectButtons.Add(MakeButton(LOCTEXT("Fill", "Fill"), ETSPanelAction::AspectFill));
+		AspectButtons.Add(MakeButton(LOCTEXT("Stretch", "Stretch"), ETSPanelAction::AspectStretch));
+		for (UWidget* Button : AspectButtons)
+		{
+			AddToHBox(AspectRow, Button);
+		}
 		AddRow(Page, AspectRow);
 		AddRow(Page, TSVanillaUI::MakeDivider(WidgetTree), 14.f);
 		AddRow(Page, Heading(LOCTEXT("SettingsHeader", "More settings")), 10.f);
@@ -496,37 +529,17 @@ void UTSScreenPanel::BuildTree()
 
 void UTSScreenPanel::FitToViewport()
 {
-	// About 62% of the viewport wide (1000-1400) and up to 80% tall, in UI units.
+	// About two thirds of the viewport wide (1100-1440) and up to 80% tall, in UI units.
 	const float Scale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(this), 0.1f);
 	const FVector2D Viewport = UWidgetLayoutLibrary::GetViewportSize(this) / Scale;
 	if (Viewport.X < 100.0 || Viewport.Y < 100.0)
 	{
 		return;
 	}
-	const float Width = FMath::Clamp(float(Viewport.X) * 0.62f, 1000.f, FMath::Max(1000.f, FMath::Min(1400.f, float(Viewport.X) - 40.f)));
+	const float Width = FMath::Clamp(float(Viewport.X) * 0.67f, 1100.f, FMath::Max(1100.f, FMath::Min(1440.f, float(Viewport.X) - 40.f)));
 	PanelSize->SetWidthOverride(Width);
 	PagesSize->SetMaxDesiredHeight(FMath::Clamp(float(Viewport.Y) * 0.8f - 190.f, 320.f, 900.f));
 	UE_LOG(LogTelescreen, Verbose, TEXT("Screen panel: %.0f wide for a %.0fx%.0f viewport"), Width, Viewport.X, Viewport.Y);
-}
-
-void UTSScreenPanel::OnHeaderTab(int32 ButtonIndex)
-{
-	if (ButtonIndex >= 0 && ButtonIndex <= int32(ETab::Screen) && ETab(ButtonIndex) != CurrentTab)
-	{
-		SelectTab(ETab(ButtonIndex), false);
-	}
-}
-
-void UTSScreenPanel::OnHeaderTabsGenerated()
-{
-	if (bHeaderTabs)
-	{
-		return;
-	}
-	bHeaderTabs = true;
-	Show(TabRow, false);
-	TSVanillaUI::SelectWindowTab(Window, int32(CurrentTab));
-	UE_LOG(LogTelescreen, Log, TEXT("Screen panel: using the window's header tabs"));
 }
 
 ATSBuildableScreen* UTSScreenPanel::GetScreen() const
@@ -548,6 +561,8 @@ void UTSScreenPanel::NativeConstruct()
 	}
 	NoticeHandle = UTSRemoteCallObject::OnNotice.AddWeakLambda(this, [this](const FText& Text) { SetNotice(Text, true); });
 	FitToViewport();
+	// Masking again once the input box exists (its construction may reset it).
+	TSVanillaUI::SetInputPassword(RemotePasswordBox, true);
 	// Open on the tab for what the screen does now.
 	const ETSScreenMode Mode = Screen ? Screen->GetMode() : ETSScreenMode::SyncedMedia;
 	SelectTab(Mode == ETSScreenMode::Browser		 ? ETab::Browser
@@ -607,14 +622,11 @@ void UTSScreenPanel::Close()
 	}
 }
 
-void UTSScreenPanel::SelectTab(ETab Tab, bool bSyncHeader)
+void UTSScreenPanel::SelectTab(ETab Tab)
 {
 	CurrentTab = Tab;
 	Pages->SetActiveWidgetIndex(int32(Tab));
-	if (bSyncHeader && bHeaderTabs && !TSVanillaUI::SelectWindowTab(Window, int32(Tab)))
-	{
-		UE_LOG(LogTelescreen, Warning, TEXT("Screen panel: header tab %d not found"), int32(Tab));
-	}
+	TSVanillaUI::SetTabActive(SettingsButton, Tab == ETab::Screen);
 	for (int32 I = 0; I < TabButtons.Num(); ++I)
 	{
 		TSVanillaUI::SetTabActive(TabButtons[I], I == int32(Tab));
@@ -644,7 +656,15 @@ void UTSScreenPanel::Refresh()
 		ShownTitle = Screen->GetDisplayName();
 		TSVanillaUI::SetWindowTitle(Window, ShownTitle);
 	}
-	AspectText->SetText(FText::Format(LOCTEXT("AspectNow", "Now: {0}"), AspectName(Screen->GetAspectMode())));
+	for (int32 I = 0; I < AspectButtons.Num(); ++I)
+	{
+		TSVanillaUI::SetTabActive(AspectButtons[I], I == int32(Screen->GetAspectMode()));
+	}
+	if (!bScreenVolumeDragging)
+	{
+		ScreenVolumeSlider->SetValue(Screen->GetScreenVolume());
+		ScreenVolumeText->SetText(FText::Format(LOCTEXT("VolumePercent", "{0}%"), FText::AsNumber(FMath::RoundToInt(Screen->GetScreenVolume() * 100.f))));
+	}
 	TSVanillaUI::SetButtonText(PipButton, UTSScreenWindow::IsShowing(Screen) ? LOCTEXT("RemoveFromHud", "Remove from HUD") : LOCTEXT("ShowOnHud", "Show on HUD"));
 	if (Screen->GetMediaState().Revision != ShownRevision)
 	{
@@ -826,15 +846,10 @@ void UTSScreenPanel::RefreshSharing()
 #else
 	const bool bWindowsAvailable = false;
 #endif
-	if (TabButtons.Num() == 5)
+	if (TabButtons.Num() == 4)
 	{
 		Show(TabButtons[int32(ETab::Window)], bWindowsAvailable);
 		Show(TabButtons[int32(ETab::RemoteDesktop)], bWindowsAvailable);
-	}
-	if (bHeaderTabs && !bWindowsAvailable)
-	{
-		TSVanillaUI::SetWindowTabVisible(Window, int32(ETab::Window), false);
-		TSVanillaUI::SetWindowTabVisible(Window, int32(ETab::RemoteDesktop), false);
 	}
 	if (bRemoteMode && bMine)
 	{
@@ -1107,7 +1122,7 @@ void UTSScreenPanel::RunConfirmed(EConfirm Kind, int32 Index)
 		{
 			Connection = SavedRemotes[Index];
 		}
-		else if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), RemotePasswordBox->GetText().ToString(), Connection))
+		else if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), TSVanillaUI::GetInputText(RemotePasswordBox).ToString(), Connection))
 		{
 			SetNotice(LOCTEXT("RemoteNoAddress", "Type the VNC address first, e.g. 192.168.1.20:5901."), true);
 			break;
@@ -1291,7 +1306,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 		Refresh();
 		return;
 	case ETSPanelAction::Tab:
-		SelectTab(ETab(FMath::Clamp(Index, 0, 4)));
+		SelectTab(ETab(FMath::Clamp(Index, 0, int32(ETab::Screen))));
 		return;
 	case ETSPanelAction::ConfirmAccept:
 	{
@@ -1377,7 +1392,7 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::RemoteSave:
 	{
 		FTSRemoteConnection Connection;
-		if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), RemotePasswordBox->GetText().ToString(), Connection))
+		if (!TSRemoteConnections::Parse(TSVanillaUI::GetInputText(RemoteAddressBox).ToString(), TSVanillaUI::GetInputText(RemotePasswordBox).ToString(), Connection))
 		{
 			SetNotice(LOCTEXT("RemoteNoAddressSave", "Type the VNC address first."), true);
 			break;

@@ -728,8 +728,8 @@ uint32 UTSHostSubsystem::OpenWindow(uint64 Window, bool bCursor, bool bAudio, ui
 	return Session;
 }
 
-uint32 UTSHostSubsystem::OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio,
-	ITSHostSessionListener* Listener)
+uint32 UTSHostSubsystem::OpenVnc(const FString& Host, uint16 Port, const FString& Password, uint32 MaxWidth, uint32 MaxHeight, bool bAudio, uint32 WantWidth,
+	uint32 WantHeight, ITSHostSessionListener* Listener)
 {
 	if (!EnsureConnected())
 	{
@@ -745,6 +745,8 @@ uint32 UTSHostSubsystem::OpenVnc(const FString& Host, uint16 Port, const FString
 	W.U32(MaxWidth);
 	W.U32(MaxHeight);
 	W.U8(bAudio ? 1 : 0);
+	W.U32(WantWidth);
+	W.U32(WantHeight);
 	Send(EMsg::OpenVnc, W.Bytes);
 	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u connects to VNC %s:%u (%s password)"), Session, *Host, Port, Password.IsEmpty() ? TEXT("no") : TEXT("with"));
 	return Session;

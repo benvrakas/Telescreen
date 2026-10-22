@@ -32,6 +32,7 @@ namespace
 	constexpr int32_t EncLastRect = -224;
 	constexpr int32_t EncCursor = -239;
 	constexpr int32_t EncQemuAudio = -259;
+	constexpr int32_t EncExtendedDesktopSize = -308;
 
 	uint16_t BE16(const uint8_t* P) { return uint16_t(P[0] << 8 | P[1]); }
 	uint32_t BE32(const uint8_t* P) { return uint32_t(P[0]) << 24 | uint32_t(P[1]) << 16 | uint32_t(P[2]) << 8 | P[3]; }
@@ -365,7 +366,7 @@ bool FVncSession::Handshake(std::string& Error)
 	PutBE16(Message, 255);
 	Message.insert(Message.end(), {16, 8, 0, 0, 0, 0});
 	// SetEncodings, preferred first.
-	std::vector<int32_t> Encodings = {EncZrle, EncHextile, EncCopyRect, EncRaw, EncDesktopSize, EncLastRect, EncCursor};
+	std::vector<int32_t> Encodings = {EncZrle, EncHextile, EncCopyRect, EncRaw, EncExtendedDesktopSize, EncDesktopSize, EncLastRect, EncCursor};
 	if (Params.bAudio) Encodings.push_back(EncQemuAudio);
 	Message.insert(Message.end(), {2, 0});
 	PutBE16(Message, uint16_t(Encodings.size()));
@@ -489,6 +490,7 @@ bool FVncSession::HandleFramebufferUpdate()
 			LOG_INFO("session %u: desktop resized to %dx%d", Params.SessionId, W, H);
 			Resize(W, H);
 			break;
+		case EncExtendedDesktopSize: bOk = HandleExtendedDesktopSize(X, Y, W, H); break;
 		case EncCursor: bOk = DecodeCursor(X, Y, W, H); break;
 		case EncLastRect: return true;
 		case EncQemuAudio:
@@ -746,6 +748,56 @@ bool FVncSession::DecodeCursor(int HotX, int HotY, int W, int H)
 	CursorHotX = HotX;
 	CursorHotY = HotY;
 	bDirty = true;
+	return true;
+}
+
+bool FVncSession::HandleExtendedDesktopSize(int Reason, int Status, int W, int H)
+{
+	uint8_t Head[4];
+	if (!ReadExact(Head, 4)) return false;
+	const int Screens = Head[0];
+	for (int I = 0; I < Screens; ++I)
+	{
+		uint8_t Screen[16];
+		if (!ReadExact(Screen, 16)) return false;
+		if (I == 0)
+		{
+			ScreenId = BE32(Screen);
+			ScreenFlags = BE32(Screen + 12);
+		}
+	}
+	// Reason 1 answers our request: 0 done, 1 not allowed, 2 out of resources, 3 invalid layout, 4 passed on to the guest.
+	static const char* const Results[] = {"done", "not allowed by the server", "out of resources", "invalid layout", "passed on to the guest"};
+	if (Reason == 1)
+	{
+		LOG_INFO("session %u: desktop size request: %s", Params.SessionId, Status >= 0 && Status <= 4 ? Results[Status] : "unknown answer");
+	}
+	if (Status == 0 && (W != FbWidth || H != FbHeight))
+	{
+		LOG_INFO("session %u: desktop resized to %dx%d (extended, reason %d)", Params.SessionId, W, H, Reason);
+		Resize(W, H);
+	}
+	// Ask once for the screen's shape; the server may refuse, or pass the size on to a guest that may not follow it.
+	if (!bAskedSize && Params.WantWidth > 0 && Params.WantHeight > 0 && Reason == 0)
+	{
+		bAskedSize = true;
+		const int WantW = int(Params.WantWidth), WantH = int(Params.WantHeight);
+		if (std::abs(WantW - W) > 8 || std::abs(WantH - H) > 8)
+		{
+			std::vector<uint8_t> Message = {251, 0};
+			PutBE16(Message, uint16_t(WantW));
+			PutBE16(Message, uint16_t(WantH));
+			Message.insert(Message.end(), {1, 0});
+			PutBE32(Message, ScreenId);
+			PutBE16(Message, 0);
+			PutBE16(Message, 0);
+			PutBE16(Message, uint16_t(WantW));
+			PutBE16(Message, uint16_t(WantH));
+			PutBE32(Message, ScreenFlags);
+			LOG_INFO("session %u: asking the server for a %dx%d desktop (the screen's shape; now %dx%d)", Params.SessionId, WantW, WantH, W, H);
+			Send(Message.data(), Message.size());
+		}
+	}
 	return true;
 }
 

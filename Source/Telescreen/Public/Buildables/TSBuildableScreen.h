@@ -61,6 +61,8 @@ public:
 	const FTSMediaState& GetMediaState() const { return mMediaState; }
 	const FString& GetScreenName() const { return mScreenName; }
 	ETSAspectMode GetAspectMode() const { return mAspectMode; }
+	// The screen's own volume for everyone (0-1), on top of each player's settings.
+	float GetScreenVolume() const { return mScreenVolume; }
 	UTSScreenPlayer* GetPlayer() const { return mPlayer; }
 	ETSScreenMode GetMode() const { return mMode; }
 	APlayerState* GetController() const { return mController; }
@@ -142,6 +144,7 @@ public:
 
 	// Server only: renames the screen and sets how pictures fit it.
 	void Server_SetScreenSettings(const FString& Name, ETSAspectMode AspectMode);
+	void Server_SetScreenVolume(float Volume);
 
 	// Server only: gives Requester control of the screen in Mode, starting at Url.
 	void Server_TakeControl(APlayerState* Requester, ETSScreenMode Mode, const FString& Url);
@@ -203,6 +206,9 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_ScreenSettings, SaveGame)
 	ETSAspectMode mAspectMode = ETSAspectMode::Letterbox;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ScreenSettings, SaveGame)
+	float mScreenVolume = 1.f;
 
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	ETSScreenMode mMode = ETSScreenMode::SyncedMedia;
