@@ -1,4 +1,5 @@
 #include "SharedMemory.h"
+#include "Security.h"
 
 #include <algorithm>
 
@@ -8,7 +9,8 @@ bool FSharedSection::Create(const std::string& Name, size_t Size)
 {
 	Close();
 	const std::wstring WideName = Widen(Name);
-	Mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, DWORD(uint64_t(Size) >> 32), DWORD(Size & 0xFFFFFFFF),
+	FUserOnlySecurity Security;
+	Mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, Security.Get(), PAGE_READWRITE, DWORD(uint64_t(Size) >> 32), DWORD(Size & 0xFFFFFFFF),
 		WideName.c_str());
 	if (!Mapping)
 	{

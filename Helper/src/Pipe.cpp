@@ -1,10 +1,12 @@
 #include "Pipe.h"
 #include "Host/TSHostProtocol.h"
+#include "Security.h"
 
 bool FPipeServer::Create(const std::wstring& Name)
 {
+	FUserOnlySecurity Security;
 	Pipe = CreateNamedPipeW(Name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 1 << 16, 1 << 16, 0, nullptr);
+		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 1 << 16, 1 << 16, 0, Security.Get());
 	if (Pipe == INVALID_HANDLE_VALUE)
 	{
 		LOG_ERROR("CreateNamedPipe(%s) failed: %lu", Narrow(Name).c_str(), GetLastError());
