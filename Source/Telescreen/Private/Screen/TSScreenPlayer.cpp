@@ -17,6 +17,7 @@
 #include "Screen/TSStreamingSoundWave.h"
 #include "Audio/TSWwiseScreens.h"
 #include "Screen/TSRemoteConnections.h"
+#include "Screen/TSScreenVolumes.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
 #include "FGPlayerController.h"
@@ -433,7 +434,7 @@ void UTSScreenPlayer::OpenBrowserSession()
 		return;
 	}
 	BrowserSize = ComputeBrowserSize();
-	FString Url = Screen->GetSourceUrl();
+	FString Url = UTSConfig::BrowserAddressFor(this, Screen->GetSourceUrl());
 	if (Url.IsEmpty())
 	{
 		Url = UTSConfig::GetString(this, UTSConfig::BrowserHomeKey, TEXT("https://duckduckgo.com"));
@@ -713,10 +714,11 @@ void UTSScreenPlayer::BrowserNavigate(const FString& Url)
 {
 	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser() && !Url.TrimStartAndEnd().IsEmpty())
 	{
+		const FString Address = UTSConfig::BrowserAddressFor(this, Url);
 		FTSPayloadWriter W;
-		W.Str(Url.TrimStartAndEnd());
+		W.Str(Address);
 		Host->SendBrowserCommand(Session, ECommand::Navigate, W.Bytes);
-		UE_LOG(LogTelescreen, Log, TEXT("%s: browser opens %s"), *GetNameSafe(GetOwner()), *Url);
+		UE_LOG(LogTelescreen, Log, TEXT("%s: browser opens %s"), *GetNameSafe(GetOwner()), *Address);
 	}
 }
 
@@ -1633,7 +1635,8 @@ void UTSScreenPlayer::ApplyAudioMode()
 void UTSScreenPlayer::UpdateAudio()
 {
 	const bool bMuted = UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true) && !FPlatformApplicationMisc::IsThisApplicationForeground();
-	const float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f);
+	// The global screen volume times this player's own volume for this screen (0-200%).
+	const float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f) * TSScreenVolumes::Get(GetOwner());
 	if (WwisePlayingId != 0)
 	{
 		// The game's Master and Boom Box sliders apply on the Wwise bus.

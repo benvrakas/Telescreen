@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0 beta 9
+
+- Playing a video on a screen that shows a browser, window or remote desktop switches it back to videos (for the
+  player sharing and the world host always; for others when taking over is allowed). Adding to the queue only adds,
+  and says the screen is busy.
+- A seek bar replaces -10 s / +10 s: drag anywhere in the video.
+- **My volume** in the screen panel: your own volume for each screen, 0-200%, remembered on your PC.
+- Browser search engine setting (When you share, default DuckDuckGo): words typed in the address box are searched;
+  `youtube.com`-style names open as sites.
+
 ## 0.1.0 beta 8
 
 - Fix: remote desktops (VNC) disconnected after a few seconds of desktop drawing (large pictures were cut short while

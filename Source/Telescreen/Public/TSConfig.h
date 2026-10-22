@@ -68,6 +68,7 @@ public:
 	static const FString WindowCursorKey;
 	static const FString WindowDisclaimerKey;
 	static const FString BrowserHomeKey;
+	static const FString SearchEngineKey;
 	static const FString KeepBrowserLoginsKey;
 	static const FString FocusKeyKey;
 	static const FString ScreensListKeyKey;
@@ -91,6 +92,10 @@ public:
 
 	// True if Url's host is one of the "Allowed sites" (or a subdomain of one).
 	static bool IsAllowedSite(const UObject* WorldContext, const FString& Url);
+
+	// What the browser opens for text typed in its address box: a web address as it is (https:// added when missing),
+	// anything else as a search with the search engine setting.
+	static FString BrowserAddressFor(const UObject* WorldContext, const FString& Typed);
 
 	// True if PlayerName is in the host's trusted players list.
 	static bool IsTrustedPlayer(const UObject* WorldContext, const FString& PlayerName);

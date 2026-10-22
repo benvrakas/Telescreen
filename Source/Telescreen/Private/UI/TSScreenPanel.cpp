@@ -8,6 +8,8 @@
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
+#include "Components/Slider.h"
+#include "Screen/TSScreenVolumes.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -131,6 +133,49 @@ void UTSScreenPanel::OnWindowClosed()
 	Close();
 }
 
+void UTSScreenPanel::OnSeekBegin()
+{
+	bSeeking = true;
+}
+
+void UTSScreenPanel::OnSeekChanged(float Value)
+{
+	const ATSBuildableScreen* Screen = GetScreen();
+	const FTSMediaItem* Item = Screen ? Screen->GetMediaState().GetCurrent() : nullptr;
+	if (bSeeking && Item && Item->Duration > 0.f)
+	{
+		SeekPositionText->SetText(FormatTime(Value * Item->Duration));
+	}
+}
+
+void UTSScreenPanel::OnSeekEnd()
+{
+	bSeeking = false;
+	ATSBuildableScreen* Screen = GetScreen();
+	UTSRemoteCallObject* RCO = UTSRemoteCallObject::GetLocal(this);
+	const FTSMediaItem* Item = Screen ? Screen->GetMediaState().GetCurrent() : nullptr;
+	if (RCO && Item && Item->Duration > 0.f && !Item->bIsLive)
+	{
+		RCO->Server_MediaCommand(Screen, ETSMediaCommand::Seek, 0, double(SeekSlider->GetValue()) * Item->Duration);
+	}
+}
+
+void UTSScreenPanel::OnVolumeChanged(float Value)
+{
+	ATSBuildableScreen* Screen = GetScreen();
+	TSScreenVolumes::Set(Screen, Value, false);
+	VolumeText->SetText(FText::Format(LOCTEXT("VolumePercent", "{0}%"), FText::AsNumber(FMath::RoundToInt(Value * 100.f))));
+	if (UTSScreenPlayer* Player = Screen ? Screen->GetPlayer() : nullptr)
+	{
+		Player->RefreshVolume();
+	}
+}
+
+void UTSScreenPanel::OnVolumeEnd()
+{
+	TSScreenVolumes::Set(GetScreen(), VolumeSlider->GetValue(), true);
+}
+
 void UTSScreenPanel::BuildTree()
 {
 	auto AddRow = [](UVerticalBox* Box, UWidget* Child, float Top = 6.f)
@@ -170,6 +215,26 @@ void UTSScreenPanel::BuildTree()
 	StatusText = MakeText(FText::GetEmpty(), 17, FLinearColor::White, true);
 	AddToHBox(Header, StatusText, true);
 	PipButton = MakeButton(LOCTEXT("ShowOnHud", "Show on HUD"), ETSPanelAction::TogglePip);
+	AddToHBox(Header, MakeText(LOCTEXT("MyVolume", "My volume"), 13, Muted));
+	VolumeSlider = WidgetTree->ConstructWidget<USlider>();
+	VolumeSlider->SetMinValue(0.f);
+	VolumeSlider->SetMaxValue(2.f);
+	VolumeSlider->SetStepSize(0.05f);
+	VolumeSlider->SetSliderBarColor(FLinearColor(0.2f, 0.22f, 0.26f));
+	VolumeSlider->SetSliderHandleColor(Accent);
+	VolumeSlider->OnValueChanged.AddDynamic(this, &UTSScreenPanel::OnVolumeChanged);
+	VolumeSlider->OnMouseCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnVolumeEnd);
+	VolumeSlider->OnControllerCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnVolumeEnd);
+	USizeBox* VolumeSize = WidgetTree->ConstructWidget<USizeBox>();
+	VolumeSize->SetWidthOverride(140.f);
+	VolumeSize->AddChild(VolumeSlider);
+	AddToHBox(Header, VolumeSize);
+	VolumeText = MakeText(FText::GetEmpty(), 13);
+	VolumeText->SetAutoWrapText(false);
+	USizeBox* VolumeTextSize = WidgetTree->ConstructWidget<USizeBox>();
+	VolumeTextSize->SetWidthOverride(48.f);
+	VolumeTextSize->AddChild(VolumeText);
+	AddToHBox(Header, VolumeTextSize);
 	AddToHBox(Header, PipButton);
 	AddRow(Root, Header, 0.f);
 	TimeText = MakeText(FText::GetEmpty(), 13, Muted);
@@ -220,11 +285,29 @@ void UTSScreenPanel::BuildTree()
 		UVerticalBox* Page = MakeVBox();
 		UHorizontalBox* Transport = MakeHBox();
 		AddToHBox(Transport, MakeButton(LOCTEXT("PlayPause", "Play / Pause"), ETSPanelAction::PlayPause, INDEX_NONE, true));
-		AddToHBox(Transport, MakeButton(LOCTEXT("Back10", "-10 s"), ETSPanelAction::Back10));
-		AddToHBox(Transport, MakeButton(LOCTEXT("Forward10", "+10 s"), ETSPanelAction::Forward10));
 		AddToHBox(Transport, MakeButton(LOCTEXT("Next", "Next"), ETSPanelAction::Next));
 		AddToHBox(Transport, MakeButton(LOCTEXT("Stop", "Stop"), ETSPanelAction::Stop));
 		AddRow(Page, Transport, 0.f);
+		UHorizontalBox* Seek = MakeHBox();
+		SeekPositionText = MakeText(FText::FromString(TEXT("0:00")), 13, Muted);
+		SeekPositionText->SetAutoWrapText(false);
+		AddToHBox(Seek, SeekPositionText);
+		SeekSlider = WidgetTree->ConstructWidget<USlider>();
+		SeekSlider->SetMinValue(0.f);
+		SeekSlider->SetMaxValue(1.f);
+		SeekSlider->SetSliderBarColor(FLinearColor(0.2f, 0.22f, 0.26f));
+		SeekSlider->SetSliderHandleColor(Accent);
+		SeekSlider->OnMouseCaptureBegin.AddDynamic(this, &UTSScreenPanel::OnSeekBegin);
+		SeekSlider->OnControllerCaptureBegin.AddDynamic(this, &UTSScreenPanel::OnSeekBegin);
+		SeekSlider->OnValueChanged.AddDynamic(this, &UTSScreenPanel::OnSeekChanged);
+		SeekSlider->OnMouseCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnSeekEnd);
+		SeekSlider->OnControllerCaptureEnd.AddDynamic(this, &UTSScreenPanel::OnSeekEnd);
+		AddToHBox(Seek, SeekSlider, true);
+		SeekDurationText = MakeText(FText::FromString(TEXT("0:00")), 13, Muted);
+		SeekDurationText->SetAutoWrapText(false);
+		AddToHBox(Seek, SeekDurationText);
+		SeekRow = Seek;
+		AddRow(Page, Seek, 8.f);
 		AddRow(Page, MakeText(LOCTEXT("AddHeader", "Add a video"), 14, Accent, true), 14.f);
 		UHorizontalBox* AddBox = MakeHBox();
 		LinkBox = MakeInput(LOCTEXT("LinkHint", "Paste a YouTube, Twitch or Vimeo link, or a video file path"), ETSPanelAction::PlayNow);
@@ -366,6 +449,9 @@ void UTSScreenPanel::NativeConstruct()
 	{
 		ScreenChangedHandle = Screen->OnScreenChanged.AddUObject(this, &UTSScreenPanel::Refresh);
 		TSVanillaUI::SetInputText(NameBox, FText::FromString(Screen->GetScreenName()));
+		const float MyVolume = TSScreenVolumes::Get(Screen);
+		VolumeSlider->SetValue(MyVolume);
+		VolumeText->SetText(FText::Format(LOCTEXT("VolumePercent", "{0}%"), FText::AsNumber(FMath::RoundToInt(MyVolume * 100.f))));
 	}
 	NoticeHandle = UTSRemoteCallObject::OnNotice.AddWeakLambda(this, [this](const FText& Text) { SetNotice(Text, true); });
 	// Open on the tab for what the screen does now.
@@ -530,6 +616,16 @@ void UTSScreenPanel::RefreshTimes()
 		break;
 	}
 	StatusText->SetText(Status);
+	// The seek bar follows playback unless it is being dragged; live streams have nothing to seek.
+	const bool bSeekable = Item && Item->Duration > 0.f && !Item->bIsLive;
+	SeekRow->SetVisibility(bSeekable ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (bSeekable && !bSeeking)
+	{
+		const double At = FMath::Clamp(Screen->GetPlaybackPosition(), 0.0, double(Item->Duration));
+		SeekSlider->SetValue(float(At / Item->Duration));
+		SeekPositionText->SetText(FormatTime(At));
+		SeekDurationText->SetText(FormatTime(Item->Duration));
+	}
 	const FText Local = Player ? Player->GetLocalStatus() : FText::GetEmpty();
 	if (!Local.IsEmpty())
 	{

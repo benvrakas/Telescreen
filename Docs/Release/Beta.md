@@ -1,4 +1,4 @@
-# Telescreen 0.1.0 beta 8: tester guide
+# Telescreen 0.1.0 beta 9: tester guide
 
 Thanks for testing! This is an early build. Please read "What works" first, so you know what to try and what is
 deliberately missing.

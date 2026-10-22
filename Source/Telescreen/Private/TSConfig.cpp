@@ -51,6 +51,7 @@ const FString UTSConfig::WindowAudioKey = TEXT("WindowAudio");
 const FString UTSConfig::WindowCursorKey = TEXT("WindowCursor");
 const FString UTSConfig::WindowDisclaimerKey = TEXT("WindowDisclaimerAccepted");
 const FString UTSConfig::BrowserHomeKey = TEXT("BrowserHome");
+const FString UTSConfig::SearchEngineKey = TEXT("SearchEngine");
 const FString UTSConfig::KeepBrowserLoginsKey = TEXT("KeepBrowserLogins");
 const FString UTSConfig::FocusKeyKey = TEXT("FocusKey");
 const FString UTSConfig::ScreensListKeyKey = TEXT("ScreensListKey");
@@ -171,6 +172,9 @@ UTSConfig::UTSConfig()
 	BrowserSection->Tooltip = LOCTEXT("BrowserSectionTip", "Your own browser, window or remote desktop, shown on a screen from your PC. The world host's rules (below) limit what you can share and give.");
 	AddString(BrowserSection, BrowserHomeKey, LOCTEXT("BrowserHome", "Browser start page"),
 		LOCTEXT("BrowserHomeTip", "Page the built-in browser opens when you start it without a link."), TEXT("https://duckduckgo.com"));
+	AddString(BrowserSection, SearchEngineKey, LOCTEXT("SearchEngine", "Browser search engine"),
+		LOCTEXT("SearchEngineTip", "Where words typed in the browser's address box are searched; %s is replaced by them. E.g. https://duckduckgo.com/?q=%s, https://www.google.com/search?q=%s, https://www.bing.com/search?q=%s, https://www.startpage.com/do/search?q=%s"),
+		TEXT("https://duckduckgo.com/?q=%s"));
 	AddBool(BrowserSection, KeepBrowserLoginsKey, LOCTEXT("KeepBrowserLogins", "Keep browser logins"),
 		LOCTEXT("KeepBrowserLoginsTip", "Remember sign-ins and cookies between sessions. Off: every browser starts clean. Anything you're signed in to is visible to players watching the screen."), false);
 	AddInt(BrowserSection, StreamKbpsKey, LOCTEXT("StreamKbps", "Stream quality (kbps)"),
@@ -457,6 +461,47 @@ bool UTSConfig::IsAllowedSite(const UObject* WorldContext, const FString& Url)
 		}
 	}
 	return false;
+}
+
+FString UTSConfig::BrowserAddressFor(const UObject* WorldContext, const FString& Typed)
+{
+	const FString Text = Typed.TrimStartAndEnd();
+	if (Text.IsEmpty() || Text.Contains(TEXT("://")) || Text.StartsWith(TEXT("about:")))
+	{
+		return Text;
+	}
+	// One word with a dot and no spaces (youtube.com, 192.168.1.20:8006/x, localhost:8080) is a site.
+	const bool bLooksLikeSite = !Text.Contains(TEXT(" ")) && (Text.Contains(TEXT(".")) || Text.StartsWith(TEXT("localhost")));
+	if (bLooksLikeSite)
+	{
+		return TEXT("https://") + Text;
+	}
+	FString Engine = GetString(WorldContext, SearchEngineKey, TEXT("https://duckduckgo.com/?q=%s")).TrimStartAndEnd();
+	if (!Engine.Contains(TEXT("%s")))
+	{
+		Engine = TEXT("https://duckduckgo.com/?q=%s");
+	}
+	// The query, URL-encoded byte by byte from UTF-8.
+	FString Query;
+	const FTCHARToUTF8 Utf8(*Text);
+	for (int32 I = 0; I < Utf8.Length(); ++I)
+	{
+		const uint8 B = uint8(Utf8.Get()[I]);
+		const bool bPlain = (B >= '0' && B <= '9') || (B >= 'a' && B <= 'z') || (B >= 'A' && B <= 'Z') || B == '-' || B == '_' || B == '.' || B == '~';
+		if (bPlain)
+		{
+			Query.AppendChar(TCHAR(B));
+		}
+		else if (B == ' ')
+		{
+			Query.AppendChar(TEXT('+'));
+		}
+		else
+		{
+			Query += FString::Printf(TEXT("%%%02X"), B);
+		}
+	}
+	return Engine.Replace(TEXT("%s"), *Query);
 }
 
 bool UTSConfig::IsTrustedPlayer(const UObject* WorldContext, const FString& PlayerName)

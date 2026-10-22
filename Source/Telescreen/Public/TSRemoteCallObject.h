@@ -102,6 +102,9 @@ public:
 private:
 	bool MayEdit(const ATSBuildableScreen* Screen);
 	bool MayUseMode(const ATSBuildableScreen* Screen, ETSScreenMode Mode);
+	// Playing a video on a screen that shows a shared source switches it back to videos: always for its sharer and the
+	// world host, for others only if taking over is allowed. Returns false (with a notice) if not allowed.
+	bool ReturnToVideos(ATSBuildableScreen* Screen);
 	FString GetRequesterName() const;
 
 	UPROPERTY(Replicated, Meta = (NoAutoJson))

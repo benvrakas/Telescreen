@@ -8,6 +8,7 @@
 
 class ATSBuildableScreen;
 class UEditableTextBox;
+class USlider;
 class UTextBlock;
 class UVerticalBox;
 class UWidgetSwitcher;
@@ -103,6 +104,20 @@ public:
 	UFUNCTION()
 	void OnWindowClosed();
 
+	// Seek bar: dragging previews the time; letting go seeks everyone there.
+	UFUNCTION()
+	void OnSeekBegin();
+	UFUNCTION()
+	void OnSeekChanged(float Value);
+	UFUNCTION()
+	void OnSeekEnd();
+
+	// My volume: changes the sound at once; letting go saves it.
+	UFUNCTION()
+	void OnVolumeChanged(float Value);
+	UFUNCTION()
+	void OnVolumeEnd();
+
 private:
 	enum class ETab : uint8
 	{
@@ -188,6 +203,21 @@ private:
 	ETab CurrentTab = ETab::Videos;
 
 	// Videos page.
+	UPROPERTY(Transient)
+	TObjectPtr<USlider> SeekSlider;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> SeekPositionText;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> SeekDurationText;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> SeekRow;
+	bool bSeeking = false;
+
+	// My volume (header).
+	UPROPERTY(Transient)
+	TObjectPtr<USlider> VolumeSlider;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> VolumeText;
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> LinkBox;
 	UPROPERTY(Transient)

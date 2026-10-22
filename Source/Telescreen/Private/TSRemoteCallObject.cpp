@@ -195,7 +195,15 @@ void UTSRemoteCallObject::Server_Enqueue_Implementation(ATSBuildableScreen* Scre
 	Accepted.Title = Item.Title.Left(MaxTitleLength);
 	Accepted.AddedBy = Requester;
 	Accepted.Duration = FMath::Max(0.f, Accepted.Duration);
+	if (bPlayNow && Screen->GetMode() != ETSScreenMode::SyncedMedia && !ReturnToVideos(Screen))
+	{
+		bPlayNow = false;
+	}
 	Screen->Server_Enqueue(Accepted, bPlayNow);
+	if (!bPlayNow && Screen->GetMode() != ETSScreenMode::SyncedMedia)
+	{
+		Client_Notice(FString::Printf(TEXT("Added to the queue; the screen shows %s's source until they stop it."), *Screen->GetControllerName()));
+	}
 }
 
 bool UTSRemoteCallObject::Server_MediaCommand_Validate(ATSBuildableScreen* Screen, ETSMediaCommand Command, int32 Index, double Seconds)
@@ -207,10 +215,33 @@ void UTSRemoteCallObject::Server_MediaCommand_Implementation(ATSBuildableScreen*
 {
 	UE_LOG(LogTelescreen, Log, TEXT("Server_MediaCommand from %s on %s: %d (%d, %.1f)"), *GetRequesterName(), *GetNameSafe(Screen), int32(Command),
 		Index, Seconds);
-	if (MayEdit(Screen))
+	if (!MayEdit(Screen))
 	{
-		Screen->ApplyMediaCommand(Command, Index, Seconds);
+		return;
 	}
+	const bool bStartsPlayback = Command == ETSMediaCommand::PlayIndex || Command == ETSMediaCommand::Resume;
+	if (bStartsPlayback && Screen->GetMode() != ETSScreenMode::SyncedMedia && !ReturnToVideos(Screen))
+	{
+		return;
+	}
+	Screen->ApplyMediaCommand(Command, Index, Seconds);
+}
+
+bool UTSRemoteCallObject::ReturnToVideos(ATSBuildableScreen* Screen)
+{
+	const APlayerController* Controller = GetOwnerPlayerController();
+	if (!Screen || !Controller)
+	{
+		return false;
+	}
+	const bool bIsSharer = Screen->GetController() == Controller->PlayerState;
+	if (!bIsSharer && !IsHostOrAdmin(Controller) && !UTSConfig::GetBool(Screen, UTSConfig::AllowTakeOverKey, true))
+	{
+		Client_Notice(FString::Printf(TEXT("%s is sharing on this screen; wait until they stop."), *Screen->GetControllerName()));
+		return false;
+	}
+	Screen->Server_ReleaseControl(*FString::Printf(TEXT("back to videos by %s"), *GetRequesterName()));
+	return true;
 }
 
 bool UTSRemoteCallObject::Server_SetScreenSettings_Validate(ATSBuildableScreen* Screen, const FString& Name, ETSAspectMode AspectMode)

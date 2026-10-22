@@ -43,6 +43,9 @@ public:
 	// What this client shows instead of the video right now, or empty while the video plays.
 	FText GetLocalStatus() const { return bShowingVideo ? FText::GetEmpty() : StatusLine2; }
 
+	// Applies a volume change (the panel's My volume slider) right away.
+	void RefreshVolume() { UpdateAudio(); }
+
 	// Why the current item isn't loading on this PC, or empty.
 	FText GetBlockedReason() const { return BlockedReason; }
 
