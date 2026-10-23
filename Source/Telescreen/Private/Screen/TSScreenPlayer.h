@@ -243,6 +243,11 @@ private:
 	FString ReportedDurationKey;
 	uint32 PickSubtitleTrack() const;
 
+	// The game's "Mute When Minimized" sets the master volume game parameter to 0 while the window isn't in front; with
+	// Telescreen's own background mute off, the screen's emitter keeps the master volume (-1: following the game).
+	float HeldMasterVolume = -1.f;
+	void UpdateMasterVolumeHold(bool bHold);
+
 	FText RemoteSecurity;
 	FString ChangedCertificate;
 	FTSRemoteConnection RemoteInUse;

@@ -201,7 +201,7 @@ UTSConfig::UTSConfig()
 	AddFloat(Sound, AudioRangeKey, LOCTEXT("AudioRange", "Hearing range"),
 		LOCTEXT("AudioRangeTip", "Multiplies how far screens can be heard; bigger screens already carry further."), 1.f);
 	AddBool(Sound, MuteInBackgroundKey, LOCTEXT("MuteInBackground", "Mute when the game is in the background"),
-		LOCTEXT("MuteInBackgroundTip", "Silence screens while you're in another window. Videos keep playing in sync."), true);
+		LOCTEXT("MuteInBackgroundTip", "Silence screens while you're in another window. Videos keep playing in sync. Off: screens stay audible in the background, even when the game's own \"Mute When Minimized\" is on."), true);
 	AddBool(Sound, WwiseAudioKey, LOCTEXT("WwiseAudio", "Play through the game's audio engine"),
 		LOCTEXT("WwiseAudioTip", "Screen sound goes through the game's own audio (rooms, reverb, walls, the game's volume sliders for the Boom Box). Off: Unreal plays it directly. Applies to sounds that start after the change."), true);
 

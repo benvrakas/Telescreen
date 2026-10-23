@@ -114,12 +114,27 @@ const TSWwise::FCalls& TSWwise::GetCalls()
 		Found.PostEvent = reinterpret_cast<decltype(Found.PostEvent)>(FPlatformProcess::GetDllExport(Module, TEXT("?PostEvent@SoundEngine@AK@@YAII_KIP6AXW4AkCallbackType@@PEAUAkEventCallbackInfo@@PEAX3@Z3IPEAUAkExternalSourceInfo@@I@Z")));
 		Found.RegisterGameObj = reinterpret_cast<decltype(Found.RegisterGameObj)>(FPlatformProcess::GetDllExport(Module, TEXT("?RegisterGameObj@SoundEngine@AK@@YA?AW4AKRESULT@@_KPEBD@Z")));
 		Found.StopPlayingID = reinterpret_cast<decltype(Found.StopPlayingID)>(FPlatformProcess::GetDllExport(Module, TEXT("?StopPlayingID@SoundEngine@AK@@YAXIHW4AkCurveInterpolation@@@Z")));
+		Found.SetRTPCValue = reinterpret_cast<decltype(Found.SetRTPCValue)>(FPlatformProcess::GetDllExport(Module, TEXT("?SetRTPCValue@SoundEngine@AK@@YA?AW4AKRESULT@@IM_KHW4AkCurveInterpolation@@_N@Z")));
+		Found.ResetRTPCValue = reinterpret_cast<decltype(Found.ResetRTPCValue)>(FPlatformProcess::GetDllExport(Module, TEXT("?ResetRTPCValue@SoundEngine@AK@@YA?AW4AKRESULT@@I_KHW4AkCurveInterpolation@@_N@Z")));
 		Found.RegisterPlugin = reinterpret_cast<decltype(Found.RegisterPlugin)>(FPlatformProcess::GetDllExport(Module, TEXT("?RegisterPlugin@SoundEngine@AK@@YA?AW4AKRESULT@@W4AkPluginType@@IIP6APEAVIAkPlugin@2@PEAVIAkPluginMemAlloc@2@@ZP6APEAVIAkPluginParam@2@1@ZP6A?AW43@AEAIPEAUAkDeviceDescription@@@Z@Z")));
 		UE_LOG(LogTelescreen, Log, TEXT("Wwise: game sound engine functions %s"), Found.IsComplete() ? TEXT("found") : TEXT("INCOMPLETE; Wwise playback off"));
 #endif
 		return Found;
 	}();
 	return Calls;
+}
+
+bool TSWwise::SetObjectRtpc(uint32 Id, float Value, uint64 GameObject)
+{
+	// AkCurveInterpolation_Linear, no transition.
+	const FCalls& Calls = GetCalls();
+	return Calls.SetRTPCValue && Calls.SetRTPCValue(Id, Value, GameObject, 0, 4, false) == WwiseResultSuccess;
+}
+
+bool TSWwise::ResetObjectRtpc(uint32 Id, uint64 GameObject)
+{
+	const FCalls& Calls = GetCalls();
+	return Calls.ResetRTPCValue && Calls.ResetRTPCValue(Id, GameObject, 0, 4, false) == WwiseResultSuccess;
 }
 
 uint32 TSWwise::IdFromName(const FString& Name)

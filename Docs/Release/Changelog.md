@@ -27,6 +27,8 @@ First public release (everything from the betas below). Not yet tested in multip
 - **Picture subtitles** (Blu-ray PGS, DVD) inside video files, drawn into the picture on the screen.
 - **`/ts list`** and **`/ts stop <number|all>`** chat commands (also `/telescreen`), like BoomBoxPlus's `/bbp`.
 - Sharper text on screens (status and subtitles use the UI font at full size, the status picture is twice as large).
+- With "Mute when the game is in the background" off, screens stay audible in the background even when the game's own
+  "Mute When Minimized" is on (it silences the game's audio engine; each screen keeps the master volume instead).
 - Fix: after a lag spike (an autosave) a video's sound could play noticeably off-pitch until pause and play: keeping it
   in sync changed the audio's speed by up to 5%. Now at most 0.4% (inaudible); bigger drift (an autosave stalls the game's audio for about 0.3 s) skips to the right spot.
 - Fix: video files had no seek bar (and didn't move on to the next one by themselves): their length now comes from the

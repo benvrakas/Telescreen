@@ -18,6 +18,9 @@ namespace TSWwise
 		void (*StopPlayingID)(uint32, int32, int32) = nullptr;
 		// Only needed for RegisterBuiltInPlugin, so not part of IsComplete.
 		int32 (*RegisterPlugin)(int32, uint32, uint32, void*, void*, void*) = nullptr;
+		// A game parameter on one game object, and handing it back to the global value (not part of IsComplete).
+		int32 (*SetRTPCValue)(uint32, float, uint64, int32, int32, bool) = nullptr;
+		int32 (*ResetRTPCValue)(uint32, uint64, int32, int32, bool) = nullptr;
 
 		bool IsComplete() const { return LoadBankMemoryCopy && PostEvent && RegisterGameObj && StopPlayingID; }
 	};
@@ -27,6 +30,11 @@ namespace TSWwise
 
 	// Wwise's id for a name: FNV-1 of the lowercase name (as AK::SoundEngine::GetIDFromString).
 	uint32 IdFromName(const FString& Name);
+
+	// Sets game parameter Id on one game object (overriding its global value there), or hands it back to the global
+	// value. True if Wwise accepted it.
+	bool SetObjectRtpc(uint32 Id, float Value, uint64 GameObject);
+	bool ResetObjectRtpc(uint32 Id, uint64 GameObject);
 
 	// One object of a bank's HIRC chunk: its type (2 sound, 3 action, 4 event, 7 actor-mixer, 17 plugin settings) and
 	// byte range including its 5-byte header.

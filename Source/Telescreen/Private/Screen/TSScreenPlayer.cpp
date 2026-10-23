@@ -2015,7 +2015,10 @@ void UTSScreenPlayer::ApplyAudioMode()
 
 void UTSScreenPlayer::UpdateAudio()
 {
-	const bool bMuted = UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true) && !FPlatformApplicationMisc::IsThisApplicationForeground();
+	const bool bMuteInBackground = UTSConfig::GetBool(this, UTSConfig::MuteInBackgroundKey, true);
+	const bool bBackground = !FPlatformApplicationMisc::IsThisApplicationForeground();
+	const bool bMuted = bMuteInBackground && bBackground;
+	UpdateMasterVolumeHold(WwisePlayingId != 0 && !bMuteInBackground && bBackground);
 	// The global screen volume times this player's own volume for this screen (0-200%).
 	const ATSBuildableScreen* VolumeScreen = GetScreen();
 	const float Volume = FMath::Clamp(UTSConfig::GetFloat(this, UTSConfig::VolumeKey, 1.f), 0.f, 1.f) * TSScreenVolumes::Get(GetOwner()) *
@@ -2094,8 +2097,34 @@ bool UTSScreenPlayer::PlayThroughWwise(const TSharedPtr<FTSAudioReader, ESPMode:
 	return true;
 }
 
+void UTSScreenPlayer::UpdateMasterVolumeHold(bool bHold)
+{
+	// Wwise's id of game parameter Menu_Volume_Master, the master bus's voice volume (per game object).
+	static const uint32 MasterVolumeRtpc = TSWwise::IdFromName(TEXT("Menu_Volume_Master"));
+	float Value = -1.f;
+	if (bHold)
+	{
+		// The option as the game hands it to Wwise.
+		const UFGGameUserSettings* Settings = UFGGameUserSettings::GetFGGameUserSettings();
+		const FVariant Raw = Settings ? Settings->GetOptionValue(TEXT("RTPC.Menu_Volume_Master")) : FVariant();
+		Value = Raw.GetType() == EVariantTypes::Float ? Raw.GetValue<float>() : Raw.GetType() == EVariantTypes::Double ? float(Raw.GetValue<double>()) : 100.f;
+	}
+	if (Value == HeldMasterVolume || !IsValid(WwiseEmitter))
+	{
+		return;
+	}
+	// The game object id is the emitter component's address.
+	const uint64 GameObject = reinterpret_cast<uint64>(WwiseEmitter.Get());
+	const bool bDone = bHold ? TSWwise::SetObjectRtpc(MasterVolumeRtpc, Value, GameObject) : TSWwise::ResetObjectRtpc(MasterVolumeRtpc, GameObject);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s"), *GetNameSafe(GetOwner()),
+		bHold ? *FString::Printf(TEXT("keeps master volume %.2f in the background%s"), Value, bDone ? TEXT("") : TEXT(" (Wwise refused)"))
+			: bDone ? TEXT("follows the game's master volume again") : TEXT("couldn't hand master volume back to the game"));
+	HeldMasterVolume = Value;
+}
+
 void UTSScreenPlayer::StopWwise()
 {
+	UpdateMasterVolumeHold(false);
 	if (WwisePlayingId != 0)
 	{
 		TSWwiseScreens::Stop(WwisePlayingId);
