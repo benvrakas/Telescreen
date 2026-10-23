@@ -22,6 +22,11 @@ namespace
 {
 	constexpr double RestartDelaySeconds = 5.0;
 	constexpr int32 MaxStartAttempts = 5;
+	// A frame gap longer than this is logged.
+	constexpr double LongFrameSeconds = 3.0;
+	// A pipe write waiting longer than this is logged; longer than HelperHangSeconds restarts the helper.
+	constexpr double WriteStallSeconds = 3.0;
+	constexpr double HelperHangSeconds = 30.0;
 
 	void PutU8(TArray<uint8>& Out, uint8 V) { Out.Add(V); }
 	void PutU32(TArray<uint8>& Out, uint32 V) { Out.Append(reinterpret_cast<const uint8*>(&V), 4); }
@@ -71,34 +76,66 @@ namespace
 }
 
 // Client end of the helper's pipe: connects, then reads messages on its own thread into a queue for the game thread.
+// Writes are queued and sent by a second thread, so the game thread never waits on the helper.
 class FTSHostConnection : public FRunnable
 {
-public:
-	explicit FTSHostConnection(const FString& InPipeName) : PipeName(InPipeName)
+	// Sends the connection's queued writes.
+	class FWriter : public FRunnable
 	{
+	public:
+		explicit FWriter(FTSHostConnection& InOwner) : Owner(InOwner) {}
+		virtual uint32 Run() override
+		{
+			Owner.RunWriter();
+			return 0;
+		}
+
+	private:
+		FTSHostConnection& Owner;
+	};
+
+public:
+	explicit FTSHostConnection(const FString& InPipeName) : PipeName(InPipeName), Writer(*this)
+	{
+#if PLATFORM_WINDOWS
+		ReadEvent = CreateEventW(nullptr, true, false, nullptr);
+		WriteEvent = CreateEventW(nullptr, true, false, nullptr);
+		WriteWake = CreateEventW(nullptr, false, false, nullptr);
+#endif
 		Thread = FRunnableThread::Create(this, TEXT("TelescreenHostPipe"));
+		WriterThread = FRunnableThread::Create(&Writer, TEXT("TelescreenHostPipeWriter"));
 	}
 
 	virtual ~FTSHostConnection() override
 	{
+		// Queued messages (the shutdown request) get a moment to reach the helper.
+		const double FlushDeadline = FPlatformTime::Seconds() + 0.3;
+		while (HasPendingWrites() && IsOpen() && FPlatformTime::Seconds() < FlushDeadline)
+		{
+			FPlatformProcess::Sleep(0.005f);
+		}
 		Stop();
 		if (Thread)
 		{
 			Thread->WaitForCompletion();
 			delete Thread;
 		}
+		if (WriterThread)
+		{
+			WriterThread->WaitForCompletion();
+			delete WriterThread;
+		}
 #if PLATFORM_WINDOWS
 		if (Pipe != INVALID_HANDLE_VALUE) CloseHandle(Pipe);
 		if (ReadEvent) CloseHandle(ReadEvent);
 		if (WriteEvent) CloseHandle(WriteEvent);
+		if (WriteWake) CloseHandle(WriteWake);
 #endif
 	}
 
 	virtual uint32 Run() override
 	{
 #if PLATFORM_WINDOWS
-		ReadEvent = CreateEventW(nullptr, true, false, nullptr);
-		WriteEvent = CreateEventW(nullptr, true, false, nullptr);
 		const double Deadline = FPlatformTime::Seconds() + 15.0;
 		while (!bStopping && FPlatformTime::Seconds() < Deadline)
 		{
@@ -117,6 +154,7 @@ public:
 			return 0;
 		}
 		bPipeOpen = true;
+		SetEvent(WriteWake);
 		UE_LOG(LogTelescreen, Log, TEXT("Host: connected to %s"), *PipeName);
 		while (!bStopping)
 		{
@@ -146,15 +184,31 @@ public:
 	{
 		bStopping = true;
 #if PLATFORM_WINDOWS
+		if (WriteWake) SetEvent(WriteWake);
 		if (Pipe != INVALID_HANDLE_VALUE) CancelIoEx(Pipe, nullptr);
 #endif
 	}
 
-	bool Write(const TArray<uint8>& Bytes)
+	// Queues Bytes for the helper; false if the pipe is closed or too much is already waiting.
+	bool Write(TArray<uint8>&& Bytes)
 	{
 #if PLATFORM_WINDOWS
-		FScopeLock Lock(&WriteLock);
-		return bPipeOpen && !bClosed && Transfer(true, const_cast<uint8*>(Bytes.GetData()), Bytes.Num(), WriteEvent);
+		if (bClosed || bStopping)
+		{
+			return false;
+		}
+		{
+			FScopeLock Lock(&WriteLock);
+			if (QueuedBytes + Bytes.Num() > MaxQueuedBytes)
+			{
+				++DroppedWrites;
+				return false;
+			}
+			QueuedBytes += Bytes.Num();
+			Outgoing.Add(MoveTemp(Bytes));
+		}
+		SetEvent(WriteWake);
+		return true;
 #else
 		return false;
 #endif
@@ -163,9 +217,71 @@ public:
 	bool IsOpen() const { return bPipeOpen && !bClosed; }
 	bool IsClosed() const { return bClosed; }
 
+	// Seconds the current write has been waiting for the helper to read (0 when none is in progress).
+	double GetWriteWaitSeconds() const
+	{
+		const double Started = WriteStartedAt.load();
+		return Started > 0.0 ? FPlatformTime::Seconds() - Started : 0.0;
+	}
+
+	// Messages and bytes waiting to be written, and writes dropped because the queue was full (since the last call).
+	void GetWriteBacklog(int32& OutMessages, int64& OutBytes, int32& OutDropped)
+	{
+		FScopeLock Lock(&WriteLock);
+		OutMessages = Outgoing.Num();
+		OutBytes = QueuedBytes;
+		OutDropped = DroppedWrites;
+		DroppedWrites = 0;
+	}
+
 	TQueue<TTuple<uint16, TArray<uint8>>, EQueueMode::Spsc> Incoming;
 
 private:
+	static constexpr int64 MaxQueuedBytes = 64ll << 20;
+
+	bool HasPendingWrites()
+	{
+		FScopeLock Lock(&WriteLock);
+		return Outgoing.Num() > 0 || WriteStartedAt.load() > 0.0;
+	}
+
+	void RunWriter()
+	{
+#if PLATFORM_WINDOWS
+		TArray<TArray<uint8>> Batch;
+		while (!bStopping && !bClosed)
+		{
+			WaitForSingleObject(WriteWake, 1000);
+			if (!bPipeOpen)
+			{
+				continue;
+			}
+			{
+				FScopeLock Lock(&WriteLock);
+				Batch = MoveTemp(Outgoing);
+				Outgoing.Reset();
+				// Counted as pending until written.
+				if (Batch.Num() > 0) WriteStartedAt = FPlatformTime::Seconds();
+			}
+			for (TArray<uint8>& Bytes : Batch)
+			{
+				if (bStopping) break;
+				WriteStartedAt = FPlatformTime::Seconds();
+				if (!Transfer(true, Bytes.GetData(), Bytes.Num(), WriteEvent))
+				{
+					if (!bStopping) UE_LOG(LogTelescreen, Warning, TEXT("Host: pipe write failed"));
+					bClosed = true;
+					break;
+				}
+				FScopeLock Lock(&WriteLock);
+				QueuedBytes -= Bytes.Num();
+			}
+			WriteStartedAt = 0.0;
+			Batch.Reset();
+		}
+#endif
+	}
+
 #if PLATFORM_WINDOWS
 	bool Transfer(bool bWrite, void* Data, int32 Size, HANDLE Event)
 	{
@@ -188,10 +304,17 @@ private:
 	HANDLE Pipe = INVALID_HANDLE_VALUE;
 	HANDLE ReadEvent = nullptr;
 	HANDLE WriteEvent = nullptr;
+	HANDLE WriteWake = nullptr;
 #endif
 	FString PipeName;
 	FRunnableThread* Thread = nullptr;
+	FWriter Writer;
+	FRunnableThread* WriterThread = nullptr;
 	FCriticalSection WriteLock;
+	TArray<TArray<uint8>> Outgoing;
+	int64 QueuedBytes = 0;
+	int32 DroppedWrites = 0;
+	std::atomic<double> WriteStartedAt{0.0};
 	std::atomic<bool> bStopping{false};
 	std::atomic<bool> bPipeOpen{false};
 	std::atomic<bool> bClosed{false};
@@ -377,6 +500,18 @@ void UTSHostSubsystem::Tick(float DeltaTime)
 {
 	if (!Connection.IsValid())
 	{
+		LastTickAt = 0.0;
+		return;
+	}
+	const double Now = FPlatformTime::Seconds();
+	if (LastTickAt > 0.0 && Now - LastTickAt > LongFrameSeconds)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Host: the game didn't run for %.1f s (pipe write waiting %.1f s)"), Now - LastTickAt,
+			Connection->GetWriteWaitSeconds());
+	}
+	LastTickAt = Now;
+	if (!CheckWrites())
+	{
 		return;
 	}
 	TTuple<uint16, TArray<uint8>> Message;
@@ -418,6 +553,38 @@ void UTSHostSubsystem::Tick(float DeltaTime)
 	}
 }
 
+bool UTSHostSubsystem::CheckWrites()
+{
+	int32 Messages = 0, Dropped = 0;
+	int64 Bytes = 0;
+	Connection->GetWriteBacklog(Messages, Bytes, Dropped);
+	if (Dropped > 0)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Host: dropped %d message(s) for the helper; %d (%lld bytes) still waiting"), Dropped, Messages, Bytes);
+	}
+	const double Waiting = Connection->GetWriteWaitSeconds();
+	if (Waiting > WriteStallSeconds && !bWriteStallLogged)
+	{
+		UE_LOG(LogTelescreen, Warning, TEXT("Host: the helper hasn't read for %.1f s; %d message(s) (%lld bytes) waiting"), Waiting, Messages, Bytes);
+		bWriteStallLogged = true;
+	}
+	else if (Waiting == 0.0 && bWriteStallLogged)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("Host: the helper is reading again"));
+		bWriteStallLogged = false;
+	}
+	if (Waiting > HelperHangSeconds)
+	{
+		UE_LOG(LogTelescreen, Error, TEXT("Host: the helper hasn't read for %.1f s; restarting it"), Waiting);
+		LastProblem = LOCTEXT("HostHung", "Telescreen's player stopped responding; restarting.");
+		bHelloSent = false;
+		bWriteStallLogged = false;
+		StopHost(TEXT("helper stopped responding"));
+		return false;
+	}
+	return true;
+}
+
 void UTSHostSubsystem::Send(EMsg Type, const TArray<uint8>& Payload)
 {
 	if (!Connection.IsValid())
@@ -429,7 +596,8 @@ void UTSHostSubsystem::Send(EMsg Type, const TArray<uint8>& Payload)
 	const FMsgHeader Header{uint32(Payload.Num()), uint16(Type), 0};
 	Bytes.Append(reinterpret_cast<const uint8*>(&Header), sizeof(Header));
 	Bytes.Append(Payload);
-	if (!Connection->Write(Bytes))
+	// Messages dropped for a full queue are counted and reported by Tick.
+	if (!Connection->Write(MoveTemp(Bytes)) && !Connection->IsOpen())
 	{
 		UE_LOG(LogTelescreen, Warning, TEXT("Host: could not send message %u"), uint32(Type));
 	}

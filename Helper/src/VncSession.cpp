@@ -208,12 +208,24 @@ bool FVncSession::Send(const void* Data, size_t Size)
 {
 	if (Trace()) LOG_INFO("session %u: trace: client message %u (%zu bytes)", Params.SessionId, Size ? static_cast<const uint8_t*>(Data)[0] : 0, Size);
 	std::lock_guard<std::mutex> Lock(SendMutex);
-	if (Tls) return Tls->SendAll(static_cast<const uint8_t*>(Data), Size);
+	if (Tls)
+	{
+		if (Tls->SendAll(static_cast<const uint8_t*>(Data), Size)) return true;
+		LOG_WARN("session %u: sending to the VNC server failed (error %d)", Params.SessionId, WSAGetLastError());
+		// A partly sent message would corrupt the stream: the worker sees the connection end.
+		shutdown(SOCKET(Socket), SD_BOTH);
+		return false;
+	}
 	const char* In = static_cast<const char*>(Data);
 	while (Size > 0)
 	{
 		const int Sent = send(SOCKET(Socket), In, int(Size), 0);
-		if (Sent <= 0) return false;
+		if (Sent <= 0)
+		{
+			LOG_WARN("session %u: sending to the VNC server failed (error %d)", Params.SessionId, WSAGetLastError());
+			shutdown(SOCKET(Socket), SD_BOTH);
+			return false;
+		}
 		In += Sent;
 		Size -= size_t(Sent);
 	}
@@ -247,6 +259,9 @@ bool FVncSession::Connect(std::string& Error)
 		{
 			const BOOL NoDelay = TRUE;
 			setsockopt(S, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&NoDelay), sizeof(NoDelay));
+			// Input is sent from the pipe thread; a server that stops reading must not hold it up.
+			const DWORD SendTimeoutMs = 3000;
+			setsockopt(S, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&SendTimeoutMs), sizeof(SendTimeoutMs));
 			Socket = uintptr_t(S);
 			break;
 		}

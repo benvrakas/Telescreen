@@ -194,8 +194,12 @@ private:
 	void StopHost(const TCHAR* Reason);
 	void Dispatch(uint16 Type, const TArray<uint8>& Payload);
 	void Send(TSHostProtocol::EMsg Type, const TArray<uint8>& Payload);
+	// Logs a backed-up pipe and restarts a helper that stopped reading; false if it did.
+	bool CheckWrites();
 
 	TSharedPtr<FTSHostConnection> Connection;
+	double LastTickAt = 0.0;
+	bool bWriteStallLogged = false;
 	void* ProcessHandle = nullptr;
 	void* JobHandle = nullptr;
 	bool bConnected = false;

@@ -16,6 +16,14 @@ Every message is an `FMsgHeader` (payload size, type) followed by the payload. P
 `u8`, `u32`, `f64`, and `str` = `u32` byte length + UTF-8 bytes. Both ends use overlapped I/O, because synchronous
 handles serialize reads and writes on one pipe.
 
+The mod never waits on the helper on the game thread: it reads on one thread and writes on another, and `Send` only
+queues (up to 64 MB; anything beyond that is dropped and logged). The helper handles messages on one thread under one
+session lock, so anything slow there, such as a VNC server that stops reading input, holds up everything after it. With
+blocking writes, that wait froze the game. The mod logs a write that has waited 3 s, and when one has waited 30 s it
+treats the helper as hung and restarts it. It also logs a gap of more than 3 s between game frames, with how long the
+current pipe write has waited, so a freeze shows whether the helper was involved. VNC sockets have a 3 s send timeout;
+a send that fails closes the connection, because a partly sent message would corrupt the RFB stream.
+
 | Type | Direction | Payload |
 |---|---|---|
 | Hello | mod → host | u32 version |

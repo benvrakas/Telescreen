@@ -4,6 +4,9 @@
 
 First public release (everything from the betas below). Not yet tested in multiplayer.
 
+- The game no longer waits on Telescreen's player: messages to it are queued, a player that stops responding for 30 s
+  is restarted, and a remote desktop that stops accepting input is disconnected instead of holding everything up.
+
 - New mod icon; the mod page has screenshots.
 - **Videos folder**: each player sets theirs (Videos tab, Change folder; or Mods > Telescreen > Videos on this PC).
   A file someone else added plays from your copy: the same path, or a file with the same name anywhere in your videos

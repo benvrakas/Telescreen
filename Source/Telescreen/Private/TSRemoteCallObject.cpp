@@ -6,6 +6,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "Telescreen.h"
+#include "Host/TSHostProtocol.h"
 #include "Net/TSNetRate.h"
 #include "TSConfig.h"
 
