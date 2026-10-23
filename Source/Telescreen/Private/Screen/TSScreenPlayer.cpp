@@ -1127,24 +1127,33 @@ void UTSScreenPlayer::AdaptBitrate()
 	{
 		LastCongestion = Now;
 	}
-	if (Now < NextBitrateChange)
+	// The world host's measure of what the relayed connections carry, minus sound and overhead.
+	const ATSBuildableScreen* Screen = GetScreen();
+	const int32 RelayKbps = Screen ? Screen->GetStreamLimits().RelayKbps : 0;
+	const uint32 Ceiling = RelayKbps > 0 ? FMath::Min<uint32>(WantedKbps, uint32(FMath::Max(300, RelayKbps - int32(StreamOverheadKbps)))) : WantedKbps;
+	uint32 NewKbps = CurrentKbps;
+	if (CurrentKbps > Ceiling)
+	{
+		NewKbps = Ceiling;
+	}
+	else if (Now < NextBitrateChange)
 	{
 		return;
 	}
-	uint32 NewKbps = CurrentKbps;
-	if (Now - LastCongestion < 2.0)
+	else if (Now - LastCongestion < 2.0)
 	{
 		NewKbps = FMath::Max<uint32>(300, CurrentKbps * 7 / 10);
 	}
-	else if (Now - LastCongestion > 10.0 && CurrentKbps < WantedKbps)
+	else if (Now - LastCongestion > 10.0 && CurrentKbps < Ceiling)
 	{
-		NewKbps = FMath::Min<uint32>(WantedKbps, CurrentKbps * 11 / 10 + 50);
+		NewKbps = FMath::Min<uint32>(Ceiling, CurrentKbps * 11 / 10 + 50);
 	}
 	if (NewKbps == CurrentKbps)
 	{
 		return;
 	}
-	UE_LOG(LogTelescreen, Log, TEXT("%s: stream bitrate %u -> %u kbps (%.2f s queued)"), *GetNameSafe(GetOwner()), CurrentKbps, NewKbps, QueuedSeconds);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stream bitrate %u -> %u kbps (%.2f s queued, relay limit %d kbps)"), *GetNameSafe(GetOwner()), CurrentKbps, NewKbps,
+		QueuedSeconds, RelayKbps);
 	CurrentKbps = NewKbps;
 	Host->SendStreamControl(SenderSession, TSHostProtocol::EStreamControl::Bitrate, NewKbps);
 	NextBitrateChange = Now + 3.0;

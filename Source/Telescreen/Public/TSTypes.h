@@ -87,7 +87,14 @@ struct TELESCREEN_API FTSStreamLimits
 	UPROPERTY()
 	int32 MaxFps = 60;
 
-	bool operator==(const FTSStreamLimits& Other) const { return MaxKbps == Other.MaxKbps && MaxHeight == Other.MaxHeight && MaxFps == Other.MaxFps; }
+	// What the relayed viewers' connections carry right now, sound included (0: no congestion seen).
+	UPROPERTY()
+	int32 RelayKbps = 0;
+
+	bool operator==(const FTSStreamLimits& Other) const
+	{
+		return MaxKbps == Other.MaxKbps && MaxHeight == Other.MaxHeight && MaxFps == Other.MaxFps && RelayKbps == Other.RelayKbps;
+	}
 };
 
 // One input event from a viewer, relayed by the server to the controller. Positions are 0-65535 across the picture.

@@ -177,6 +177,30 @@ reachable or forwarded.
   area filter, keeping their shape (`FSenderParams::MaxHeight`); the send pace and the raised net rates follow the
   bitrate (`TSNetRate::RateFor`: at least 1.5 MB/s, otherwise twice the stream).
 
+### Stream congestion
+
+The sharer's queue check only sees its own PC. A listen server's player is a sender with no connection at all, and
+because `TSNetRate::Raise` lifts the engine's rate limits, the engine never reports the link as saturated. Steam's
+relay then buffers whatever doesn't fit. In the first two-player test (Steam relay, 2500 kbps HEVC), latency grew by
+seconds. Most video chunks were lost, so the viewer's picture only moved when a pause let a keyframe through whole.
+The game's own reliable traffic queued behind the video until the engine closed the viewer's connection
+(`RPCReliableBufferOverflow`).
+
+So the world host measures every relayed connection (`ATSBuildableScreen::Server_UpdateRelayCongestion`, every
+0.5 s while chunks arrive). It looks at each watcher it relays to, and at the sender if the sender is a remote
+client. A connection counts as congested when:
+- its lag (`AvgLag`) is 150 ms above the lowest lag seen recently (that baseline drifts up 2 ms per check, so a lasting
+  change of route becomes the new normal);
+- its outgoing packet loss averages above 5%;
+- or a chunk had to be skipped for it because its connection was backed up (`IsNetReady`).
+
+On congestion, the relay limit (`FTSStreamLimits::RelayKbps`, replicated) drops to 70% of what was actually relayed,
+at most once a second, but never below 300 kbps. After 8 s without congestion it climbs 10% (+50 kbps) every 2 s and
+clears once it passes the world's limit. It also clears after 10 s without chunks. The sharer's player encodes at no
+more than `RelayKbps` minus 200 kbps, and goes down at once when the limit drops. The server's token bucket follows
+`RelayKbps` × 1.25, so the link stays protected while the sharer catches up. Forced keyframes are limited to one a
+second per screen, because each lost packet asks for one and keyframes are the largest packets.
+
 The helper's sender seeds itself with the browser's current frame when it opens (`FrameTaps::SetRefresh`), so a
 viewer joining an unchanging page sees it at once; unchanged pages are re-encoded once per frame interval and get a
 keyframe at least every 4 s.

@@ -11,6 +11,7 @@ class UStaticMeshComponent;
 class UTexture;
 class UTSScreenPlayer;
 class APlayerState;
+class UNetConnection;
 
 // Server-side media queue commands (see ATSBuildableScreen::ApplyMediaCommand).
 UENUM()
@@ -152,6 +153,10 @@ public:
 
 	// Server only: true if Bytes more stream data fit the stream's rate limit right now.
 	bool Server_AllowStreamBytes(int32 Bytes);
+	// Server, for each relayed stream chunk: false when Viewer's connection is backed up (the chunk is skipped for them).
+	bool Server_CanRelayTo(const APlayerController* Viewer);
+	// Server, after relaying a chunk from Sender: measures the relayed connections and lowers or raises RelayKbps.
+	void Server_UpdateRelayCongestion(const APlayerController* Sender);
 
 	// Server only: true at most four times a second, so viewers can't flood the controller with keyframe requests.
 	bool Server_AllowKeyframeRequest();
@@ -314,6 +319,16 @@ protected:
 	double mStreamBudget = 0.0;
 	double mStreamBudgetAt = 0.0;
 	double mLastKeyframeRequest = 0.0;
+	// Relay congestion (server): see Docs/Architecture.md, "Stream congestion".
+	int32 mRelayKbps = 0;
+	int32 mRelayDrops = 0;
+	int64 mRelayBytes = 0;
+	double mRelayWindowAt = 0.0;
+	double mNextRelayCheck = 0.0;
+	double mLastRelayChunkAt = 0.0;
+	double mLastRelayCongestion = 0.0;
+	double mLastRelayChange = 0.0;
+	TMap<TWeakObjectPtr<UNetConnection>, float> mRelayBaseLag;
 
 	FTimerHandle mAdvanceTimer;
 	FTimerHandle mControllerCheckTimer;

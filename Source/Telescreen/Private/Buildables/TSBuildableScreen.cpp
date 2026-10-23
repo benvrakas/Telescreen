@@ -1,6 +1,7 @@
 #include "Buildables/TSBuildableScreen.h"
 #include "Components/StaticMeshComponent.h"
 #include "Content/TSAssetPaths.h"
+#include "Engine/NetConnection.h"
 #include "Engine/StaticMesh.h"
 #include "FGCharacterPlayer.h"
 #include "FGColoredInstanceMeshProxy.h"
@@ -31,6 +32,19 @@ namespace
 	const FName ScreenTextureParam(TEXT("SlateUI"));
 	constexpr int32 MaxQueueLength = 100;
 	constexpr double AdvanceGraceSeconds = 1.0;
+	// Relay congestion control (Docs/Architecture.md, "Stream congestion").
+	constexpr double RelayCheckSeconds = 0.5;
+	constexpr float RelayLagRiseSeconds = 0.15f;
+	constexpr float RelayBaseLagDrift = 0.002f;
+	constexpr float RelayMaxLoss = 0.05f;
+	constexpr int32 RelayMinKbps = 300;
+	constexpr double RelayCutSeconds = 1.0;
+	constexpr double RelayCalmSeconds = 8.0;
+	constexpr double RelayRaiseSeconds = 2.0;
+	constexpr double RelayResetSeconds = 10.0;
+	constexpr double RelayBudgetHeadroom = 1.25;
+	// Keyframes are large: at most one forced keyframe a second, however many viewers lose packets.
+	constexpr double KeyframeRequestGapSeconds = 1.0;
 }
 
 ATSBuildableScreen::ATSBuildableScreen()
@@ -672,7 +686,7 @@ bool ATSBuildableScreen::Server_AllowViewerInput(const APlayerState* Viewer)
 bool ATSBuildableScreen::Server_AllowKeyframeRequest()
 {
 	const double Now = FPlatformTime::Seconds();
-	if (Now - mLastKeyframeRequest < 0.25)
+	if (Now - mLastKeyframeRequest < KeyframeRequestGapSeconds)
 	{
 		return false;
 	}
@@ -687,9 +701,25 @@ FVector ATSBuildableScreen::GetScreenCenter() const
 
 bool ATSBuildableScreen::Server_AllowStreamBytes(int32 Bytes)
 {
-	const double KbpsCap = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamKbpsKey, 8000), 500, 100000);
+	double KbpsCap = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamKbpsKey, 8000), 500, 100000);
+	if (mRelayKbps > 0)
+	{
+		KbpsCap = FMath::Min(KbpsCap, mRelayKbps * RelayBudgetHeadroom);
+	}
 	const double BytesPerSecond = KbpsCap * 125.0;
 	const double Now = FPlatformTime::Seconds();
+	if (mRelayKbps > 0 && mLastRelayChunkAt > 0.0 && Now - mLastRelayChunkAt > RelayResetSeconds)
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: stream relay idle; congestion limit %d kbps cleared"), *GetName(), mRelayKbps);
+		mRelayKbps = 0;
+		mRelayBaseLag.Reset();
+		if (RefreshStreamLimits())
+		{
+			FlushNetDormancy();
+			ForceNetUpdate();
+		}
+	}
+	mLastRelayChunkAt = Now;
 	mStreamBudget = FMath::Min(BytesPerSecond * 0.5, mStreamBudget + (Now - mStreamBudgetAt) * BytesPerSecond);
 	mStreamBudgetAt = Now;
 	if (mStreamBudget < Bytes)
@@ -697,7 +727,112 @@ bool ATSBuildableScreen::Server_AllowStreamBytes(int32 Bytes)
 		return false;
 	}
 	mStreamBudget -= Bytes;
+	mRelayBytes += Bytes;
 	return true;
+}
+
+bool ATSBuildableScreen::Server_CanRelayTo(const APlayerController* Viewer)
+{
+	const UNetConnection* Connection = Viewer ? Viewer->GetNetConnection() : nullptr;
+	if (Connection && !Connection->IsNetReady())
+	{
+		++mRelayDrops;
+		return false;
+	}
+	return true;
+}
+
+void ATSBuildableScreen::Server_UpdateRelayCongestion(const APlayerController* Sender)
+{
+	const double Now = FPlatformTime::Seconds();
+	if (mRelayWindowAt == 0.0)
+	{
+		mRelayWindowAt = Now;
+	}
+	if (Now < mNextRelayCheck)
+	{
+		return;
+	}
+	mNextRelayCheck = Now + RelayCheckSeconds;
+	const double Window = FMath::Max(0.1, Now - mRelayWindowAt);
+	const int32 MeasuredKbps = int32(mRelayBytes * 8.0 / 1000.0 / Window);
+	FString Why;
+	if (mRelayDrops > 0)
+	{
+		Why = FString::Printf(TEXT("%d chunk(s) skipped"), mRelayDrops);
+	}
+	mRelayBytes = 0;
+	mRelayDrops = 0;
+	mRelayWindowAt = Now;
+
+	for (auto It = mRelayBaseLag.CreateIterator(); It; ++It)
+	{
+		if (!It->Key.IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	auto Measure = [this, &Why](const APlayerController* Player)
+	{
+		const UNetConnection* Connection = Player && !Player->IsLocalController() ? Player->GetNetConnection() : nullptr;
+		if (!Connection || Connection->AvgLag <= 0.0f)
+		{
+			return;
+		}
+		// Lowest lag seen recently: slowly forgets, so a lasting change of route becomes the new normal.
+		float& Base = mRelayBaseLag.FindOrAdd(const_cast<UNetConnection*>(Connection), Connection->AvgLag);
+		Base = FMath::Min(Base + RelayBaseLagDrift, Connection->AvgLag);
+		const float Loss = Connection->GetOutLossPercentage().GetAvgLossPercentage();
+		if (Why.IsEmpty() && Connection->AvgLag > Base + RelayLagRiseSeconds)
+		{
+			Why = FString::Printf(TEXT("%s's lag %.0f ms (usually %.0f ms)"), Player->PlayerState ? *Player->PlayerState->GetPlayerName() : TEXT("a player"),
+				Connection->AvgLag * 1000.0f, Base * 1000.0f);
+		}
+		else if (Why.IsEmpty() && Loss > RelayMaxLoss)
+		{
+			Why = FString::Printf(TEXT("%.0f%% packet loss to %s"), Loss * 100.0f, Player->PlayerState ? *Player->PlayerState->GetPlayerName() : TEXT("a player"));
+		}
+	};
+	for (const TWeakObjectPtr<APlayerController>& Watcher : mWatchers)
+	{
+		if (Watcher.IsValid() && !IsDirectWatcher(Watcher.Get()))
+		{
+			Measure(Watcher.Get());
+		}
+	}
+	Measure(Sender);
+
+	int32 NewKbps = mRelayKbps;
+	if (!Why.IsEmpty())
+	{
+		mLastRelayCongestion = Now;
+		if (Now - mLastRelayChange > RelayCutSeconds)
+		{
+			const int32 From = mRelayKbps > 0 ? FMath::Min(mRelayKbps, FMath::Max(MeasuredKbps, RelayMinKbps)) : FMath::Max(MeasuredKbps, RelayMinKbps);
+			NewKbps = FMath::Max(RelayMinKbps, From * 7 / 10);
+		}
+	}
+	else if (mRelayKbps > 0 && Now - mLastRelayCongestion > RelayCalmSeconds && Now - mLastRelayChange > RelayRaiseSeconds)
+	{
+		NewKbps = mRelayKbps * 11 / 10 + 50;
+		if (NewKbps >= mStreamLimits.MaxKbps)
+		{
+			NewKbps = 0;
+		}
+		Why = TEXT("no congestion");
+	}
+	if (NewKbps == mRelayKbps)
+	{
+		return;
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stream relay limit %d -> %d kbps (measured %d kbps; %s)"), *GetName(), mRelayKbps, NewKbps, MeasuredKbps, *Why);
+	mRelayKbps = NewKbps;
+	mLastRelayChange = Now;
+	if (RefreshStreamLimits())
+	{
+		FlushNetDormancy();
+		ForceNetUpdate();
+	}
 }
 
 bool ATSBuildableScreen::RefreshStreamLimits()
@@ -706,12 +841,14 @@ bool ATSBuildableScreen::RefreshStreamLimits()
 	Limits.MaxKbps = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamKbpsKey, 8000), 500, 100000);
 	Limits.MaxHeight = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamHeightKey, 1080), 240, 2160);
 	Limits.MaxFps = FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxStreamFpsKey, 60), 10, 60);
+	Limits.RelayKbps = mRelayKbps;
 	if (Limits == mStreamLimits)
 	{
 		return false;
 	}
 	mStreamLimits = Limits;
-	UE_LOG(LogTelescreen, Log, TEXT("%s: stream limits %d kbps, %d lines, %d fps"), *GetName(), Limits.MaxKbps, Limits.MaxHeight, Limits.MaxFps);
+	UE_LOG(LogTelescreen, Log, TEXT("%s: stream limits %d kbps, %d lines, %d fps, relay %d kbps"), *GetName(), Limits.MaxKbps, Limits.MaxHeight, Limits.MaxFps,
+		Limits.RelayKbps);
 	return true;
 }
 

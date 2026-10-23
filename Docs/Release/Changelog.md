@@ -6,6 +6,10 @@ First public release (everything from the betas below). Not yet tested in multip
 
 - The game no longer waits on Telescreen's player: messages to it are queued, a player that stops responding for 30 s
   is restarted, and a remote desktop that stops accepting input is disconnected instead of holding everything up.
+- Streams adapt to the viewers' connections: the world host watches each relayed player's lag and packet loss and
+  lowers the stream's bitrate when the link backs up, then raises it again. Before, a stream bigger than the link
+  froze the viewer's picture and could get them disconnected from the world.
+- The notice for a viewer-control request the world doesn't allow names the setting that allows it.
 
 - New mod icon; the mod page has screenshots.
 - **Videos folder**: each player sets theirs (Videos tab, Change folder; or Mods > Telescreen > Videos on this PC).

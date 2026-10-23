@@ -384,12 +384,14 @@ void UTSRemoteCallObject::Server_StreamChunk_Implementation(ATSBuildableScreen* 
 		}
 		else if (AFGPlayerController* Remote = Cast<AFGPlayerController>(Watcher.Get()))
 		{
-			if (UTSRemoteCallObject* RCO = Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>())
+			UTSRemoteCallObject* RCO = Remote->GetRemoteCallObjectOfClass<UTSRemoteCallObject>();
+			if (RCO && Screen->Server_CanRelayTo(Remote))
 			{
 				RCO->Client_StreamChunk(Screen, Chunk);
 			}
 		}
 	}
+	Screen->Server_UpdateRelayCongestion(Sender);
 }
 
 void UTSRemoteCallObject::Client_StreamChunk_Implementation(ATSBuildableScreen* Screen, const FTSStreamChunk& Chunk)
@@ -593,7 +595,11 @@ void UTSRemoteCallObject::Server_SetInputGrant_Implementation(ATSBuildableScreen
 	}
 	if (Scope != ETSInputScope::None && Screen->GetMaxGrantScope() == ETSInputScope::None)
 	{
-		Client_Notice(TEXT("The world host doesn't let viewers control this kind of screen."));
+		const TCHAR* Kind = Screen->GetMode() == ETSScreenMode::RemoteDesktop ? TEXT("remote desktop") : Screen->GetMode() == ETSScreenMode::Window ? TEXT("shared window")
+																															 : TEXT("browser");
+		Client_Notice(FString::Printf(TEXT("The world host doesn't let viewers control this kind of screen. The world host can allow it in Mods > Telescreen > ")
+									  TEXT("Rules for this world > \"Most control a viewer can get: %s\"."),
+			Kind));
 		return;
 	}
 	Screen->Server_SetGrant(Viewer, Scope, Minutes);
