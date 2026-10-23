@@ -27,9 +27,12 @@ namespace
 	constexpr int64_t AudioAheadFrames = OutSampleRate * 3 / 10;       // write at most 0.3 s ahead of the reader
 	constexpr size_t MaxQueuedFrames = 5;
 	constexpr size_t MaxQueuedPacketBytes = 16u << 20;
-	constexpr double SeekThreshold = 1.5;
+	// Drift beyond this (an audio stall in a lag spike, often 0.3 s) is fixed with one seek, a short skip, rather than
+	// by changing the audio's speed for a long time.
+	constexpr double SeekThreshold = 0.2;
 	constexpr double DriftTolerance = 0.04;
-	constexpr double MaxCompensation = 0.05;
+	// Speed change for smaller drift: 0.4% (about 7 cents) is below what people hear as a pitch change.
+	constexpr double MaxCompensation = 0.004;
 	constexpr double ConsumerIdleSeconds = 1.0;
 
 	std::string AvError(int Code)
@@ -289,6 +292,9 @@ void FMediaSession::Close()
 	avcodec_free_context(&VideoCodec);
 	avcodec_free_context(&AudioCodec);
 	avcodec_free_context(&SubtitleCodec);
+	sws_freeContext(PictureScaler);
+	PictureScaler = nullptr;
+	if (PictureCount > 0) LOG_INFO("session %u: %d picture subtitles, drawn into %d frames", Params.SessionId, PictureCount, PictureFrames);
 	sws_freeContext(Sws);
 	Sws = nullptr;
 	swr_free(&Swr);
@@ -299,6 +305,10 @@ void FMediaSession::RequestSeek(double Target)
 	Target = std::max(0.0, Duration > 0.0 ? std::min(Target, Duration - 0.5) : Target);
 	SeekTarget = Target;
 	const uint32_t Generation = ++SeekGeneration;
+	{
+		std::lock_guard<std::mutex> PictureLock(PictureMutex);
+		PictureCues.clear();
+	}
 	{
 		std::lock_guard<std::mutex> Lock(FrameMutex);
 		for (FVideoFrame& Frame : Frames) FramePool.push_back(std::move(Frame.Bgra));
@@ -619,13 +629,15 @@ void FMediaSession::FindSubtitleTracks(const FResolvedMedia* Resolved)
 		{
 			const AVStream* Stream = Format->streams[I];
 			const AVCodecDescriptor* Descriptor = avcodec_descriptor_get(Stream->codecpar->codec_id);
-			if (Stream->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE || !Descriptor || !(Descriptor->props & AV_CODEC_PROP_TEXT_SUB)) continue;
+			if (Stream->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE || !Descriptor || !(Descriptor->props & (AV_CODEC_PROP_TEXT_SUB | AV_CODEC_PROP_BITMAP_SUB))) continue;
+			const bool bPicture = (Descriptor->props & AV_CODEC_PROP_BITMAP_SUB) != 0;
 			const AVDictionaryEntry* Language = av_dict_get(Stream->metadata, "language", nullptr, 0);
 			const AVDictionaryEntry* Name = av_dict_get(Stream->metadata, "title", nullptr, 0);
 			FSubtitleTrack Track;
 			Track.Id = uint32_t(Tracks.size() + 1);
-			Track.Kind = ESubtitleKind::Embedded;
+			Track.Kind = bPicture ? ESubtitleKind::Picture : ESubtitleKind::Embedded;
 			Track.Stream = int(I);
+			Track.Format = Descriptor->name;
 			Track.Language = Language ? Language->value : "";
 			Track.Label = Name ? Name->value : (Language ? Language->value : "Track " + std::to_string(Tracks.size() + 1));
 			Tracks.push_back(std::move(Track));
@@ -657,11 +669,18 @@ void FMediaSession::HandleCommand(ECommand Command, FPayloadReader& Reader)
 	}
 	const uint32_t Request = ++SubtitleRequest;
 	SelectedSubtitleTrack = bFound ? Id : 0;
-	SelectedSubtitleStream = bFound && Track.Kind == ESubtitleKind::Embedded ? Track.Stream : -1;
-	if (Events.OnSubtitleCues) Events.OnSubtitleCues(Params.SessionId, bFound ? Id : 0, true, {});
-	if (!bFound)
+	const bool bEmbedded = bFound && (Track.Kind == ESubtitleKind::Embedded || Track.Kind == ESubtitleKind::Picture);
+	SelectedSubtitleStream = bEmbedded ? Track.Stream : -1;
+	bPictureTrack = bFound && Track.Kind == ESubtitleKind::Picture;
+	if (bPictureTrack) PictureSeekPending = true;
 	{
-		LOG_INFO("session %u: subtitles off", Params.SessionId);
+		std::lock_guard<std::mutex> PictureLock(PictureMutex);
+		PictureCues.clear();
+	}
+	if (Events.OnSubtitleCues) Events.OnSubtitleCues(Params.SessionId, bFound ? Id : 0, true, {});
+	if (!bFound || Track.Kind == ESubtitleKind::Picture)
+	{
+		LOG_INFO("session %u: subtitles %s", Params.SessionId, bFound ? ("picture stream " + std::to_string(Track.Stream)).c_str() : "off");
 		return;
 	}
 	if (SubtitleLoader.joinable()) SubtitleLoader.join();
@@ -752,6 +771,98 @@ bool FMediaSession::DecodeSubtitle(AVCodecContext* Codec, AVStream* Stream, doub
 	return true;
 }
 
+void FMediaSession::DecodePictureSubtitle(FInput* Input, AVStream* Stream, AVPacket* Packet)
+{
+	AVSubtitle Sub{};
+	int Got = 0;
+	if (avcodec_decode_subtitle2(SubtitleCodec, &Sub, &Got, Packet) < 0 || !Got) return;
+	const int64_t Pts = Packet->pts != AV_NOPTS_VALUE ? Packet->pts : Packet->dts;
+	const int64_t At = Pts == AV_NOPTS_VALUE ? 0 : int64_t((Pts * av_q2d(Stream->time_base) - Input->StartOffset) * 1000.0) + int64_t(Sub.start_display_time);
+	std::lock_guard<std::mutex> Lock(PictureMutex);
+	// A picture subtitle without rectangles clears the one showing (PGS ends lines this way).
+	for (FPictureCue& Cue : PictureCues)
+	{
+		if (Cue.StartMs < At && Cue.EndMs > At) Cue.EndMs = At;
+	}
+	if (OutWidth == 0 || OutHeight == 0)
+	{
+		avsubtitle_free(&Sub);
+		return;
+	}
+	const int CanvasWidth = SubtitleCodec->width > 0 ? SubtitleCodec->width : 1920, CanvasHeight = SubtitleCodec->height > 0 ? SubtitleCodec->height : 1080;
+	const double ScaleX = double(OutWidth) / CanvasWidth, ScaleY = double(OutHeight) / CanvasHeight;
+	const int64_t End = Sub.end_display_time > 0 && Sub.end_display_time != UINT32_MAX ? At - int64_t(Sub.start_display_time) + int64_t(Sub.end_display_time) : At + 600000;
+	for (unsigned I = 0; I < Sub.num_rects; ++I)
+	{
+		const AVSubtitleRect* Rect = Sub.rects[I];
+		if (Rect->type != SUBTITLE_BITMAP || Rect->w <= 0 || Rect->h <= 0 || !Rect->data[0] || !Rect->data[1]) continue;
+		// Palette indices -> straight-alpha BGRA (FFmpeg's palette entries are 0xAARRGGBB).
+		std::vector<uint8_t> Source(size_t(Rect->w) * Rect->h * 4);
+		const uint32_t* Palette = reinterpret_cast<const uint32_t*>(Rect->data[1]);
+		for (int Y = 0; Y < Rect->h; ++Y)
+		{
+			const uint8_t* Row = Rect->data[0] + size_t(Y) * Rect->linesize[0];
+			uint8_t* Out = Source.data() + size_t(Y) * Rect->w * 4;
+			for (int X = 0; X < Rect->w; ++X)
+			{
+				const uint32_t Color = Palette[Row[X] & 0xFF];
+				Out[X * 4 + 0] = uint8_t(Color);
+				Out[X * 4 + 1] = uint8_t(Color >> 8);
+				Out[X * 4 + 2] = uint8_t(Color >> 16);
+				Out[X * 4 + 3] = uint8_t(Color >> 24);
+			}
+		}
+		FPictureCue Cue;
+		Cue.StartMs = At;
+		Cue.EndMs = End;
+		Cue.X = int(Rect->x * ScaleX);
+		Cue.Y = int(Rect->y * ScaleY);
+		Cue.Width = std::max(1, int(Rect->w * ScaleX));
+		Cue.Height = std::max(1, int(Rect->h * ScaleY));
+		Cue.Bgra.resize(size_t(Cue.Width) * Cue.Height * 4);
+		PictureScaler = sws_getCachedContext(PictureScaler, Rect->w, Rect->h, AV_PIX_FMT_BGRA, Cue.Width, Cue.Height, AV_PIX_FMT_BGRA, SWS_BICUBIC, nullptr, nullptr,
+			nullptr);
+		if (!PictureScaler) continue;
+		const uint8_t* SrcPlanes[1] = {Source.data()};
+		const int SrcStride[1] = {Rect->w * 4};
+		uint8_t* DstPlanes[1] = {Cue.Bgra.data()};
+		const int DstStride[1] = {Cue.Width * 4};
+		sws_scale(PictureScaler, SrcPlanes, SrcStride, 0, Rect->h, DstPlanes, DstStride);
+		if (++PictureCount <= 3) LOG_INFO("session %u: picture subtitle at %lld ms, %dx%d at %d,%d", Params.SessionId, (long long)Cue.StartMs, Cue.Width, Cue.Height, Cue.X, Cue.Y);
+		PictureCues.push_back(std::move(Cue));
+	}
+	while (PictureCues.size() > 64) PictureCues.pop_front();
+	avsubtitle_free(&Sub);
+}
+
+void FMediaSession::BlendPictureSubtitles(uint8_t* Bgra, int Width, int Height, double Pts)
+{
+	if (!bPictureTrack) return;
+	const int64_t Now = int64_t(Pts * 1000.0);
+	std::lock_guard<std::mutex> Lock(PictureMutex);
+	while (!PictureCues.empty() && PictureCues.front().EndMs < Now - 5000) PictureCues.pop_front();
+	for (const FPictureCue& Cue : PictureCues)
+	{
+		if (Cue.StartMs > Now || Cue.EndMs <= Now) continue;
+		++PictureFrames;
+		for (int Y = 0; Y < Cue.Height; ++Y)
+		{
+			const int OutY = Cue.Y + Y;
+			if (OutY < 0 || OutY >= Height) continue;
+			const uint8_t* Src = Cue.Bgra.data() + size_t(Y) * Cue.Width * 4;
+			uint8_t* Dst = Bgra + size_t(OutY) * Width * 4;
+			for (int X = 0; X < Cue.Width; ++X)
+			{
+				const int OutX = Cue.X + X;
+				const uint32_t Alpha = Src[X * 4 + 3];
+				if (OutX < 0 || OutX >= Width || Alpha == 0) continue;
+				uint8_t* P = Dst + size_t(OutX) * 4;
+				for (int C = 0; C < 3; ++C) P[C] = uint8_t((Src[X * 4 + C] * Alpha + P[C] * (255 - Alpha) + 127) / 255);
+			}
+		}
+	}
+}
+
 void FMediaSession::DecodeSubtitlePacket(FInput* Input, AVPacket* Packet)
 {
 	AVStream* Stream = Input->Format->streams[Packet->stream_index];
@@ -770,6 +881,11 @@ void FMediaSession::DecodeSubtitlePacket(FInput* Input, AVPacket* Packet)
 		if (!SubtitleCodec) LOG_WARN("session %u: no decoder for subtitle stream %d", Params.SessionId, Packet->stream_index);
 	}
 	if (!SubtitleCodec) return;
+	if (bPictureTrack)
+	{
+		DecodePictureSubtitle(Input, Stream, Packet);
+		return;
+	}
 	FSubtitleCue Cue;
 	if (DecodeSubtitle(SubtitleCodec, Stream, Input->StartOffset, Packet, Cue) && Events.OnSubtitleCues)
 	{
@@ -885,6 +1001,10 @@ void FMediaSession::ControlSync(double Now, double Clock)
 	{
 		// Each compensation spans one second of output, so it is re-armed every second while the drift lasts.
 		const int32_t Delta = int32_t(Correction * OutSampleRate);
+		if ((Delta != 0) != (CompensationDelta.load() != 0))
+		{
+			LOG_INFO("session %u: %s (drift %.3f s)", Params.SessionId, Delta != 0 ? "correcting the audio speed" : "back in sync", Drift);
+		}
 		if (Delta != CompensationDelta.load() || (Delta != 0 && Now >= NextCompensation))
 		{
 			CompensationDelta = Delta;
@@ -946,8 +1066,7 @@ void FMediaSession::PublishDueFrames(double Clock)
 
 	if (Frame.Bgra.size() == size_t(Width) * Height * 4 && EnsureVideoWriter(Width, Height))
 	{
-		VideoWriter->Publish(Frame.Bgra.data(), Frame.Pts);
-		++FramesPublished;
+		// Streams to other players get the picture without this player's picture subtitles.
 		if (FrameTaps::Has(Params.SessionId))
 		{
 			FrameTaps::Publish(Params.SessionId, Frame.Bgra.data(), int(Width), int(Height));
@@ -956,6 +1075,9 @@ void FMediaSession::PublishDueFrames(double Clock)
 			TapWidth = int(Width);
 			TapHeight = int(Height);
 		}
+		BlendPictureSubtitles(Frame.Bgra.data(), int(Width), int(Height), Frame.Pts);
+		VideoWriter->Publish(Frame.Bgra.data(), Frame.Pts);
+		++FramesPublished;
 	}
 	Lock.lock();
 	FramePool.push_back(std::move(Frame.Bgra));
@@ -997,6 +1119,12 @@ void FMediaSession::PresentLoop()
 		{
 			NextSyncCheck = Now + 0.25;
 			ControlSync(Now, Clock);
+		}
+		if (PictureSeekPending && !Holding && !IsLive && !Paused)
+		{
+			PictureSeekPending = false;
+			LOG_INFO("session %u: re-reading from %.2f for the picture subtitles", Params.SessionId, Clock);
+			RequestSeek(Clock);
 		}
 
 		auto Drained = [](FPacketQueue& Queue)

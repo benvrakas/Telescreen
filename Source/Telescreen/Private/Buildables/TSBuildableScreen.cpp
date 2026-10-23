@@ -903,6 +903,18 @@ void ATSBuildableScreen::Server_SetScreenSettings(const FString& Name, ETSAspect
 	OnScreenChanged.Broadcast();
 }
 
+void ATSBuildableScreen::Server_SetCurrentDuration(const FString& Url, float Seconds)
+{
+	FTSMediaItem* Current = mMediaState.Queue.IsValidIndex(mMediaState.CurrentIndex) ? &mMediaState.Queue[mMediaState.CurrentIndex] : nullptr;
+	if (!HasAuthority() || !Current || Current->Url != Url || Current->Duration > 0.f || Current->bIsLive)
+	{
+		return;
+	}
+	Current->Duration = Seconds;
+	UE_LOG(LogTelescreen, Log, TEXT("%s: \"%s\" is %.0f s long"), *GetName(), *Current->GetDisplayTitle(), Seconds);
+	CommitMediaState();
+}
+
 void ATSBuildableScreen::Server_SetScreenVolume(float Volume)
 {
 	if (!HasAuthority())

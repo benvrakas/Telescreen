@@ -24,6 +24,13 @@ First public release (everything from the betas below). Not yet tested in multip
 - **Control log** in the sharing card (for the sharer and the world host): who got control, for how long, when it
   ran out or was taken back. Giving a viewer control of a remote computer is confirmed every time.
 - A warning that VNC's password login only uses the first 8 characters.
+- **Picture subtitles** (Blu-ray PGS, DVD) inside video files, drawn into the picture on the screen.
+- **`/ts list`** and **`/ts stop <number|all>`** chat commands (also `/telescreen`), like BoomBoxPlus's `/bbp`.
+- Sharper text on screens (status and subtitles use the UI font at full size, the status picture is twice as large).
+- Fix: after a lag spike (an autosave) a video's sound could play noticeably off-pitch until pause and play: keeping it
+  in sync changed the audio's speed by up to 5%. Now at most 0.4% (inaudible); bigger drift (an autosave stalls the game's audio for about 0.3 s) skips to the right spot.
+- Fix: video files had no seek bar (and didn't move on to the next one by themselves): their length now comes from the
+  first player who plays them.
 - Fix: long links and file paths were cut short by the game's text field (about 80 characters), so long local file
   paths couldn't be found. Text fields now take up to 2048 characters.
 

@@ -31,8 +31,8 @@ player. If you play it with friends, please tell me how it went, with your logs 
   file name in their videos folder even when it's somewhere else on their PC. Players who don't have it, or whose PC
   can't play a link, watch it streamed from a player who plays it.
 - **Subtitles** on the screen, on your HUD, both or off (your choice, on your PC): a site's subtitles and YouTube's
-  automatic captions, text tracks inside video files, or a .srt / .vtt file next to a video. Pick the track in the
-  Videos tab; your preferred language is picked first.
+  automatic captions, text and Blu-ray/DVD picture tracks inside video files, or a .srt / .vtt file next to a video.
+  Pick the track (and language) in the Videos tab; your preferred language is picked first.
 - **Shared built-in browser**: use it in a window with mouse and keyboard (web games that lock the mouse work).
   Everyone near the screen sees and hears it, streamed through the game's own connection (no ports to open), or
   over a direct connection if you turn those on.
@@ -48,6 +48,9 @@ player. If you play it with friends, please tell me how it went, with your logs 
 - **Sound through the game's audio engine**, like the game's own sounds: rooms, reverb and the game's volume sliders
   apply. Works alongside BoomBoxPlus. Each screen has a volume for everyone and your own **My volume**.
 - **Picture-in-picture** of any screen on your HUD, with sound that follows you. **F9** lists every screen.
+- **Chat commands:** `/ts list` shows every screen, what it plays or shares, who uses it and how far away it is;
+  `/ts stop <number|all>` ends its sharing and stops its video (the world host, admins and the server console; players
+  can stop what they share themselves).
 - **Stream quality settings**: resolution, bitrate, frame rate and encoder (AV1, HEVC or H.264 on your graphics card,
   or AV1 in software), within the world host's limits.
 - **Direct connections** (optional): live streams go straight between the sharing player's PC and each viewer's,
@@ -113,8 +116,8 @@ player. If you play it with friends, please tell me how it went, with your logs 
   may need an update (a mod update).
 - Clicking the 3D screen directly isn't supported: use its panel and window.
 - Not yet tested with more than one player (see above).
-- Subtitles: picture-based tracks (Blu-ray PGS, DVD) aren't supported, only text; a player watching a video streamed
-  from another player gets no subtitles.
+- Subtitles: picture tracks (Blu-ray PGS, DVD) show on the screen only, not on the HUD; a player watching a video
+  streamed from another player gets no subtitles.
 - Remote desktops: anonymous TLS (TigerVNC's default `TLSVnc`) isn't supported, only TLS with a certificate.
 - The browser's process sandbox is off. RDP isn't supported yet (VNC is).
 
@@ -137,11 +140,6 @@ Telescreen bundles, unmodified:
 
 Each component's licence and source notes are in the mod's `Resources/Runtime/<component>/` folders.
 
-## Network use and privacy
-
-Telescreen connects only to the video sites, web pages and VNC servers players choose, plus the browser's search
-engine; see the network activity section for the full list. Everything between players goes through the game's own
-connection, unless you turn on direct connections (off by default). No telemetry or analytics.
 
 # NETWORK ACTIVITY TRANSPARENCY
 

@@ -21,6 +21,8 @@ enum class ESubtitleKind : uint8_t
 	Embedded = 2,
 	// A .srt or .vtt file next to a video file.
 	File = 3,
+	// A picture subtitle stream inside a video file (Blu-ray PGS, DVD): drawn into the picture by the helper.
+	Picture = 4,
 };
 
 struct FSubtitleTrack

@@ -206,9 +206,15 @@ void UTSScreenPanel::RebuildSubtitles()
 	{
 		SubtitleTracksBox->AddChildToWrapBox(MakeText(LOCTEXT("SubtitlesPickMode", "Pick where to show them; then a track:"), 12, Muted));
 	}
+	else if (Mode == 2 && Player->GetSubtitleTracks().ContainsByPredicate([](const FTSSubtitleTrack& Track) { return Track.Kind == 4; }))
+	{
+		SubtitleTracksBox->AddChildToWrapBox(MakeText(LOCTEXT("SubtitlesPictureHud", "Picture tracks show on the screen only:"), 12, Muted));
+	}
 	for (const FTSSubtitleTrack& Track : Player->GetSubtitleTracks())
 	{
-		const FText Kind = Track.Kind == 1 ? LOCTEXT("TrackAuto", " (automatic)") : Track.Kind == 3 ? LOCTEXT("TrackFile", " (file)") : FText::GetEmpty();
+		const FText Kind = Track.Kind == 1 ? LOCTEXT("TrackAuto", " (automatic)") : Track.Kind == 3 ? LOCTEXT("TrackFile", " (file)")
+						 : Track.Kind == 4										  ? LOCTEXT("TrackPicture", " (picture)")
+																				  : FText::GetEmpty();
 		UWidget* Button = MakeButton(FText::Format(LOCTEXT("TrackButton", "{0}{1}"), FText::FromString(Track.Label.Left(40)), Kind),
 			ETSPanelAction::SubtitleTrack, int32(Track.Id));
 		TSVanillaUI::SetTabActive(Button, Track.Id == Player->GetSelectedSubtitleTrack());

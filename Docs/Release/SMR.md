@@ -36,7 +36,8 @@ First release. Not yet tested in multiplayer: please report how it goes with fri
 - Synced videos (YouTube, Twitch, Vimeo, files) with a shared queue, seek bar and 3D sound through the game's audio.
 - Shared built-in browser, shared windows and remote desktops (VNC), streamed to every player through the game's connection, or over optional direct connections (encrypted, UPnP/STUN).
 - Your own video files: every player plays their copy (found by name in their videos folder); players without it watch it streamed.
-- Subtitles on the screen, on the HUD, both or off (site subtitles, YouTube captions, tracks in files, .srt/.vtt).
+- Subtitles on the screen, on the HUD, both or off (site subtitles, YouTube captions, text and picture tracks in files, .srt/.vtt).
+- /ts list and /ts stop chat commands.
 - Viewer control and pointers with a control log, privacy curtain (F10), picture-in-picture on the HUD, screens list (F9).
 - Encrypted remote desktops (VeNCrypt TLS, certificate remembered on first use).
 - Per-player and per-screen volume; stream resolution, bitrate, frame rate and encoder settings; world host rules and limits.

@@ -2,6 +2,7 @@
 #include "Content/TSContent.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
+#include "TSChatCommand.h"
 #include "TSRemoteCallObject.h"
 
 UTSGameInstanceModule::UTSGameInstanceModule()
@@ -26,4 +27,5 @@ UTSGameWorldModule::UTSGameWorldModule()
 {
 	bRootModule = true;
 	mSchematics.Add(UTSSchematic_Screens::StaticClass());
+	mChatCommands.Add(ATSChatCommand::StaticClass());
 }

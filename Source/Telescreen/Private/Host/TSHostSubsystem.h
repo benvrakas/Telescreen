@@ -41,7 +41,8 @@ struct FTSPayloadWriter
 };
 
 // Receives one media session's messages from the helper (game thread).
-// A subtitle track of a media session (kind: 0 the site's, 1 automatic captions, 2 inside the file, 3 a file next to it).
+// A subtitle track of a media session (kind: 0 the site's, 1 automatic captions, 2 inside the file, 3 a file next to it,
+// 4 a picture track inside the file, drawn into the picture by the helper).
 struct FTSSubtitleTrack
 {
 	uint32 Id = 0;

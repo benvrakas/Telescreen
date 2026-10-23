@@ -183,6 +183,8 @@ public:
 	// Server only: renames the screen and sets how pictures fit it.
 	void Server_SetScreenSettings(const FString& Name, ETSAspectMode AspectMode);
 	void Server_SetScreenVolume(float Volume);
+	// Server only: sets the current item's length when the queue didn't know it (Url must be the current item's).
+	void Server_SetCurrentDuration(const FString& Url, float Seconds);
 
 	// Server only: gives Requester control of the screen in Mode, starting at Url.
 	void Server_TakeControl(APlayerState* Requester, ETSScreenMode Mode, const FString& Url);

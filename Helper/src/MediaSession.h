@@ -77,6 +77,8 @@ private:
 	void PublishTapAudio();
 	void FindSubtitleTracks(const FResolvedMedia* Resolved);
 	void DecodeSubtitlePacket(FInput* Input, AVPacket* Packet);
+	void DecodePictureSubtitle(FInput* Input, AVStream* Stream, AVPacket* Packet);
+	void BlendPictureSubtitles(uint8_t* Bgra, int Width, int Height, double Pts);
 	bool ReadEmbeddedSubtitles(int StreamIndex, std::vector<FSubtitleCue>& Cues, std::string& Error);
 	static bool DecodeSubtitle(AVCodecContext* Codec, AVStream* Stream, double StartOffset, AVPacket* Packet, FSubtitleCue& Cue);
 
@@ -163,4 +165,20 @@ private:
 	int SubtitleCodecStream = -1;
 	std::thread SubtitleLoader;
 	std::atomic<uint32_t> SubtitleRequest{0};
+
+	// Picture subtitles of the selected picture track, scaled to the output size as they are decoded (the demuxer
+	// reads ahead of playback, so they arrive before they show).
+	struct FPictureCue
+	{
+		int64_t StartMs = 0, EndMs = 0;
+		int X = 0, Y = 0, Width = 0, Height = 0;
+		std::vector<uint8_t> Bgra;
+	};
+	std::atomic<bool> bPictureTrack{false};
+	// The demuxer reads well ahead of playback: a newly picked picture track re-reads from where playback is.
+	std::atomic<bool> PictureSeekPending{false};
+	std::mutex PictureMutex;
+	std::deque<FPictureCue> PictureCues;
+	SwsContext* PictureScaler = nullptr;
+	int PictureCount = 0, PictureFrames = 0;
 };

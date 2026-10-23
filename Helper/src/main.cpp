@@ -1064,7 +1064,7 @@ namespace
 		std::vector<FStep> Steps;
 		if (Args.SubtitleTrack > 0)
 		{
-			Steps.push_back({8.0, [&]
+			Steps.push_back({Args.SelfTestLocal ? 1.0 : 8.0, [&]
 			{
 				FPayloadWriter W;
 				W.U32(uint32_t(Args.SubtitleTrack));

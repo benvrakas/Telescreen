@@ -239,7 +239,21 @@ Per player: where they show (`SubtitleMode`: off, on the screen, on the HUD, bot
 - **On the HUD:** `UTSSubtitleOverlay`, bottom centre, for the screen shown on the HUD or else the nearest screen
   within the play distance that has a line (`UTSClientSubsystem`, 10 times a second).
 
-Not yet: picture subtitles (PGS, VobSub), subtitles for viewers of a streamed video.
+- **Picture tracks** (PGS, DVD: `AV_CODEC_PROP_BITMAP_SUB`, kind 4) are decoded by the first input's demux thread as the
+  file plays: palette pictures become BGRA, scaled from the track's canvas (usually 1920x1080) to the output size, and
+  are blended into each published frame while due (an empty PGS update ends the one showing). Streams to other players
+  get the frame before the blend. Picking a picture track seeks to the playback position once, since the demuxer reads
+  about 25 s ahead. They show on the screen only (the mod doesn't select them while subtitles are HUD-only).
+  Verified 2026-10-22 on a Blu-ray rip (one English PGS track): lines at the right times and places.
+
+Not yet: subtitles for viewers of a streamed video.
+
+## Chat commands
+
+`ATSChatCommand` (`/ts`, `/telescreen`), registered by the game world module: `list` numbers every screen (name, then
+position) with what it shows, who uses it, viewers, curtain and distance from the sender; `stop <number|all>` releases
+control (sharing) and stops the video (queue kept). The server console, the world host and admins may stop any screen;
+other players only one they share.
 
 ## Direct connections
 

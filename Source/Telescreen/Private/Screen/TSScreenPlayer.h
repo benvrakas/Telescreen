@@ -235,6 +235,12 @@ private:
 	TArray<FTSSubtitleCue> SubtitleCues;
 	FString SubtitleText;
 	double NextSubtitleUpdate = 0.0;
+	// The track the helper was told to load: the selection, unless subtitles are off, or a picture track (screen only)
+	// while they show on the HUD only.
+	uint32 SentSubtitleTrack = 0;
+	void SendSubtitleSelection();
+	// The current file's length, sent to the server once when the queue doesn't know it (files have none when added).
+	FString ReportedDurationKey;
 	uint32 PickSubtitleTrack() const;
 
 	FText RemoteSecurity;

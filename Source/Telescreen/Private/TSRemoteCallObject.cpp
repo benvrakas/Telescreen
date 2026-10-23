@@ -273,6 +273,19 @@ void UTSRemoteCallObject::Server_ReportMedia_Implementation(ATSBuildableScreen* 
 	}
 }
 
+bool UTSRemoteCallObject::Server_ReportDuration_Validate(ATSBuildableScreen* Screen, const FString& Url, float Seconds)
+{
+	return FMath::IsFinite(Seconds);
+}
+
+void UTSRemoteCallObject::Server_ReportDuration_Implementation(ATSBuildableScreen* Screen, const FString& Url, float Seconds)
+{
+	if (Screen && Url.Len() <= MaxUrlLength && Seconds > 0.f && Seconds < 48.f * 3600.f)
+	{
+		Screen->Server_SetCurrentDuration(Url, Seconds);
+	}
+}
+
 bool UTSRemoteCallObject::Server_SetScreenVolume_Validate(ATSBuildableScreen* Screen, float Volume)
 {
 	return FMath::IsFinite(Volume);

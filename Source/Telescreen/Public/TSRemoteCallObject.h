@@ -28,6 +28,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_ReportMedia(ATSBuildableScreen* Screen, const FString& Url, bool bHave, bool bCanStream);
 
+	// The current item's length as a player's PC found it (files are queued without one).
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_ReportDuration(ATSBuildableScreen* Screen, const FString& Url, float Seconds);
+
 	// The screen's volume for everyone (sent when the slider is let go).
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetScreenVolume(ATSBuildableScreen* Screen, float Volume);

@@ -94,5 +94,7 @@ in `SessionVideo`).
 The host's playback clock follows the audio the mod has consumed (`ReadFrames` mapped back to media time), so the
 picture stays in step with what is heard. Without audio, or when the mod stops pulling audio for over a second, it
 falls back to a wall clock. The mod sends `SyncTarget` with the media time playback should be at, from the
-replicated start time and the server clock. The host seeks when it is more than 1.5 s off, and otherwise stretches
-or squeezes audio by up to 5% (`swr_set_compensation`) until it is within 40 ms.
+replicated start time and the server clock. The host seeks when it is more than 0.2 s off (an autosave stalls Wwise for about 0.3 s), and otherwise stretches
+or squeezes audio by up to 0.4% (`swr_set_compensation`, about 7 cents, not heard as a pitch change) until it is
+within 40 ms. Up to 1.0.0 the limit was 5% (and 1.5 s before seeking): after a lag spike the sound played audibly
+off-pitch for up to half a minute.

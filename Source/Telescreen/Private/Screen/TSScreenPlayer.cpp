@@ -6,6 +6,9 @@
 #include "Algo/BinarySearch.h"
 #include "CanvasItem.h"
 #include "Engine/Canvas.h"
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Styling/CoreStyle.h"
 #include "Engine/CanvasRenderTarget2D.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -60,7 +63,42 @@ namespace
 	constexpr double SyncInterval = 0.25;
 	constexpr double RankInterval = 1.0;
 	constexpr double AudioInterval = 0.5;
-	constexpr int32 StatusWidth = 1024;
+	constexpr int32 StatusWidth = 2048;
+
+	// Text on a screen texture in the UI font, rasterised at its pixel size (a scaled bitmap font looks soft).
+	FSlateFontInfo ScreenFont(bool bBold, float PixelHeight)
+	{
+		// Slate sizes are points at 96 DPI: 0.75 pt per pixel.
+		FSlateFontInfo Font = FCoreStyle::GetDefaultFontStyle(bBold ? TEXT("Bold") : TEXT("Regular"), FMath::Clamp(FMath::RoundToInt(PixelHeight * 0.75f), 6, 160));
+		return Font;
+	}
+
+	FVector2D MeasureScreenText(const FString& Text, const FSlateFontInfo& Font)
+	{
+		if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetRenderer())
+		{
+			return FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(Text, Font);
+		}
+		return FVector2D(Text.Len() * Font.Size * 0.8, Font.Size * 1.4);
+	}
+
+	// Draws Text centred on CenterX at Top, shrunk to fit MaxWidth, with an outline when Outline > 0. Returns its height.
+	float DrawScreenText(UCanvas* Canvas, const FString& Text, float CenterX, float Top, float PixelHeight, bool bBold, const FLinearColor& Color, float MaxWidth,
+		int32 Outline)
+	{
+		FSlateFontInfo Font = ScreenFont(bBold, PixelHeight);
+		Font.OutlineSettings.OutlineSize = Outline;
+		Font.OutlineSettings.OutlineColor = FLinearColor(0.f, 0.f, 0.f, 0.9f);
+		FVector2D Size = MeasureScreenText(Text, Font);
+		if (Size.X > MaxWidth && Size.X > 0.0)
+		{
+			Font.Size = FMath::Max(6.f, float(Font.Size * MaxWidth / Size.X));
+			Size = MeasureScreenText(Text, Font);
+		}
+		FCanvasTextItem Item(FVector2D(CenterX - Size.X * 0.5, Top), FText::FromString(Text), Font, Color);
+		Canvas->DrawItem(Item);
+		return float(Size.Y);
+	}
 
 	FString ItemKey(int32 Index, const FTSMediaItem& Item)
 	{
@@ -2205,6 +2243,14 @@ void UTSScreenPlayer::OnHostState(ESessionState State, double Position, double D
 	if (bSyncedSession && State == ESessionState::Playing)
 	{
 		ReportMedia(SessionKey, Item->Url, true);
+		if (Item->Duration <= 0.f && Duration > 1.0 && !Item->bIsLive && ReportedDurationKey != SessionKey)
+		{
+			ReportedDurationKey = SessionKey;
+			if (UTSRemoteCallObject* RCO = FindRemoteCallObject())
+			{
+				RCO->Server_ReportDuration(Screen, Item->Url, float(Duration));
+			}
+		}
 	}
 	if (bSyncedSession && State == ESessionState::Error)
 	{
@@ -2309,7 +2355,7 @@ void UTSScreenPlayer::OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Track
 
 void UTSScreenPlayer::OnHostSubtitleCues(uint32 Track, bool bReplace, TArray<FTSSubtitleCue>&& Cues)
 {
-	if (Track != SelectedSubtitleTrack)
+	if (Track != SentSubtitleTrack)
 	{
 		return;
 	}
@@ -2350,10 +2396,16 @@ uint32 UTSScreenPlayer::PickSubtitleTrack() const
 		const TArray<FString>* Codes = Long.Find(Want);
 		return Codes && Codes->ContainsByPredicate([&Language](const FString& Code) { return Language.StartsWith(Code); });
 	};
-	// People-made in the preferred language first, then automatic captions in it, then a single unlabelled track.
+	// People-made text in the preferred language first, then a picture track (on the screen), then automatic captions,
+	// then a single unlabelled track.
+	const bool bScreen = GetSubtitleMode(this) != ESubtitleMode::Hud;
 	for (const FTSSubtitleTrack& Track : SubtitleTracks)
 	{
-		if (Track.Kind != 1 && Matches(Track)) return Track.Id;
+		if (Track.Kind != 1 && Track.Kind != 4 && Matches(Track)) return Track.Id;
+	}
+	for (const FTSSubtitleTrack& Track : SubtitleTracks)
+	{
+		if (Track.Kind == 4 && bScreen && Matches(Track)) return Track.Id;
 	}
 	for (const FTSSubtitleTrack& Track : SubtitleTracks)
 	{
@@ -2373,16 +2425,29 @@ void UTSScreenPlayer::SelectSubtitleTrack(uint32 Id)
 		return;
 	}
 	SelectedSubtitleTrack = Id;
-	SubtitleCues.Reset();
 	UE_LOG(LogTelescreen, Log, TEXT("%s: subtitle track %u"), *GetNameSafe(GetOwner()), Id);
+	SendSubtitleSelection();
+	UpdateSubtitleText();
+	OnSubtitlesChanged.Broadcast();
+}
+
+void UTSScreenPlayer::SendSubtitleSelection()
+{
+	const ESubtitleMode Mode = GetSubtitleMode(this);
+	const FTSSubtitleTrack* Track = SubtitleTracks.FindByPredicate([this](const FTSSubtitleTrack& Each) { return Each.Id == SelectedSubtitleTrack; });
+	const uint32 Wanted = !Track || Mode == ESubtitleMode::Off || (Track->Kind == 4 && Mode == ESubtitleMode::Hud) ? 0 : Track->Id;
+	if (Wanted == SentSubtitleTrack)
+	{
+		return;
+	}
+	SentSubtitleTrack = Wanted;
+	SubtitleCues.Reset();
 	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && Session != 0)
 	{
 		FTSPayloadWriter W;
-		W.U32(Id);
+		W.U32(Wanted);
 		Host->SendBrowserCommand(Session, ECommand::SelectSubtitles, W.Bytes);
 	}
-	UpdateSubtitleText();
-	OnSubtitlesChanged.Broadcast();
 }
 
 void UTSScreenPlayer::RefreshSubtitles()
@@ -2391,6 +2456,7 @@ void UTSScreenPlayer::RefreshSubtitles()
 	{
 		SelectSubtitleTrack(PickSubtitleTrack());
 	}
+	SendSubtitleSelection();
 	NextSubtitleUpdate = 0.0;
 	ApplyScreenTexture();
 }
@@ -2401,6 +2467,7 @@ void UTSScreenPlayer::ClearSubtitles()
 	SubtitleTracks.Reset();
 	SubtitleCues.Reset();
 	SelectedSubtitleTrack = 0;
+	SentSubtitleTrack = 0;
 	SubtitleText.Reset();
 	bScreenShowsSubtitles = false;
 	if (bHad)
@@ -2471,67 +2538,44 @@ void UTSScreenPlayer::ApplyScreenTexture()
 
 void UTSScreenPlayer::DrawSubtitled(UCanvas* Canvas, int32 Width, int32 Height)
 {
-	UFont* Font = GEngine ? GEngine->GetLargeFont() : nullptr;
 	if (!Canvas || !VideoTexture)
 	{
 		return;
 	}
 	Canvas->K2_DrawTexture(VideoTexture, FVector2D::ZeroVector, FVector2D(Width, Height), FVector2D::ZeroVector, FVector2D::UnitVector, FLinearColor::White,
 		BLEND_Opaque);
-	if (!Font || SubtitleText.IsEmpty())
+	if (SubtitleText.IsEmpty())
 	{
 		return;
 	}
 	TArray<FString> Lines;
 	SubtitleText.ParseIntoArray(Lines, TEXT("\n"));
-	float LineWidth = 0.f, LineHeight = 0.f;
-	Canvas->TextSize(Font, TEXT("Ag"), LineWidth, LineHeight, 1.f, 1.f);
-	// About a 16th of the picture's height per line, as TV subtitles.
-	const float Scale = LineHeight > 0.f ? Height / 16.f / LineHeight : 1.f;
-	float Y = Height * 0.94f - Lines.Num() * LineHeight * Scale * 1.1f;
+	// About a sixteenth of the picture's height per line, as TV subtitles, from the bottom up.
+	const float LineHeight = Height / 16.f;
+	float Top = Height * 0.95f - Lines.Num() * LineHeight * 1.15f;
 	for (const FString& Line : Lines)
 	{
-		float TextWidth = 0.f, TextHeight = 0.f;
-		float LineScale = Scale;
-		Canvas->TextSize(Font, Line, TextWidth, TextHeight, LineScale, LineScale);
-		if (TextWidth > Width * 0.94f && TextWidth > 0.f)
-		{
-			LineScale *= Width * 0.94f / TextWidth;
-			Canvas->TextSize(Font, Line, TextWidth, TextHeight, LineScale, LineScale);
-		}
-		FCanvasTextItem Item(FVector2D((Width - TextWidth) * 0.5f, Y), FText::FromString(Line), Font, FLinearColor::White);
-		Item.Scale = FVector2D(LineScale, LineScale);
-		Item.bOutlined = true;
-		Item.OutlineColor = FLinearColor::Black;
-		Item.EnableShadow(FLinearColor(0.f, 0.f, 0.f, 0.85f), FVector2D(2.f, 2.f) * LineScale);
-		Canvas->DrawItem(Item);
-		Y += LineHeight * Scale * 1.1f;
+		DrawScreenText(Canvas, Line, Width * 0.5f, Top, LineHeight, true, FLinearColor::White, Width * 0.94f, FMath::Max(2, int32(LineHeight / 14.f)));
+		Top += LineHeight * 1.15f;
 	}
 }
 
 void UTSScreenPlayer::DrawStatus(UCanvas* Canvas, int32 Width, int32 Height)
 {
-	UFont* Font = GEngine ? GEngine->GetLargeFont() : nullptr;
-	if (!Canvas || !Font)
+	if (!Canvas)
 	{
 		return;
 	}
-	auto DrawCentered = [&](const FString& Text, float CenterY, float Scale, const FLinearColor& Color)
+	auto DrawCentered = [&](const FString& Text, float CenterY, float PixelHeight, bool bBold, const FLinearColor& Color)
 	{
-		float TextWidth = 0.f, TextHeight = 0.f;
-		Canvas->TextSize(Font, Text, TextWidth, TextHeight, Scale, Scale);
-		if (TextWidth > Width * 0.92f && TextWidth > 0.f)
+		if (!Text.IsEmpty())
 		{
-			Scale *= Width * 0.92f / TextWidth;
-			Canvas->TextSize(Font, Text, TextWidth, TextHeight, Scale, Scale);
+			DrawScreenText(Canvas, Text, Width * 0.5f, CenterY - PixelHeight * 0.6f, PixelHeight, bBold, Color, Width * 0.92f, 0);
 		}
-		Canvas->SetDrawColor(Color.ToFColor(true));
-		Canvas->DrawText(Font, Text, (Width - TextWidth) * 0.5f, CenterY - TextHeight * 0.5f, Scale, Scale);
 	};
-	const float Base = Height / 256.f;
-	DrawCentered(TEXT("TELESCREEN"), Height * 0.18f, 0.8f * Base, FLinearColor(0.95f, 0.55f, 0.1f));
-	DrawCentered(StatusLine1.ToString(), Height * 0.45f, 1.6f * Base, FLinearColor::White);
-	DrawCentered(StatusLine2.ToString(), Height * 0.68f, 1.0f * Base, FLinearColor(0.7f, 0.75f, 0.8f));
+	DrawCentered(TEXT("TELESCREEN"), Height * 0.18f, Height * 0.055f, true, FLinearColor(0.95f, 0.55f, 0.1f));
+	DrawCentered(StatusLine1.ToString(), Height * 0.45f, Height * 0.11f, true, FLinearColor::White);
+	DrawCentered(StatusLine2.ToString(), Height * 0.68f, Height * 0.065f, false, FLinearColor(0.7f, 0.75f, 0.8f));
 }
 
 #undef LOCTEXT_NAMESPACE
