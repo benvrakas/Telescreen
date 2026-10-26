@@ -379,6 +379,8 @@ USceneComponent* TSWwiseScreens::CreateEmitter(USceneComponent* Parent)
 	Emitter->SetMobility(EComponentMobility::Movable);
 	Emitter->SetupAttachment(Parent);
 	Emitter->RegisterComponent();
+	// UAkComponent only passes its position to Wwise while active.
+	Emitter->Activate(true);
 	return Emitter;
 }
 
@@ -408,6 +410,11 @@ uint32 TSWwiseScreens::Play(const TSharedPtr<FTSAudioReader, ESPMode::ThreadSafe
 	Feed->Reader = Reader;
 	Feed->SampleRate = int32(Reader->GetSampleRate());
 	Feed->Channels = FMath::Clamp(int32(Reader->GetChannels()), 1, 2);
+	if (!Emitter->IsActive())
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("Wwise screens: %s's emitter was inactive; activating it so its position reaches Wwise"), *GetNameSafe(Emitter->GetOwner()));
+		Emitter->Activate(true);
+	}
 	UpdatePosition(Emitter);
 	// The callbacks wait on the lock, so the feed is registered before Wwise first asks for its format.
 	FScopeLock Lock(&ScreenFeedsLock);
@@ -452,6 +459,10 @@ void TSWwiseScreens::UpdatePosition(USceneComponent* Emitter)
 {
 	if (void (*Update)(UObject*) = GetScreenUpdatePosition(); Update && IsValid(Emitter))
 	{
+		if (!Emitter->IsActive())
+		{
+			Emitter->Activate(true);
+		}
 		Update(Emitter);
 	}
 }

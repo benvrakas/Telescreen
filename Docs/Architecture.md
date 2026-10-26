@@ -390,6 +390,10 @@ Hearing range setting) through `SetAttenuationScalingFactor`. Rooms, reverb, occ
 - Samples come straight from the helper's audio ring (`FTSAudioReader`), scaled by the screen volume (0 while muted
   in the background); the game's sliders apply on the bus.
 - A HUD picture with "Hear it everywhere" moves its emitter to the camera every frame.
+- The emitter is activated explicitly when it is created, and again before posting or positioning if needed.
+  `UAkComponent::UpdateGameObjectPosition` only sets the position while the component is active. An inactive emitter
+  keeps a stale position, or none, and is heard at full volume at any distance. The BoomBoxPlus session found this
+  through a friend who heard a Boom Box 500 m away.
 - If Wwise ends the sound itself it is posted again; two quick ends in a row switch that sound to the Unreal path
   (`UAudioComponent` + `UTSStreamingSoundWave`), which is also used when the setting is off or Wwise isn't reachable.
 
