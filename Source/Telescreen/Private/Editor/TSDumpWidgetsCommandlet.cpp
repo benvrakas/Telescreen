@@ -3,7 +3,9 @@
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/NamedSlotInterface.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/PanelWidget.h"
+#include "Components/SizeBox.h"
 #include "Misc/FileHelper.h"
 #include "Telescreen.h"
 #include "UObject/UnrealType.h"
@@ -42,7 +44,35 @@ namespace
 				Line += TEXT("  slots[") + List + TEXT("]");
 			}
 		}
+		// Layout of canvas children and size box overrides, for placing new widgets beside vanilla ones.
+		if (const UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot))
+		{
+			const FAnchors Anchors = CanvasSlot->GetAnchors();
+			const FMargin Offsets = CanvasSlot->GetOffsets();
+			Line += FString::Printf(TEXT("  canvas[anchors %.2f,%.2f-%.2f,%.2f offsets L%.0f T%.0f R%.0f B%.0f align %.2f,%.2f auto %d z %d]"),
+				Anchors.Minimum.X, Anchors.Minimum.Y, Anchors.Maximum.X, Anchors.Maximum.Y, Offsets.Left, Offsets.Top, Offsets.Right, Offsets.Bottom,
+				CanvasSlot->GetAlignment().X, CanvasSlot->GetAlignment().Y, CanvasSlot->GetAutoSize() ? 1 : 0, CanvasSlot->GetZOrder());
+		}
+		if (const USizeBox* Size = Cast<USizeBox>(Widget))
+		{
+			Line += FString::Printf(TEXT("  size[w %.0f h %.0f maxw %.0f maxh %.0f]"), Size->GetWidthOverride(), Size->GetHeightOverride(),
+				Size->GetMaxDesiredWidth(), Size->GetMaxDesiredHeight());
+		}
 		Out.Add(Line);
+		// Content placed into a child user widget's named slots (e.g. a window's WindowBody).
+		if (const UUserWidget* User = Cast<UUserWidget>(Widget))
+		{
+			TArray<FName> Names;
+			User->GetSlotNames(Names);
+			for (const FName& Name : Names)
+			{
+				if (UWidget* Content = User->GetContentForSlot(Name))
+				{
+					Out.Add(FString::ChrN((Depth + 1) * 2, TEXT(' ')) + TEXT("[slot ") + Name.ToString() + TEXT("]"));
+					DumpTree(Content, Depth + 2, Out);
+				}
+			}
+		}
 		if (const UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
 		{
 			for (int32 I = 0; I < Panel->GetChildrenCount(); ++I)
