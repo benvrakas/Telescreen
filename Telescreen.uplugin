@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.0.0",
-	"SemVersion": "1.0.0",
+	"VersionName": "1.0.1",
+	"SemVersion": "1.0.1",
 	"GameVersion": ">=513885",
 	"FriendlyName": "Telescreen",
 	"Description": "Billboard-sized screens that play synced videos, a built-in browser, shared windows and remote desktops (VNC) every player can watch, with 3D audio.",

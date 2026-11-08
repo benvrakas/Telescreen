@@ -23,7 +23,7 @@ version.
 | Field | Value |
 |---|---|
 | File | `D:\SFMod\SatisfactoryModLoader\Saved\ArchivedPlugins\Telescreen\Telescreen.zip` (the combined zip: Windows client, Windows and Linux servers) |
-| Version | read from the zip's `Telescreen.uplugin`: `1.0.0` |
+| Version | read from the zip's `Telescreen.uplugin`: `1.0.1` |
 | Stability | **Release** |
 | Changelog | the text below |
 

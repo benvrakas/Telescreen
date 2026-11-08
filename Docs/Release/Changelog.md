@@ -1,11 +1,7 @@
 # Changelog
 
-## 1.0.0
+## 1.0.1
 
-First public release (everything from the betas below). Not yet tested in multiplayer.
-
-- The game no longer waits on Telescreen's player: messages to it are queued, a player that stops responding for 30 s
-  is restarted, and a remote desktop that stops accepting input is disconnected instead of holding everything up.
 - Streams adapt to the viewers' connections: the world host watches each relayed player's lag and packet loss and
   lowers the stream's bitrate when the link backs up, then raises it again. Before, a stream bigger than the link
   froze the viewer's picture and could get them disconnected from the world.
@@ -15,6 +11,12 @@ First public release (everything from the betas below). Not yet tested in multip
 - Screens' Wwise emitters are activated before they're positioned, so a screen can't be heard at full volume from
   far away.
 
+## 1.0.0
+
+First public release (everything from the betas below). Not yet tested in multiplayer.
+
+- The game no longer waits on Telescreen's player: messages to it are queued, a player that stops responding for 30 s
+  is restarted, and a remote desktop that stops accepting input is disconnected instead of holding everything up.
 - New mod icon; the mod page has screenshots.
 - **Videos folder**: each player sets theirs (Videos tab, Change folder; or Mods > Telescreen > Videos on this PC).
   A file someone else added plays from your copy: the same path, or a file with the same name anywhere in your videos
