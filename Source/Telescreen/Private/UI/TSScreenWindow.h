@@ -67,6 +67,9 @@ private:
 	bool bPinned = false;
 	bool bHighPrecision = false;
 	double EscapeDownAt = 0.0;
+	// When the window last became interactive, and whether input could reach the source since then.
+	double InteractiveSince = 0.0;
+	bool bInteractionSeen = false;
 
 	// The widget covers the whole viewport; Frame (inside Size) is aligned in it, so placement doesn't depend on
 	// viewport-slot sizing.

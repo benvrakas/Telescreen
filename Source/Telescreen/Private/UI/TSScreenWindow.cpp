@@ -32,6 +32,8 @@ namespace
 	constexpr float Margin = 24.f;
 	constexpr float BottomMargin = 160.f;
 	constexpr double EscapeHoldSeconds = 1.0;
+	// How long a new interactive window waits for its source to accept input.
+	constexpr double InteractiveStartSeconds = 20.0;
 
 	uint32 Modifiers(const FInputEvent& Event)
 	{
@@ -248,6 +250,11 @@ void UTSScreenWindow::SetInteractive(bool bInInteractive)
 	bInteractive = bInInteractive;
 	if (bInteractive)
 	{
+		if (!bWas)
+		{
+			InteractiveSince = FPlatformTime::Seconds();
+			bInteractionSeen = Player != nullptr;
+		}
 		SetVisibility(ESlateVisibility::Visible);
 		SetIsFocusable(true);
 		if (Controller)
@@ -372,10 +379,21 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		Close();
 		return;
 	}
-	// Control moved away and this player isn't watching a stream either: input has nowhere to go.
-	if (bInteractive && (Shown->GetMode() == ETSScreenMode::SyncedMedia || !Player->CanInteract()))
+	const bool bCanInteract = Player->CanInteract();
+	if (bInteractive && bCanInteract && !bInteractionSeen)
 	{
-		UE_LOG(LogTelescreen, Log, TEXT("%s: no longer yours; leaving the interactive window"), *Shown->GetName());
+		bInteractionSeen = true;
+		UE_LOG(LogTelescreen, Log, TEXT("%s: the source is ready for input (%.1f s after the window opened)"), *Shown->GetName(),
+			FPlatformTime::Seconds() - InteractiveSince);
+		Player->BrowserFocus(true);
+	}
+	// A source of ours that is still starting (the helper, the browser) gets time before the window gives up on it.
+	const bool bStarting = !bInteractionSeen && Shown->IsLocallyControlled() && FPlatformTime::Seconds() - InteractiveSince < InteractiveStartSeconds;
+	// Control moved away and this player isn't watching a stream either: input has nowhere to go.
+	if (bInteractive && (Shown->GetMode() == ETSScreenMode::SyncedMedia || (!bCanInteract && !bStarting)))
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: %s; leaving the interactive window"), *Shown->GetName(),
+			bInteractionSeen || !Shown->IsLocallyControlled() ? TEXT("no longer yours") : TEXT("the source didn't start in time"));
 		if (bPinned)
 		{
 			SetInteractive(false);

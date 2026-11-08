@@ -10,6 +10,10 @@ First public release (everything from the betas below). Not yet tested in multip
   lowers the stream's bitrate when the link backs up, then raises it again. Before, a stream bigger than the link
   froze the viewer's picture and could get them disconnected from the world.
 - The notice for a viewer-control request the world doesn't allow names the setting that allows it.
+- Taking a browser now always opens its window. If Telescreen's player was still starting (as on a dedicated server),
+  the window used to close again at once, leaving only the screen panel and the corner preview.
+- Screens' Wwise emitters are activated before they're positioned, so a screen can't be heard at full volume from
+  far away.
 
 - New mod icon; the mod page has screenshots.
 - **Videos folder**: each player sets theirs (Videos tab, Change folder; or Mods > Telescreen > Videos on this PC).
