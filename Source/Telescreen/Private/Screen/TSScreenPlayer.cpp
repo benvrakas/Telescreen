@@ -583,6 +583,8 @@ void UTSScreenPlayer::OpenBrowserSession()
 	}
 	bBrowserSession = true;
 	BrowserState = FTSBrowserState();
+	BrowserTabs.Reset();
+	ActiveBrowserTab = 0;
 	SessionKey = WantedKey;
 	SetStatus(Title, LOCTEXT("BrowserStarting", "Starting the browser..."));
 }
@@ -882,6 +884,39 @@ void UTSScreenPlayer::BrowserCommand(ECommand Command)
 	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser())
 	{
 		Host->SendBrowserCommand(Session, Command, TArray<uint8>());
+	}
+}
+
+void UTSScreenPlayer::BrowserNewTab(const FString& Url)
+{
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser())
+	{
+		const FString Address = UTSConfig::BrowserAddressFor(this, Url.TrimStartAndEnd().IsEmpty()
+			? UTSConfig::GetString(this, UTSConfig::BrowserHomeKey, TEXT("https://duckduckgo.com")) : Url);
+		FTSPayloadWriter W;
+		W.Str(Address);
+		Host->SendBrowserCommand(Session, ECommand::NewTab, W.Bytes);
+		UE_LOG(LogTelescreen, Log, TEXT("%s: browser opens a new tab at %s"), *GetNameSafe(GetOwner()), *Address);
+	}
+}
+
+void UTSScreenPlayer::BrowserSelectTab(uint32 Tab)
+{
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser())
+	{
+		FTSPayloadWriter W;
+		W.U32(Tab);
+		Host->SendBrowserCommand(Session, ECommand::SelectTab, W.Bytes);
+	}
+}
+
+void UTSScreenPlayer::BrowserCloseTab(uint32 Tab)
+{
+	if (UTSHostSubsystem* Host = UTSHostSubsystem::Get(this); Host && HasBrowser())
+	{
+		FTSPayloadWriter W;
+		W.U32(Tab);
+		Host->SendBrowserCommand(Session, ECommand::CloseTab, W.Bytes);
 	}
 }
 
@@ -1669,6 +1704,17 @@ void UTSScreenPlayer::OnHostBrowserState(const FTSBrowserState& State)
 		UE_LOG(LogTelescreen, Log, TEXT("%s: page %s the pointer"), *GetNameSafe(GetOwner()), State.bPointerLocked ? TEXT("locked") : TEXT("released"));
 	}
 	BrowserState = State;
+	OnBrowserStateChanged.Broadcast();
+}
+
+void UTSScreenPlayer::OnHostBrowserTabs(uint32 ActiveTab, const TArray<FTSBrowserTab>& Tabs)
+{
+	if (Tabs.Num() != BrowserTabs.Num())
+	{
+		UE_LOG(LogTelescreen, Log, TEXT("%s: browser has %d tab(s)"), *GetNameSafe(GetOwner()), Tabs.Num());
+	}
+	BrowserTabs = Tabs;
+	ActiveBrowserTab = ActiveTab;
 	OnBrowserStateChanged.Broadcast();
 }
 

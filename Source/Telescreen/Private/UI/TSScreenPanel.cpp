@@ -1417,7 +1417,7 @@ void UTSScreenPanel::AddLink(bool bPlayNow)
 		return;
 	}
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
-	if (!Host || !Host->EnsureConnected())
+	if (!Host)
 	{
 		RCO->Server_Enqueue(Screen, Item, bPlayNow);
 		TSVanillaUI::SetInputText(LinkBox, FText::GetEmpty());
@@ -1433,6 +1433,13 @@ void UTSScreenPanel::AddLink(bool bPlayNow)
 		UTSRemoteCallObject* RCO = Panel ? UTSRemoteCallObject::GetLocal(Panel) : nullptr;
 		if (!Panel || !WeakScreen.IsValid() || !RCO)
 		{
+			return;
+		}
+		if (!Result.bOk && Result.bHostUnavailable)
+		{
+			RCO->Server_Enqueue(WeakScreen.Get(), Item, bPlayNow);
+			TSVanillaUI::SetInputText(Panel->LinkBox, FText::GetEmpty());
+			Panel->SetNotice(FText::Format(LOCTEXT("AddedNoTitleReason", "Added without a title ({0})"), FText::FromString(Result.Error)));
 			return;
 		}
 		if (!Result.bOk)

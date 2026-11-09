@@ -126,6 +126,19 @@ screens list): a large centred window with UI-only input; mouse, wheel, keys and
 reaches the page, and holding Esc or pressing the focus key returns to the game. A shown screen ignores the play
 distance and the screens-at-once limit, and its sound is 2D by default.
 
+The controller's own browser gets a toolbar in the interactive window: Back and Forward (greyed out when the page
+can't go there), Reload, Home (the start page setting), and an address box that shows the page's address and opens
+what's typed on Enter (the same address-or-search rule as the panel). Alt+Left / Alt+Right, the mouse's side buttons
+and F5 do the same as the buttons, as they would in a desktop browser. Off-screen CEF has no browser UI that handles
+those shortcuts itself. Before this, the side buttons reached the page as left clicks. Viewers who were given control
+don't get the toolbar: their input reaches the controller's page, and navigation stays with the controller.
+
+Above the toolbar, a tab strip shows the browser's tabs (title, x to close, + for a new tab at the start page); Ctrl+T,
+Ctrl+W and Ctrl+Tab / Ctrl+Shift+Tab work as in a desktop browser. Each tab is its own CEF browser in the helper
+(Docs/HostProtocol.md, BrowserTabs); the screen, the stream and the sound always follow the shown tab, and background
+tabs are muted. Pop-ups and `target=_blank` links open as tabs. The strip is rebuilt only when the tab list (ids,
+titles, the shown one) changes.
+
 `UTSScreensList` (F9) lists every screen in the world, nearest first, with Show on HUD and Open window.
 `UTSClientSubsystem` polls the two hotkeys.
 

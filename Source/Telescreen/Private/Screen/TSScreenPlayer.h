@@ -40,6 +40,7 @@ public:
 	virtual void OnHostState(TSHostProtocol::ESessionState State, double Position, double Duration, const FString& Message) override;
 	virtual void OnHostLost() override;
 	virtual void OnHostBrowserState(const FTSBrowserState& State) override;
+	virtual void OnHostBrowserTabs(uint32 ActiveTab, const TArray<FTSBrowserTab>& Tabs) override;
 	virtual void OnHostSubtitleTracks(const TArray<FTSSubtitleTrack>& Tracks) override;
 	virtual void OnHostDirectState(uint32 Link, uint8 State, const FString& Detail) override;
 	virtual void OnHostRemoteSecurity(const FString& Protocol, const FString& Fingerprint, bool bChanged) override;
@@ -127,6 +128,15 @@ public:
 	void BrowserFocus(bool bFocused);
 	void BrowserNavigate(const FString& Url);
 	void BrowserCommand(TSHostProtocol::ECommand Command);
+
+	// Browser tabs (the local player's browser): the open tabs, in order, and the one shown (OnBrowserStateChanged
+	// fires when they change).
+	const TArray<FTSBrowserTab>& GetBrowserTabs() const { return BrowserTabs; }
+	uint32 GetActiveBrowserTab() const { return ActiveBrowserTab; }
+	// Opens Url (an address or search, as BrowserNavigate) in a new tab and shows it.
+	void BrowserNewTab(const FString& Url);
+	void BrowserSelectTab(uint32 Tab);
+	void BrowserCloseTab(uint32 Tab);
 
 	// M3 test: shows Source's browser on this screen through the stream encoder and decoder (on this PC only).
 	void StartLoopback(UTSScreenPlayer* Source);
@@ -372,6 +382,8 @@ public:
 
 private:
 	FTSBrowserState BrowserState;
+	TArray<FTSBrowserTab> BrowserTabs;
+	uint32 ActiveBrowserTab = 0;
 	FIntPoint BrowserSize = FIntPoint(1280, 720);
 	double NextSync = 0.0;
 	double NextRank = 0.0;

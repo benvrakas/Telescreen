@@ -20,7 +20,8 @@ player. If you play it with friends, please tell me how it went, with your logs 
 - **Subtitles** on the screen, on your HUD, both or off (your choice, on your PC): a site's subtitles and YouTube's
   automatic captions, text and Blu-ray/DVD picture tracks inside video files, or a .srt / .vtt file next to a video.
   Pick the track (and language) in the Videos tab; your preferred language is picked first.
-- **Shared built-in browser**: use it in a window with mouse and keyboard (web games that lock the mouse work).
+- **Shared built-in browser**: use it in a window with mouse and keyboard, with tabs, Back / Forward and an address bar
+  (web games that lock the mouse work).
   Everyone near the screen sees and hears it, streamed through the game's own connection (no ports to open), or
   over a direct connection if you turn those on.
 - **Share a window** from your PC (a video player, a music app, a game) with its own sound. Only that window is

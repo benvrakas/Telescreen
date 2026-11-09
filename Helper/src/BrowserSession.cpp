@@ -107,7 +107,8 @@ namespace
 	};
 }
 
-// CEF handlers for one browser; forwards everything to its session until the session detaches.
+// CEF handlers for one tab's browser; forwards everything to its session, tagged with the tab, until the session
+// detaches. A browser created after the detach is closed at once.
 class FBrowserClient : public CefClient,
 					   public CefRenderHandler,
 					   public CefAudioHandler,
@@ -122,7 +123,14 @@ class FBrowserClient : public CefClient,
 					   public CefDownloadHandler
 {
 public:
-	explicit FBrowserClient(FBrowserSession* InSession) : Session(InSession) {}
+	FBrowserClient(FBrowserSession* InSession, uint32_t InTab) : Session(InSession), Tab(InTab)
+	{
+		ClosedEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	}
+	~FBrowserClient() override
+	{
+		CloseHandle(ClosedEvent);
+	}
 
 	void Detach()
 	{
@@ -135,6 +143,9 @@ public:
 		std::lock_guard<std::mutex> Lock(BrowserMutex);
 		return Browser;
 	}
+
+	// Signalled once the browser has closed.
+	HANDLE GetClosedEvent() const { return ClosedEvent; }
 
 	CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
 	CefRefPtr<CefAudioHandler> GetAudioHandler() override { return this; }
@@ -157,15 +168,15 @@ public:
 	}
 	void OnPaint(CefRefPtr<CefBrowser>, PaintElementType Type, const RectList&, const void* Buffer, int W, int H) override
 	{
-		WithSession([&](FBrowserSession& S) { S.OnPaint(Type == PET_POPUP, Buffer, W, H); });
+		WithSession([&](FBrowserSession& S) { S.OnPaint(Tab, Type == PET_POPUP, Buffer, W, H); });
 	}
 	void OnPopupShow(CefRefPtr<CefBrowser>, bool bShow) override
 	{
-		WithSession([&](FBrowserSession& S) { S.OnPopupShow(bShow); });
+		WithSession([&](FBrowserSession& S) { S.OnPopupShow(Tab, bShow); });
 	}
 	void OnPopupSize(CefRefPtr<CefBrowser>, const CefRect& Rect) override
 	{
-		WithSession([&](FBrowserSession& S) { S.OnPopupRect(Rect.x, Rect.y, Rect.width, Rect.height); });
+		WithSession([&](FBrowserSession& S) { S.OnPopupRect(Tab, Rect.x, Rect.y, Rect.width, Rect.height); });
 	}
 
 	// Audio: taken here so it plays from the screen in the game, not through Windows.
@@ -178,11 +189,11 @@ public:
 	}
 	void OnAudioStreamStarted(CefRefPtr<CefBrowser>, const CefAudioParameters&, int Channels) override
 	{
-		WithSession([&](FBrowserSession& S) { S.OnAudioStarted(Channels); });
+		WithSession([&](FBrowserSession& S) { S.OnAudioStarted(Tab, Channels); });
 	}
 	void OnAudioStreamPacket(CefRefPtr<CefBrowser>, const float** Data, int Frames, int64_t) override
 	{
-		WithSession([&](FBrowserSession& S) { S.OnAudioPacket(Data, Frames); });
+		WithSession([&](FBrowserSession& S) { S.OnAudioPacket(Tab, Data, Frames); });
 	}
 	void OnAudioStreamStopped(CefRefPtr<CefBrowser>) override {}
 	void OnAudioStreamError(CefRefPtr<CefBrowser>, const CefString& Message) override
@@ -239,7 +250,8 @@ public:
 		SendState();
 	}
 
-	// Life span: pop-ups open in the same view; nothing creates a new window.
+	// Life span: pop-ups and new-tab links become tabs of the session (or load here when no tab can open); CEF never
+	// creates a window.
 	void OnAfterCreated(CefRefPtr<CefBrowser> InBrowser) override
 	{
 		{
@@ -249,12 +261,15 @@ public:
 		CefRefPtr<CefDictionaryValue> Script = CefDictionaryValue::Create();
 		Script->SetString("source", PointerLockScript);
 		InBrowser->GetHost()->ExecuteDevToolsMethod(0, "Page.addScriptToEvaluateOnNewDocument", Script);
+		bool bAttached = false;
+		WithSession([&](FBrowserSession& S) { bAttached = true; S.OnTabCreated(Tab, InBrowser); });
+		if (!bAttached) InBrowser->GetHost()->CloseBrowser(true);
 	}
 	bool OnBeforePopup(CefRefPtr<CefBrowser> InBrowser, CefRefPtr<CefFrame>, int, const CefString& TargetUrl, const CefString&,
-		cef_window_open_disposition_t, bool, const CefPopupFeatures&, CefWindowInfo&, CefRefPtr<CefClient>&, CefBrowserSettings&,
+		cef_window_open_disposition_t Disposition, bool, const CefPopupFeatures&, CefWindowInfo&, CefRefPtr<CefClient>&, CefBrowserSettings&,
 		CefRefPtr<CefDictionaryValue>&, bool*) override
 	{
-		if (IsAllowedUrl(TargetUrl.ToString())) InBrowser->GetMainFrame()->LoadURL(TargetUrl);
+		OpenFromPage(InBrowser->GetMainFrame(), TargetUrl.ToString(), Disposition);
 		return true;
 	}
 	void OnBeforeClose(CefRefPtr<CefBrowser>) override
@@ -263,10 +278,10 @@ public:
 			std::lock_guard<std::mutex> Lock(BrowserMutex);
 			Browser = nullptr;
 		}
-		WithSession([](FBrowserSession& S) { S.OnClosed(); });
+		SetEvent(ClosedEvent);
 	}
 
-	// Requests: only allowed schemes, new tabs stay in this view.
+	// Requests: only allowed schemes.
 	bool OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest> Request, bool, bool) override
 	{
 		const std::string Target = Request->GetURL().ToString();
@@ -274,9 +289,10 @@ public:
 		LOG_WARN("browser: blocked navigation to %s", Target.substr(0, 200).c_str());
 		return true;
 	}
-	bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> Frame, const CefString& TargetUrl, cef_window_open_disposition_t, bool) override
+	bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> Frame, const CefString& TargetUrl, cef_window_open_disposition_t Disposition,
+		bool) override
 	{
-		if (IsAllowedUrl(TargetUrl.ToString())) Frame->LoadURL(TargetUrl);
+		OpenFromPage(Frame, TargetUrl.ToString(), Disposition);
 		return true;
 	}
 
@@ -336,11 +352,32 @@ private:
 
 	void SendState()
 	{
-		WithSession([&](FBrowserSession& S) { S.OnBrowserState(Url, Title, Loading, CanGoBack, CanGoForward, Cursor, PointerLocked); });
+		WithSession([&](FBrowserSession& S) { S.OnBrowserState(Tab, Url, Title, Loading, CanGoBack, CanGoForward, Cursor, PointerLocked); });
+	}
+
+	// A link or script that wants a new tab or window: a new tab when the session can open one, else this frame.
+	void OpenFromPage(CefRefPtr<CefFrame> Frame, const std::string& Target, cef_window_open_disposition_t Disposition)
+	{
+		if (!IsAllowedUrl(Target))
+		{
+			LOG_WARN("browser: blocked pop-up to %s", Target.substr(0, 200).c_str());
+			return;
+		}
+		if (Disposition == CEF_WOD_CURRENT_TAB)
+		{
+			if (Frame) Frame->LoadURL(Target);
+			return;
+		}
+		bool bOpened = false;
+		const bool bForeground = Disposition != CEF_WOD_NEW_BACKGROUND_TAB;
+		WithSession([&](FBrowserSession& S) { bOpened = S.OnPageOpensTab(Target, bForeground); });
+		if (!bOpened && Frame) Frame->LoadURL(Target);
 	}
 
 	std::mutex SessionMutex;
 	FBrowserSession* Session;
+	const uint32_t Tab;
+	HANDLE ClosedEvent = nullptr;
 	std::mutex BrowserMutex;
 	CefRefPtr<CefBrowser> Browser;
 	std::string Url, Title;
@@ -417,20 +454,16 @@ void Browser::AllowFileUrls(bool bAllow)
 }
 
 FBrowserSession::FBrowserSession(const FBrowserParams& InParams, FSessionEvents InEvents)
-	: Params(InParams), Events(std::move(InEvents))
+	: Params(InParams), Events(std::move(InEvents)), Context(std::make_shared<CefRefPtr<CefRequestContext>>())
 {
 	Width = int(std::clamp<uint32_t>(Params.Width, 16, 3840));
 	Height = int(std::clamp<uint32_t>(Params.Height, 16, 2160));
-	ClosedEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-	Client = new FBrowserClient(this);
-	Client->AddRef();
 	FrameTaps::SetRefresh(Params.SessionId, [this]
 	{
-		std::lock_guard<std::mutex> Lock(PaintMutex);
-		Publish();
+		std::lock_guard<std::mutex> Lock(TabsMutex);
+		if (FTab* Active = FindTabLocked(ActiveTab)) Publish(*Active);
 	});
 
-	std::wstring CachePath;
 	if (Params.KeepLogins && !Params.ProfileName.empty())
 	{
 		std::string Safe;
@@ -442,37 +475,136 @@ FBrowserSession::FBrowserSession(const FBrowserParams& InParams, FSessionEvents 
 		CachePath.empty() ? "clean profile" : "kept logins");
 	if (Events.OnState) Events.OnState(Params.SessionId, ESessionState::Buffering, 0.0, 0.0, StartUrl);
 
-	FBrowserClient* RawClient = Client;
-	RunOnUi([RawClient, StartUrl, CachePath]
-	{
-		CefRequestContextSettings ContextSettings;
-		if (!CachePath.empty())
-		{
-			CefString(&ContextSettings.cache_path) = CachePath;
-		}
-		CefRefPtr<CefRequestContext> Context = CefRequestContext::CreateContext(ContextSettings, nullptr);
-		CefWindowInfo WindowInfo;
-		WindowInfo.SetAsWindowless(nullptr);
-		CefBrowserSettings BrowserSettings;
-		BrowserSettings.windowless_frame_rate = 60;
-		BrowserSettings.background_color = CefColorSetARGB(255, 0, 0, 0);
-		CefBrowserHost::CreateBrowser(WindowInfo, RawClient, StartUrl, BrowserSettings, nullptr, Context);
-	});
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	AddTabLocked(StartUrl, true);
 }
 
 FBrowserSession::~FBrowserSession()
 {
 	FrameTaps::ClearRefresh(Params.SessionId);
-	CefRefPtr<CefBrowser> BrowserRef = Client->GetBrowser();
-	if (BrowserRef)
+	std::vector<CefRefPtr<FBrowserClient>> Clients;
 	{
-		RunOnUi([BrowserRef] { BrowserRef->GetHost()->CloseBrowser(true); });
-		if (WaitForSingleObject(ClosedEvent, 5000) != WAIT_OBJECT_0) LOG_WARN("session %u: browser did not close in time", Params.SessionId);
+		std::lock_guard<std::mutex> Lock(TabsMutex);
+		for (const auto& Tab : Tabs) Clients.push_back(Tab->Client);
+		Tabs.clear();
 	}
-	Client->Detach();
-	Client->Release();
-	CloseHandle(ClosedEvent);
-	LOG_INFO("session %u: browser closed", Params.SessionId);
+	// A detached client closes a browser that is created after this itself.
+	for (const auto& Client : Clients) Client->Detach();
+	std::vector<HANDLE> Waits;
+	for (const auto& Client : Clients)
+	{
+		if (CefRefPtr<CefBrowser> BrowserRef = Client->GetBrowser())
+		{
+			RunOnUi([BrowserRef] { BrowserRef->GetHost()->CloseBrowser(true); });
+			Waits.push_back(Client->GetClosedEvent());
+		}
+	}
+	if (!Waits.empty() && WaitForMultipleObjects(DWORD(Waits.size()), Waits.data(), TRUE, 5000) == WAIT_TIMEOUT)
+	{
+		LOG_WARN("session %u: browser tabs did not close in time", Params.SessionId);
+	}
+	LOG_INFO("session %u: browser closed (%zu tab(s))", Params.SessionId, Clients.size());
+}
+
+uint32_t FBrowserSession::AddTabLocked(const std::string& Url, bool bActivate)
+{
+	auto Tab = std::make_unique<FTab>();
+	Tab->Id = NextTabId++;
+	Tab->Url = Url;
+	Tab->Client = new FBrowserClient(this, Tab->Id);
+	const uint32_t Id = Tab->Id;
+	CefRefPtr<FBrowserClient> ClientRef = Tab->Client;
+	Tabs.push_back(std::move(Tab));
+	LOG_INFO("session %u: tab %u opens %s%s", Params.SessionId, Id, Url.substr(0, 200).c_str(), bActivate ? "" : " in the background");
+
+	// One request context per session (made by its first tab): its tabs share cookies and logins.
+	std::shared_ptr<CefRefPtr<CefRequestContext>> ContextRef = Context;
+	const std::wstring Cache = CachePath;
+	RunOnUi([ClientRef, Url, Cache, ContextRef]
+	{
+		if (!*ContextRef)
+		{
+			CefRequestContextSettings ContextSettings;
+			if (!Cache.empty()) CefString(&ContextSettings.cache_path) = Cache;
+			*ContextRef = CefRequestContext::CreateContext(ContextSettings, nullptr);
+		}
+		CefWindowInfo WindowInfo;
+		WindowInfo.SetAsWindowless(nullptr);
+		CefBrowserSettings BrowserSettings;
+		BrowserSettings.windowless_frame_rate = 60;
+		BrowserSettings.background_color = CefColorSetARGB(255, 0, 0, 0);
+		CefBrowserHost::CreateBrowser(WindowInfo, ClientRef, Url, BrowserSettings, nullptr, *ContextRef);
+	});
+	if (bActivate || Tabs.size() == 1)
+	{
+		ActivateLocked(Id);
+	}
+	else
+	{
+		SendTabsLocked();
+	}
+	return Id;
+}
+
+FBrowserSession::FTab* FBrowserSession::FindTabLocked(uint32_t Tab)
+{
+	for (const auto& Each : Tabs)
+	{
+		if (Each->Id == Tab) return Each.get();
+	}
+	return nullptr;
+}
+
+void FBrowserSession::ActivateLocked(uint32_t Tab)
+{
+	FTab* Shown = FindTabLocked(Tab);
+	if (!Shown) return;
+	ActiveTab = Tab;
+	for (const auto& Each : Tabs)
+	{
+		if (!Each->Browser) continue;
+		CefRefPtr<CefBrowserHost> Host = Each->Browser->GetHost();
+		const bool bShown = Each->Id == Tab;
+		RunOnUi([Host, bShown]
+		{
+			Host->WasHidden(!bShown);
+			Host->SetAudioMuted(!bShown);
+			if (bShown)
+			{
+				Host->WasResized();
+				Host->Invalidate(PET_VIEW);
+				Host->SetFocus(true);
+			}
+		});
+	}
+	Publish(*Shown);
+	SendStateLocked(*Shown);
+	SendTabsLocked();
+}
+
+void FBrowserSession::OnTabCreated(uint32_t Tab, CefRefPtr<CefBrowser> BrowserRef)
+{
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	FTab* Created = FindTabLocked(Tab);
+	if (!Created)
+	{
+		// Closed before it was created.
+		BrowserRef->GetHost()->CloseBrowser(true);
+		return;
+	}
+	Created->Browser = BrowserRef;
+	if (Tab != ActiveTab)
+	{
+		BrowserRef->GetHost()->WasHidden(true);
+		BrowserRef->GetHost()->SetAudioMuted(true);
+	}
+}
+
+CefRefPtr<CefBrowser> FBrowserSession::GetActiveBrowser()
+{
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	FTab* Active = FindTabLocked(ActiveTab);
+	return Active ? Active->Browser : nullptr;
 }
 
 void FBrowserSession::GetViewSize(int& OutWidth, int& OutHeight) const
@@ -481,85 +613,87 @@ void FBrowserSession::GetViewSize(int& OutWidth, int& OutHeight) const
 	OutHeight = Height.load();
 }
 
-void FBrowserSession::OnClosed()
+void FBrowserSession::OnPaint(uint32_t Tab, bool bPopup, const void* Buffer, int InWidth, int InHeight)
 {
-	SetEvent(ClosedEvent);
-}
-
-void FBrowserSession::OnPaint(bool bPopup, const void* Buffer, int InWidth, int InHeight)
-{
-	std::lock_guard<std::mutex> Lock(PaintMutex);
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	FTab* Painted = FindTabLocked(Tab);
+	if (!Painted) return;
 	const size_t Bytes = size_t(InWidth) * InHeight * 4;
 	if (bPopup)
 	{
-		Popup.assign(static_cast<const uint8_t*>(Buffer), static_cast<const uint8_t*>(Buffer) + Bytes);
-		PopupWidth = InWidth;
-		PopupHeight = InHeight;
+		Painted->Popup.assign(static_cast<const uint8_t*>(Buffer), static_cast<const uint8_t*>(Buffer) + Bytes);
+		Painted->PopupWidth = InWidth;
+		Painted->PopupHeight = InHeight;
 	}
 	else
 	{
-		View.assign(static_cast<const uint8_t*>(Buffer), static_cast<const uint8_t*>(Buffer) + Bytes);
-		ViewWidth = InWidth;
-		ViewHeight = InHeight;
+		Painted->View.assign(static_cast<const uint8_t*>(Buffer), static_cast<const uint8_t*>(Buffer) + Bytes);
+		Painted->ViewWidth = InWidth;
+		Painted->ViewHeight = InHeight;
 	}
-	Publish();
+	if (Tab == ActiveTab) Publish(*Painted);
 }
 
-void FBrowserSession::OnPopupShow(bool bShow)
+void FBrowserSession::OnPopupShow(uint32_t Tab, bool bShow)
 {
-	std::lock_guard<std::mutex> Lock(PaintMutex);
-	PopupVisible = bShow;
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	FTab* Shown = FindTabLocked(Tab);
+	if (!Shown) return;
+	Shown->PopupVisible = bShow;
 	if (!bShow)
 	{
-		Popup.clear();
-		Publish();
+		Shown->Popup.clear();
+		if (Tab == ActiveTab) Publish(*Shown);
 	}
 }
 
-void FBrowserSession::OnPopupRect(int X, int Y, int InWidth, int InHeight)
+void FBrowserSession::OnPopupRect(uint32_t Tab, int X, int Y, int InWidth, int InHeight)
 {
-	std::lock_guard<std::mutex> Lock(PaintMutex);
-	PopupX = X;
-	PopupY = Y;
-	PopupWidth = InWidth;
-	PopupHeight = InHeight;
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	FTab* Shown = FindTabLocked(Tab);
+	if (!Shown) return;
+	Shown->PopupX = X;
+	Shown->PopupY = Y;
+	Shown->PopupWidth = InWidth;
+	Shown->PopupHeight = InHeight;
 }
 
-void FBrowserSession::Publish()
+void FBrowserSession::Publish(FTab& Tab)
 {
-	if (View.empty()) return;
-	if (!VideoWriter || VideoWriter->GetWidth() != uint32_t(ViewWidth) || VideoWriter->GetHeight() != uint32_t(ViewHeight))
+	if (Tab.View.empty()) return;
+	if (!VideoWriter || VideoWriter->GetWidth() != uint32_t(Tab.ViewWidth) || VideoWriter->GetHeight() != uint32_t(Tab.ViewHeight))
 	{
 		auto Writer = std::make_unique<FVideoWriter>();
 		const uint32_t Generation = ++VideoGeneration;
 		const std::string Name = "Local\\Telescreen-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(Params.SessionId) + "-video" +
 			std::to_string(Generation);
-		if (!Writer->Create(Name, ViewWidth, ViewHeight)) return;
+		if (!Writer->Create(Name, Tab.ViewWidth, Tab.ViewHeight)) return;
 		VideoWriter = std::move(Writer);
-		LOG_INFO("session %u: browser video %dx%d (generation %u)", Params.SessionId, ViewWidth, ViewHeight, Generation);
-		if (Events.OnVideo) Events.OnVideo(Params.SessionId, Generation, ViewWidth, ViewHeight, Name);
+		LOG_INFO("session %u: browser video %dx%d (generation %u)", Params.SessionId, Tab.ViewWidth, Tab.ViewHeight, Generation);
+		if (Events.OnVideo) Events.OnVideo(Params.SessionId, Generation, Tab.ViewWidth, Tab.ViewHeight, Name);
 		if (Events.OnState) Events.OnState(Params.SessionId, ESessionState::Playing, 0.0, 0.0, std::string());
 	}
-	const uint8_t* Frame = View.data();
-	if (PopupVisible && !Popup.empty() && size_t(PopupWidth) * PopupHeight * 4 == Popup.size())
+	const uint8_t* Frame = Tab.View.data();
+	if (Tab.PopupVisible && !Tab.Popup.empty() && size_t(Tab.PopupWidth) * Tab.PopupHeight * 4 == Tab.Popup.size())
 	{
-		Composed = View;
-		for (int Row = 0; Row < PopupHeight; ++Row)
+		Composed = Tab.View;
+		for (int Row = 0; Row < Tab.PopupHeight; ++Row)
 		{
-			const int Y = PopupY + Row;
-			if (Y < 0 || Y >= ViewHeight) continue;
-			const int X0 = std::max(0, PopupX), X1 = std::min(ViewWidth, PopupX + PopupWidth);
+			const int Y = Tab.PopupY + Row;
+			if (Y < 0 || Y >= Tab.ViewHeight) continue;
+			const int X0 = std::max(0, Tab.PopupX), X1 = std::min(Tab.ViewWidth, Tab.PopupX + Tab.PopupWidth);
 			if (X1 <= X0) continue;
-			memcpy(&Composed[(size_t(Y) * ViewWidth + X0) * 4], &Popup[(size_t(Row) * PopupWidth + (X0 - PopupX)) * 4], size_t(X1 - X0) * 4);
+			memcpy(&Composed[(size_t(Y) * Tab.ViewWidth + X0) * 4], &Tab.Popup[(size_t(Row) * Tab.PopupWidth + (X0 - Tab.PopupX)) * 4],
+				size_t(X1 - X0) * 4);
 		}
 		Frame = Composed.data();
 	}
 	VideoWriter->Publish(Frame, NowSeconds());
 	++FramesPublished;
-	FrameTaps::Publish(Params.SessionId, Frame, ViewWidth, ViewHeight);
+	FrameTaps::Publish(Params.SessionId, Frame, Tab.ViewWidth, Tab.ViewHeight);
 }
 
-void FBrowserSession::OnAudioStarted(int Channels)
+void FBrowserSession::OnAudioStarted(uint32_t Tab, int Channels)
 {
 	std::lock_guard<std::mutex> Lock(AudioMutex);
 	AudioChannels = std::max(1, Channels);
@@ -571,12 +705,17 @@ void FBrowserSession::OnAudioStarted(int Channels)
 		AudioWriter.reset();
 		return;
 	}
-	LOG_INFO("session %u: browser audio started (%d channels)", Params.SessionId, Channels);
+	LOG_INFO("session %u: browser audio started (%d channels, tab %u)", Params.SessionId, Channels, Tab);
 	if (Events.OnAudio) Events.OnAudio(Params.SessionId, AudioRate, 2, AudioCapacity, Name);
 }
 
-void FBrowserSession::OnAudioPacket(const float** Data, int Frames)
+void FBrowserSession::OnAudioPacket(uint32_t Tab, const float** Data, int Frames)
 {
+	{
+		// Background tabs are muted; a packet already under way when its tab was hidden is dropped here.
+		std::lock_guard<std::mutex> Lock(TabsMutex);
+		if (Tab != ActiveTab) return;
+	}
 	std::lock_guard<std::mutex> Lock(AudioMutex);
 	if (Frames <= 0) return;
 	Interleaved.resize(size_t(Frames) * 2);
@@ -591,19 +730,65 @@ void FBrowserSession::OnAudioPacket(const float** Data, int Frames)
 	if (AudioWriter && AudioWriter->QueuedFrames() <= MaxAudioQueued) AudioWriter->Write(Interleaved.data(), uint32_t(Frames));
 }
 
-void FBrowserSession::OnBrowserState(const std::string& InUrl, const std::string& InTitle, int InLoading, int InCanGoBack, int InCanGoForward,
-	int InCursor, bool bPointerLocked)
+void FBrowserSession::OnBrowserState(uint32_t Tab, const std::string& InUrl, const std::string& InTitle, int InLoading, int InCanGoBack,
+	int InCanGoForward, int InCursor, bool bPointerLocked)
+{
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	FTab* Changed = FindTabLocked(Tab);
+	if (!Changed) return;
+	const bool bListChanged = Changed->Url != InUrl || Changed->Title != InTitle || Changed->Loading != InLoading;
+	Changed->Url = InUrl;
+	Changed->Title = InTitle;
+	Changed->Loading = InLoading;
+	Changed->CanGoBack = InCanGoBack;
+	Changed->CanGoForward = InCanGoForward;
+	Changed->Cursor = InCursor;
+	Changed->PointerLocked = bPointerLocked;
+	if (Tab == ActiveTab) SendStateLocked(*Changed);
+	if (bListChanged) SendTabsLocked();
+}
+
+void FBrowserSession::SendStateLocked(const FTab& Tab)
 {
 	if (Events.OnBrowserState)
 	{
-		Events.OnBrowserState(Params.SessionId, InUrl, InTitle, InLoading != 0, InCanGoBack != 0, InCanGoForward != 0, uint8_t(InCursor),
-			bPointerLocked);
+		Events.OnBrowserState(Params.SessionId, Tab.Url, Tab.Title, Tab.Loading != 0, Tab.CanGoBack != 0, Tab.CanGoForward != 0, uint8_t(Tab.Cursor),
+			Tab.PointerLocked);
 	}
+}
+
+void FBrowserSession::SendTabsLocked()
+{
+	if (!Events.OnBrowserTabs) return;
+	std::vector<FBrowserTabInfo> List;
+	List.reserve(Tabs.size());
+	for (const auto& Each : Tabs)
+	{
+		FBrowserTabInfo Info;
+		Info.Id = Each->Id;
+		Info.Title = Each->Title;
+		Info.Url = Each->Url;
+		Info.Loading = Each->Loading != 0;
+		List.push_back(std::move(Info));
+	}
+	Events.OnBrowserTabs(Params.SessionId, ActiveTab, List);
+}
+
+bool FBrowserSession::OnPageOpensTab(const std::string& Url, bool bForeground)
+{
+	std::lock_guard<std::mutex> Lock(TabsMutex);
+	if (Tabs.size() >= MaxTabs)
+	{
+		LOG_INFO("session %u: %zu tabs open; the pop-up loads in the current tab", Params.SessionId, Tabs.size());
+		return false;
+	}
+	AddTabLocked(Url, bForeground);
+	return true;
 }
 
 void FBrowserSession::HandleInput(EInput Kind, FPayloadReader& R)
 {
-	CefRefPtr<CefBrowser> BrowserRef = Client->GetBrowser();
+	CefRefPtr<CefBrowser> BrowserRef = GetActiveBrowser();
 	if (!BrowserRef) return;
 	CefRefPtr<CefBrowserHost> Host = BrowserRef->GetHost();
 	switch (Kind)
@@ -695,15 +880,98 @@ void FBrowserSession::HandleInput(EInput Kind, FPayloadReader& R)
 
 void FBrowserSession::HandleCommand(ECommand Command, FPayloadReader& R)
 {
-	CefRefPtr<CefBrowser> BrowserRef = Client->GetBrowser();
+	auto ToAddress = [](std::string Target)
+	{
+		if (Target.find("://") == std::string::npos && Target.rfind("about:", 0) != 0) Target = "https://" + Target;
+		return Target;
+	};
+	switch (Command)
+	{
+	case ECommand::NewTab:
+	{
+		const std::string Target = ToAddress(R.Str());
+		if (!R.Ok) return;
+		if (!IsAllowedUrl(Target))
+		{
+			LOG_WARN("session %u: refused to open %s", Params.SessionId, Target.substr(0, 200).c_str());
+			return;
+		}
+		std::lock_guard<std::mutex> Lock(TabsMutex);
+		if (Tabs.size() >= MaxTabs)
+		{
+			LOG_INFO("session %u: no new tab, %zu are open", Params.SessionId, Tabs.size());
+			return;
+		}
+		AddTabLocked(Target, true);
+		return;
+	}
+	case ECommand::SelectTab:
+	{
+		const uint32_t Tab = R.U32();
+		if (!R.Ok) return;
+		std::lock_guard<std::mutex> Lock(TabsMutex);
+		if (Tab != ActiveTab && FindTabLocked(Tab))
+		{
+			LOG_INFO("session %u: shows tab %u", Params.SessionId, Tab);
+			ActivateLocked(Tab);
+		}
+		return;
+	}
+	case ECommand::CloseTab:
+	{
+		const uint32_t Tab = R.U32();
+		if (!R.Ok) return;
+		CefRefPtr<FBrowserClient> Closed;
+		{
+			std::lock_guard<std::mutex> Lock(TabsMutex);
+			// The last tab stays: the game closes the whole session instead.
+			if (Tabs.size() <= 1) return;
+			auto It = std::find_if(Tabs.begin(), Tabs.end(), [Tab](const std::unique_ptr<FTab>& Each) { return Each->Id == Tab; });
+			if (It == Tabs.end()) return;
+			const size_t Index = size_t(It - Tabs.begin());
+			Closed = (*It)->Client;
+			Tabs.erase(It);
+			LOG_INFO("session %u: closed tab %u, %zu left", Params.SessionId, Tab, Tabs.size());
+			if (Tab == ActiveTab)
+			{
+				ActivateLocked(Tabs[std::min(Index, Tabs.size() - 1)]->Id);
+			}
+			else
+			{
+				SendTabsLocked();
+			}
+		}
+		Closed->Detach();
+		if (CefRefPtr<CefBrowser> BrowserRef = Closed->GetBrowser())
+		{
+			RunOnUi([BrowserRef] { BrowserRef->GetHost()->CloseBrowser(true); });
+		}
+		return;
+	}
+	case ECommand::Resize:
+	{
+		const uint32_t W = R.U32(), H = R.U32();
+		if (!R.Ok) return;
+		Width = int(std::clamp<uint32_t>(W, 16, 3840));
+		Height = int(std::clamp<uint32_t>(H, 16, 2160));
+		std::lock_guard<std::mutex> Lock(TabsMutex);
+		for (const auto& Each : Tabs)
+		{
+			if (CefRefPtr<CefBrowser> BrowserRef = Each->Browser) RunOnUi([BrowserRef] { BrowserRef->GetHost()->WasResized(); });
+		}
+		return;
+	}
+	default:
+		break;
+	}
+	CefRefPtr<CefBrowser> BrowserRef = GetActiveBrowser();
 	if (!BrowserRef) return;
 	switch (Command)
 	{
 	case ECommand::Navigate:
 	{
-		std::string Target = R.Str();
+		const std::string Target = ToAddress(R.Str());
 		if (!R.Ok) return;
-		if (Target.find("://") == std::string::npos && Target.rfind("about:", 0) != 0) Target = "https://" + Target;
 		if (!IsAllowedUrl(Target))
 		{
 			LOG_WARN("session %u: refused to open %s", Params.SessionId, Target.substr(0, 200).c_str());
@@ -716,14 +984,6 @@ void FBrowserSession::HandleCommand(ECommand Command, FPayloadReader& R)
 	case ECommand::Forward: RunOnUi([BrowserRef] { BrowserRef->GoForward(); }); break;
 	case ECommand::Reload: RunOnUi([BrowserRef] { BrowserRef->Reload(); }); break;
 	case ECommand::Stop: RunOnUi([BrowserRef] { BrowserRef->StopLoad(); }); break;
-	case ECommand::Resize:
-	{
-		const uint32_t W = R.U32(), H = R.U32();
-		if (!R.Ok) return;
-		Width = int(std::clamp<uint32_t>(W, 16, 3840));
-		Height = int(std::clamp<uint32_t>(H, 16, 2160));
-		RunOnUi([BrowserRef] { BrowserRef->GetHost()->WasResized(); });
-		break;
-	}
+	default: break;
 	}
 }

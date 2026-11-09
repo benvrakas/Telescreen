@@ -11,6 +11,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Telescreen.h"
+#include "TSTypes.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 

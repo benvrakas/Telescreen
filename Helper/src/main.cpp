@@ -267,6 +267,22 @@ namespace
 			Pipe.Send(uint16_t(EMsg::BrowserState), W.Bytes);
 		};
 
+		Events.OnBrowserTabs = [&Pipe](uint32_t Session, uint32_t ActiveTab, const std::vector<FBrowserTabInfo>& Tabs)
+		{
+			FPayloadWriter W;
+			W.U32(Session);
+			W.U32(ActiveTab);
+			W.U32(uint32_t(Tabs.size()));
+			for (const FBrowserTabInfo& Tab : Tabs)
+			{
+				W.U32(Tab.Id);
+				W.Str(Tab.Title.substr(0, 300));
+				W.Str(Tab.Url.substr(0, 2048));
+				W.U8(Tab.Loading ? 1 : 0);
+			}
+			Pipe.Send(uint16_t(EMsg::BrowserTabs), W.Bytes);
+		};
+
 		// Direct links: received packets go to their receiver session; link changes go to the mod.
 		FDirectHub Direct([&SessionsMutex, &Sessions](uint32_t Session, const FStreamPacket& Packet)
 		{

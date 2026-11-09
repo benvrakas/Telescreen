@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 9;
+	constexpr uint32_t Version = 10;
 
 	enum class EMsg : uint16_t
 	{
@@ -43,6 +43,7 @@ namespace TSHostProtocol
 		DirectRemovePeer = 30,
 		DirectState = 31,
 		RemoteSecurity = 32,
+		BrowserTabs = 33,
 	};
 
 	// StreamControl commands.
@@ -86,6 +87,11 @@ namespace TSHostProtocol
 		Resize = 5,
 		// Media sessions: u32 subtitle track id (0: none).
 		SelectSubtitles = 6,
+		// Browser sessions: str url (opens it in a new tab and shows that tab).
+		NewTab = 7,
+		// Browser sessions: u32 tab id.
+		CloseTab = 8,
+		SelectTab = 9,
 	};
 
 	// Modifier bits in input messages (as cef_event_flags_t).

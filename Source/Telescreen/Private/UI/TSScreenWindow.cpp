@@ -5,6 +5,8 @@
 #include "Components/Border.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
@@ -21,6 +23,7 @@
 #include "Screen/TSScreenPlayer.h"
 #include "Telescreen.h"
 #include "TSConfig.h"
+#include "UI/TSVanillaUI.h"
 
 #define LOCTEXT_NAMESPACE "Telescreen"
 
@@ -34,6 +37,10 @@ namespace
 	constexpr double EscapeHoldSeconds = 1.0;
 	// How long a new interactive window waits for its source to accept input.
 	constexpr double InteractiveStartSeconds = 20.0;
+	// Height the browser toolbar (tab strip and navigation bar) adds to the interactive window.
+	constexpr float BrowserToolbarHeight = 88.f;
+	// Characters of a tab's title shown on its button: fewer as more tabs share the strip.
+	constexpr int32 TabTitleCharacters = 120;
 
 	uint32 Modifiers(const FInputEvent& Event)
 	{
@@ -216,6 +223,35 @@ void UTSScreenWindow::BuildTree()
 	Hint->SetVisibility(ESlateVisibility::Collapsed);
 	Column->AddChildToVerticalBox(Hint)->SetPadding(FMargin(6.f, 2.f, 6.f, 4.f));
 
+	UHorizontalBox* Bar = WidgetTree->ConstructWidget<UHorizontalBox>();
+	auto AddToBar = [Bar](UWidget* Widget, bool bFill)
+	{
+		UHorizontalBoxSlot* BarSlot = Bar->AddChildToHorizontalBox(Widget);
+		BarSlot->SetPadding(FMargin(0.f, 0.f, 4.f, 0.f));
+		BarSlot->SetVerticalAlignment(VAlign_Center);
+		if (bFill)
+		{
+			BarSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+	};
+	BackButton = TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowBack", "Back"), this, GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleBack));
+	ForwardButton = TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowForward", "Forward"), this, GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleForward));
+	AddToBar(BackButton, false);
+	AddToBar(ForwardButton, false);
+	AddToBar(TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowReload", "Reload"), this, GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleReload)), false);
+	AddToBar(TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowHome", "Home"), this, GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleHome)), false);
+	AddressBox = TSVanillaUI::MakeInputBox(WidgetTree, LOCTEXT("WindowAddressHint", "Web address or search"), this,
+		GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleAddressCommitted));
+	AddToBar(AddressBox, true);
+	// The tab strip sits above the navigation bar; both show and hide together.
+	UVerticalBox* ToolbarBox = WidgetTree->ConstructWidget<UVerticalBox>();
+	TabStrip = WidgetTree->ConstructWidget<UHorizontalBox>();
+	ToolbarBox->AddChildToVerticalBox(TabStrip)->SetPadding(FMargin(0.f, 0.f, 0.f, 3.f));
+	ToolbarBox->AddChildToVerticalBox(Bar);
+	ToolbarBox->SetVisibility(ESlateVisibility::Collapsed);
+	Toolbar = ToolbarBox;
+	Column->AddChildToVerticalBox(ToolbarBox)->SetPadding(FMargin(3.f, 2.f, 3.f, 4.f));
+
 	UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>();
 	UVerticalBoxSlot* OverlaySlot = Column->AddChildToVerticalBox(Overlay);
 	OverlaySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -326,12 +362,13 @@ void UTSScreenWindow::Place()
 	FMargin FramePadding;
 	if (bInteractive)
 	{
+		const float Extra = 26.f + (bToolbarShown ? BrowserToolbarHeight : 0.f);
 		float Width = Viewport.X * 0.72f;
-		if (Width / Aspect > Viewport.Y * 0.8f)
+		if (Width / Aspect + Extra > Viewport.Y * 0.85f)
 		{
-			Width = Viewport.Y * 0.8f * Aspect;
+			Width = FMath::Max(160.f, (Viewport.Y * 0.85f - Extra) * Aspect);
 		}
-		NewSize = FVector2D(Width + 6.f, Width / Aspect + 26.f);
+		NewSize = FVector2D(Width + 6.f, Width / Aspect + Extra);
 		Anchor = FVector2D(0.5f, 0.5f);
 	}
 	else
@@ -434,8 +471,237 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		UpdateCursor();
 	}
+	UpdateToolbar(Player);
 	UpdateMarkerLabels(Player);
 	Place();
+}
+
+UTSScreenPlayer* UTSScreenWindow::GetOwnBrowser() const
+{
+	ATSBuildableScreen* Shown = Screen.Get();
+	UTSScreenPlayer* Player = Shown ? Shown->GetPlayer() : nullptr;
+	return Player && Shown->GetMode() == ETSScreenMode::Browser && Shown->IsLocallyControlled() && Player->HasBrowser() ? Player : nullptr;
+}
+
+void UTSScreenWindow::UpdateToolbar(UTSScreenPlayer* Player)
+{
+	UTSScreenPlayer* Own = bInteractive ? GetOwnBrowser() : nullptr;
+	const bool bShow = Own != nullptr;
+	if (bShow != bToolbarShown)
+	{
+		bToolbarShown = bShow;
+		Toolbar->SetVisibility(bShow ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		ShownAddress.Reset();
+		ShownTabsKey.Reset();
+		UE_LOG(LogTelescreen, Log, TEXT("%s: browser toolbar %s"), *GetNameSafe(Screen.Get()), bShow ? TEXT("shown") : TEXT("hidden"));
+	}
+	if (!Own)
+	{
+		return;
+	}
+	UpdateTabs(Own);
+	const FTSBrowserState& State = Own->GetBrowserState();
+	TSVanillaUI::SetButtonEnabled(BackButton, State.bCanGoBack);
+	TSVanillaUI::SetButtonEnabled(ForwardButton, State.bCanGoForward);
+	if (!TSVanillaUI::InputHasFocus(AddressBox) && State.Url != ShownAddress)
+	{
+		ShownAddress = State.Url;
+		TSVanillaUI::SetInputText(AddressBox, FText::FromString(State.Url));
+	}
+}
+
+bool UTSScreenWindow::HandleNavigationKey(const FKey& Key, bool bAlt, bool bCtrl, bool bShift)
+{
+	UTSScreenPlayer* Own = GetOwnBrowser();
+	if (!Own)
+	{
+		return false;
+	}
+	if (bCtrl && !bAlt && (Key == EKeys::T || Key == EKeys::W || Key == EKeys::Tab))
+	{
+		const TArray<FTSBrowserTab>& Tabs = Own->GetBrowserTabs();
+		const int32 Shown = Tabs.IndexOfByPredicate([Own](const FTSBrowserTab& Tab) { return Tab.Id == Own->GetActiveBrowserTab(); });
+		if (Key == EKeys::T)
+		{
+			Own->BrowserNewTab(FString());
+		}
+		else if (Key == EKeys::W)
+		{
+			if (Tabs.Num() > 1 && Shown != INDEX_NONE)
+			{
+				Own->BrowserCloseTab(Tabs[Shown].Id);
+			}
+		}
+		else if (Tabs.Num() > 1 && Shown != INDEX_NONE)
+		{
+			Own->BrowserSelectTab(Tabs[(Shown + (bShift ? Tabs.Num() - 1 : 1)) % Tabs.Num()].Id);
+		}
+		return true;
+	}
+	TSHostProtocol::ECommand Command;
+	if ((bAlt && Key == EKeys::Left) || Key == EKeys::ThumbMouseButton)
+	{
+		Command = TSHostProtocol::ECommand::Back;
+	}
+	else if ((bAlt && Key == EKeys::Right) || Key == EKeys::ThumbMouseButton2)
+	{
+		Command = TSHostProtocol::ECommand::Forward;
+	}
+	else if (Key == EKeys::F5)
+	{
+		Command = TSHostProtocol::ECommand::Reload;
+	}
+	else
+	{
+		return false;
+	}
+	UE_LOG(LogTelescreen, Verbose, TEXT("%s: browser command %d from %s"), *GetNameSafe(Screen.Get()), int32(Command), *Key.ToString());
+	Own->BrowserCommand(Command);
+	return true;
+}
+
+void UTSScreenWindow::HandleBack()
+{
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		Own->BrowserCommand(TSHostProtocol::ECommand::Back);
+	}
+	SetKeyboardFocus();
+}
+
+void UTSScreenWindow::HandleForward()
+{
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		Own->BrowserCommand(TSHostProtocol::ECommand::Forward);
+	}
+	SetKeyboardFocus();
+}
+
+void UTSScreenWindow::HandleReload()
+{
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		Own->BrowserCommand(TSHostProtocol::ECommand::Reload);
+	}
+	SetKeyboardFocus();
+}
+
+void UTSScreenWindow::HandleHome()
+{
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		Own->BrowserNavigate(UTSConfig::GetString(this, UTSConfig::BrowserHomeKey, TEXT("https://duckduckgo.com")));
+	}
+	SetKeyboardFocus();
+}
+
+void UTSScreenWindow::HandleAddressCommitted(const FText& Text, ETextCommit::Type Method)
+{
+	if (Method != ETextCommit::OnEnter)
+	{
+		return;
+	}
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		Own->BrowserNavigate(Text.ToString());
+		ShownAddress.Reset();
+	}
+	// Typing goes back to the page.
+	SetKeyboardFocus();
+}
+
+void UTSWindowTabAction::HandleClicked()
+{
+	if (Window)
+	{
+		Window->HandleTab(Tab, bClose);
+	}
+}
+
+void UTSScreenWindow::HandleNewTab()
+{
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		Own->BrowserNewTab(FString());
+	}
+	SetKeyboardFocus();
+}
+
+void UTSScreenWindow::HandleTab(uint32 Tab, bool bClose)
+{
+	if (UTSScreenPlayer* Own = GetOwnBrowser())
+	{
+		if (bClose)
+		{
+			Own->BrowserCloseTab(Tab);
+		}
+		else if (Tab != Own->GetActiveBrowserTab())
+		{
+			Own->BrowserSelectTab(Tab);
+		}
+	}
+	SetKeyboardFocus();
+}
+
+void UTSScreenWindow::UpdateTabs(UTSScreenPlayer* Own)
+{
+	const TArray<FTSBrowserTab>& Tabs = Own->GetBrowserTabs();
+	const int32 TitleChars = FMath::Clamp(TabTitleCharacters / FMath::Max(1, Tabs.Num()), 6, 32);
+	auto Label = [TitleChars](const FTSBrowserTab& Tab)
+	{
+		FString Text = !Tab.Title.IsEmpty() ? Tab.Title : Tab.bLoading ? FString(TEXT("Loading...")) : !Tab.Url.IsEmpty() ? Tab.Url : FString(TEXT("New tab"));
+		if (Text.Len() > TitleChars)
+		{
+			Text = Text.Left(TitleChars - 2).TrimEnd() + TEXT("..");
+		}
+		return Text;
+	};
+	FString Key = FString::Printf(TEXT("%u|"), Own->GetActiveBrowserTab());
+	for (const FTSBrowserTab& Tab : Tabs)
+	{
+		Key += FString::Printf(TEXT("%u:%s|"), Tab.Id, *Label(Tab));
+	}
+	if (Key == ShownTabsKey)
+	{
+		return;
+	}
+	ShownTabsKey = Key;
+	TabStrip->ClearChildren();
+	TabActions.Reset();
+	auto MakeAction = [this](uint32 Tab, bool bClose)
+	{
+		UTSWindowTabAction* Action = NewObject<UTSWindowTabAction>(this);
+		Action->Window = this;
+		Action->Tab = Tab;
+		Action->bClose = bClose;
+		TabActions.Add(Action);
+		return Action;
+	};
+	for (const FTSBrowserTab& Tab : Tabs)
+	{
+		UWidget* TabButton = TSVanillaUI::MakeTab(WidgetTree, FText::FromString(Label(Tab)), MakeAction(Tab.Id, false),
+			GET_FUNCTION_NAME_CHECKED(UTSWindowTabAction, HandleClicked));
+		TSVanillaUI::SetTabActive(TabButton, Tab.Id == Own->GetActiveBrowserTab());
+		TabButton->SetToolTipText(FText::FromString(Tab.Title.IsEmpty() ? Tab.Url : Tab.Title + TEXT("\n") + Tab.Url));
+		UHorizontalBoxSlot* TabSlot = TabStrip->AddChildToHorizontalBox(TabButton);
+		TabSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		TabSlot->SetVerticalAlignment(VAlign_Center);
+		if (Tabs.Num() > 1)
+		{
+			UWidget* CloseButton = TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowCloseTab", "x"), MakeAction(Tab.Id, true),
+				GET_FUNCTION_NAME_CHECKED(UTSWindowTabAction, HandleClicked));
+			CloseButton->SetToolTipText(LOCTEXT("WindowCloseTabTip", "Close this tab (Ctrl+W)"));
+			UHorizontalBoxSlot* CloseSlot = TabStrip->AddChildToHorizontalBox(CloseButton);
+			CloseSlot->SetPadding(FMargin(1.f, 0.f, 6.f, 0.f));
+			CloseSlot->SetVerticalAlignment(VAlign_Center);
+		}
+	}
+	UWidget* NewTab = TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowNewTab", "+"), this, GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleNewTab));
+	NewTab->SetToolTipText(LOCTEXT("WindowNewTabTip", "New tab (Ctrl+T)"));
+	UHorizontalBoxSlot* NewSlot = TabStrip->AddChildToHorizontalBox(NewTab);
+	NewSlot->SetPadding(FMargin(4.f, 0.f, 0.f, 0.f));
+	NewSlot->SetVerticalAlignment(VAlign_Center);
 }
 
 void UTSScreenWindow::UpdateMarkerLabels(const UTSScreenPlayer* Player)
@@ -548,6 +814,15 @@ FReply UTSScreenWindow::HandleButton(const FPointerEvent& Event, bool bUp, int32
 		return FReply::Unhandled();
 	}
 	const FKey Key = Event.GetEffectingButton();
+	// The mouse's side buttons are back and forward, as in a desktop browser.
+	if (Key == EKeys::ThumbMouseButton || Key == EKeys::ThumbMouseButton2)
+	{
+		if (!bUp)
+		{
+			HandleNavigationKey(Key, false, false, false);
+		}
+		return FReply::Handled();
+	}
 	const uint8 Button = Key == EKeys::MiddleMouseButton ? 1 : Key == EKeys::RightMouseButton ? 2 : 0;
 	FVector2D Position(0.5f, 0.5f);
 	if (!PicturePosition(Event, Position) && !Player->GetBrowserState().bPointerLocked)
@@ -621,6 +896,10 @@ FReply UTSScreenWindow::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyE
 	if (InKeyEvent.GetKey() == EKeys::Escape && EscapeDownAt == 0.0)
 	{
 		EscapeDownAt = FPlatformTime::Seconds();
+	}
+	if (HandleNavigationKey(InKeyEvent.GetKey(), InKeyEvent.IsAltDown(), InKeyEvent.IsControlDown(), InKeyEvent.IsShiftDown()))
+	{
+		return FReply::Handled();
 	}
 	if (UTSScreenPlayer* Player = GetBrowserPlayer())
 	{

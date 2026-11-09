@@ -2,17 +2,39 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Types/SlateEnums.h"
 #include "TSScreenWindow.generated.h"
 
 class ATSBuildableScreen;
 class UBorder;
 class UCanvasPanel;
+class UHorizontalBox;
 class UImage;
 class UOverlaySlot;
 class USizeBox;
 class UTextBlock;
 class UTexture;
 class UTSScreenPlayer;
+class UWidget;
+
+class UTSScreenWindow;
+
+// Routes one browser tab button's click (show the tab, or close it) to its window.
+UCLASS()
+class UTSWindowTabAction : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY()
+	TObjectPtr<UTSScreenWindow> Window;
+
+	uint32 Tab = 0;
+	bool bClose = false;
+
+	UFUNCTION()
+	void HandleClicked();
+};
 
 // A screen shown on the HUD. Pass-through: a small picture in a corner that never takes input. Interactive: a large
 // window whose mouse and keyboard go to the screen's browser.
@@ -51,6 +73,22 @@ public:
 	virtual FReply NativeOnKeyUp(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual FReply NativeOnKeyChar(const FGeometry& InGeometry, const FCharacterEvent& InCharEvent) override;
 
+	// Browser toolbar (the controller's own browser, while interactive).
+	UFUNCTION()
+	void HandleBack();
+	UFUNCTION()
+	void HandleForward();
+	UFUNCTION()
+	void HandleReload();
+	UFUNCTION()
+	void HandleHome();
+	UFUNCTION()
+	void HandleAddressCommitted(const FText& Text, ETextCommit::Type Method);
+	UFUNCTION()
+	void HandleNewTab();
+	// A tab button: shows Tab, or closes it.
+	void HandleTab(uint32 Tab, bool bClose);
+
 private:
 	static UTSScreenWindow* Show(ATSBuildableScreen* Screen);
 	void BuildTree();
@@ -61,6 +99,14 @@ private:
 	FReply HandleButton(const FPointerEvent& Event, bool bUp, int32 ClickCount);
 	void UpdateCursor();
 	bool IsFocusKey(const FKey& Key) const;
+	// Shows the toolbar for the controller's browser and keeps its buttons and address in step with the page.
+	void UpdateToolbar(UTSScreenPlayer* Player);
+	// Back, forward or reload from a shortcut (Alt+Left/Right, F5, the mouse's side buttons), or a tab shortcut
+	// (Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab); false if Key isn't one.
+	bool HandleNavigationKey(const FKey& Key, bool bAlt, bool bCtrl, bool bShift);
+	// Rebuilds the tab strip when the browser's tabs changed.
+	void UpdateTabs(UTSScreenPlayer* Own);
+	UTSScreenPlayer* GetOwnBrowser() const;
 
 	TWeakObjectPtr<ATSBuildableScreen> Screen;
 	bool bInteractive = false;
@@ -93,6 +139,22 @@ private:
 	TObjectPtr<UTextBlock> Hint;
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture> ShownTexture;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> Toolbar;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> BackButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> ForwardButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> AddressBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UHorizontalBox> TabStrip;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTSWindowTabAction>> TabActions;
+	// The tab list the strip shows (ids, titles, the shown one), to rebuild it only when that changes.
+	FString ShownTabsKey;
+	bool bToolbarShown = false;
+	FString ShownAddress;
 
 	FVector2D PlacedSize = FVector2D::ZeroVector;
 	FVector2D PlacedAnchor = FVector2D(-1.f, -1.f);

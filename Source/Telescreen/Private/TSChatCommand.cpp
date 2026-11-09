@@ -28,7 +28,8 @@ namespace
 		const int32 At = FMath::Max(0, FMath::FloorToInt(Screen->GetPlaybackPosition()));
 		FString Text = FString::Printf(TEXT("\"%s\" %s at %d:%02d"), *Item->GetDisplayTitle().Left(60), State.bPaused ? TEXT("paused") : TEXT("playing"), At / 60,
 			At % 60);
-		if (!Screen->GetMediaStreamerName().IsEmpty())
+		// The media streamer only streams while a player who can't play the video watches it.
+		if (!Screen->GetMediaStreamerName().IsEmpty() && Screen->GetViewerCount() > 0)
 		{
 			Text += FString::Printf(TEXT(", streamed by %s"), *Screen->GetMediaStreamerName());
 		}

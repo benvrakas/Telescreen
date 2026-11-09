@@ -22,6 +22,15 @@ struct FTSBrowserState
 	bool bPointerLocked = false;
 };
 
+// One tab of a browser session.
+struct FTSBrowserTab
+{
+	uint32 Id = 0;
+	FString Title;
+	FString Url;
+	bool bLoading = false;
+};
+
 // Builds the little-endian payloads of helper messages.
 struct FTSPayloadWriter
 {
@@ -69,6 +78,8 @@ public:
 	virtual void OnHostLost() = 0;
 	// Browser sessions only.
 	virtual void OnHostBrowserState(const FTSBrowserState& State) {}
+	// Browser sessions only: every open tab, in order, and the one shown.
+	virtual void OnHostBrowserTabs(uint32 ActiveTab, const TArray<FTSBrowserTab>& Tabs) {}
 	// Stream sender sessions only: an encoded packet to send to the viewers.
 	virtual void OnHostStreamPacket(uint8 Kind, uint8 Flags, uint32 PtsMs, uint32 Codec, TArray<uint8>&& Data) {}
 	// Media sessions only: the subtitle tracks found, and cues of the selected track (bReplace: instead of the earlier ones).
@@ -97,6 +108,8 @@ struct FTSProbeResult
 	double Duration = 0.0;
 	bool bIsLive = false;
 	FString Error;
+	// The helper couldn't run, so the link wasn't looked at (it may still play).
+	bool bHostUnavailable = false;
 };
 
 struct FTSOpenMediaParams
@@ -186,10 +199,14 @@ public:
 	bool IsBrowserAvailable() const;
 	void CloseSession(uint32 Session);
 
-	// Looks up a link's title and duration with yt-dlp; OnDone runs on the game thread.
+	// Looks up a link's title and duration with yt-dlp; OnDone runs on the game thread. Waits for a helper that is
+	// starting (up to ProbeStartWaitSeconds).
 	void Probe(const FString& Url, TFunction<void(const FTSProbeResult&)> OnDone);
 
 private:
+	// Fails the probes waiting for the helper to start with Reason.
+	void FailWaitingProbes(const FString& Reason);
+
 	bool StartHost();
 	void StopHost(const TCHAR* Reason);
 	void Dispatch(uint16 Type, const TArray<uint8>& Payload);
@@ -212,6 +229,9 @@ private:
 	TMap<uint32, TFunction<void(const TArray<FTSWindowInfo>&)>> PendingWindowLists;
 	TMap<uint32, ITSHostSessionListener*> Listeners;
 	TMap<uint32, TFunction<void(const FTSProbeResult&)>> PendingProbes;
+	// Probes asked for while the helper was starting: link and callback, sent once it is ready.
+	TArray<TPair<FString, TFunction<void(const FTSProbeResult&)>>> WaitingProbes;
+	double WaitingProbesSince = 0.0;
 	TArray<TFunction<void(const TArray<FString>&)>> PendingDirect;
 	TArray<FString> DirectCandidates;
 	bool bDirectRequested = false;

@@ -27,6 +27,8 @@ namespace
 	// A pipe write waiting longer than this is logged; longer than HelperHangSeconds restarts the helper.
 	constexpr double WriteStallSeconds = 3.0;
 	constexpr double HelperHangSeconds = 30.0;
+	// How long a probe waits for a starting helper before it fails.
+	constexpr double ProbeStartWaitSeconds = 20.0;
 
 	void PutU8(TArray<uint8>& Out, uint8 V) { Out.Add(V); }
 	void PutU32(TArray<uint8>& Out, uint32 V) { Out.Append(reinterpret_cast<const uint8*>(&V), 4); }
@@ -498,6 +500,15 @@ void UTSHostSubsystem::StopHost(const TCHAR* Reason)
 
 void UTSHostSubsystem::Tick(float DeltaTime)
 {
+	if (WaitingProbes.Num() > 0 && !bConnected)
+	{
+		// A helper that stopped during start is restarted here while probes wait for it.
+		EnsureConnected();
+		if (FPlatformTime::Seconds() - WaitingProbesSince > ProbeStartWaitSeconds || (!Connection.IsValid() && StartAttempts >= MaxStartAttempts))
+		{
+			FailWaitingProbes(GetUnavailableReason().ToString());
+		}
+	}
 	if (!Connection.IsValid())
 	{
 		LastTickAt = 0.0;
@@ -625,6 +636,16 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		StartAttempts = 0;
 		LastProblem = FText::GetEmpty();
 		UE_LOG(LogTelescreen, Log, TEXT("Host: ready (TelescreenHost %s, pid %u)"), *HostBuild, HostPid);
+		if (WaitingProbes.Num() > 0)
+		{
+			UE_LOG(LogTelescreen, Log, TEXT("Host: sending %d link lookup(s) asked for while it started"), WaitingProbes.Num());
+			TArray<TPair<FString, TFunction<void(const FTSProbeResult&)>>> Waiting = MoveTemp(WaitingProbes);
+			WaitingProbes.Reset();
+			for (auto& Pair : Waiting)
+			{
+				Probe(Pair.Key, MoveTemp(Pair.Value));
+			}
+		}
 		break;
 	}
 	case EMsg::SessionVideo:
@@ -695,6 +716,26 @@ void UTSHostSubsystem::Dispatch(uint16 Type, const TArray<uint8>& Payload)
 		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
 		{
 			(*Listener)->OnHostBrowserState(State);
+		}
+		break;
+	}
+	case EMsg::BrowserTabs:
+	{
+		const uint32 Session = R.U32();
+		const uint32 ActiveTab = R.U32();
+		const uint32 Count = R.U32();
+		TArray<FTSBrowserTab> Tabs;
+		for (uint32 I = 0; I < Count && R.bOk && I < 64; ++I)
+		{
+			FTSBrowserTab& Tab = Tabs.AddDefaulted_GetRef();
+			Tab.Id = R.U32();
+			Tab.Title = R.Str();
+			Tab.Url = R.Str();
+			Tab.bLoading = R.U8() != 0;
+		}
+		if (ITSHostSessionListener** Listener = Listeners.Find(Session); Listener && R.bOk)
+		{
+			(*Listener)->OnHostBrowserTabs(ActiveTab, Tabs);
 		}
 		break;
 	}
@@ -1153,8 +1194,19 @@ void UTSHostSubsystem::Probe(const FString& Url, TFunction<void(const FTSProbeRe
 {
 	if (!EnsureConnected())
 	{
+		if (Connection.IsValid())
+		{
+			if (WaitingProbes.Num() == 0)
+			{
+				WaitingProbesSince = FPlatformTime::Seconds();
+			}
+			UE_LOG(LogTelescreen, Log, TEXT("Host: starting; the link lookup waits for it"));
+			WaitingProbes.Emplace(Url, MoveTemp(OnDone));
+			return;
+		}
 		FTSProbeResult Failed;
 		Failed.Error = GetUnavailableReason().ToString();
+		Failed.bHostUnavailable = true;
 		OnDone(Failed);
 		return;
 	}
@@ -1164,6 +1216,24 @@ void UTSHostSubsystem::Probe(const FString& Url, TFunction<void(const FTSProbeRe
 	PutU32(Payload, Request);
 	PutStr(Payload, Url);
 	Send(EMsg::Probe, Payload);
+}
+
+void UTSHostSubsystem::FailWaitingProbes(const FString& Reason)
+{
+	if (WaitingProbes.Num() == 0)
+	{
+		return;
+	}
+	UE_LOG(LogTelescreen, Warning, TEXT("Host: %d link lookup(s) gave up waiting for the helper: %s"), WaitingProbes.Num(), *Reason);
+	TArray<TPair<FString, TFunction<void(const FTSProbeResult&)>>> Waiting = MoveTemp(WaitingProbes);
+	WaitingProbes.Reset();
+	for (auto& Pair : Waiting)
+	{
+		FTSProbeResult Failed;
+		Failed.Error = Reason;
+		Failed.bHostUnavailable = true;
+		Pair.Value(Failed);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

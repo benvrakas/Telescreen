@@ -6,9 +6,20 @@
 
 #include <functional>
 
+// One tab of a browser session, as reported to the mod.
+struct FBrowserTabInfo
+{
+	uint32_t Id = 0;
+	std::string Title;
+	std::string Url;
+	bool Loading = false;
+};
+
 // Messages a session sends towards the mod.
 struct FSessionEvents
 {
+	// Browser sessions: every open tab, in order, and the one shown.
+	std::function<void(uint32_t Session, uint32_t ActiveTab, const std::vector<FBrowserTabInfo>& Tabs)> OnBrowserTabs;
 	std::function<void(uint32_t Session, uint32_t Generation, uint32_t Width, uint32_t Height, const std::string& Mapping)> OnVideo;
 	std::function<void(uint32_t Session, uint32_t SampleRate, uint32_t Channels, uint32_t Capacity, const std::string& Mapping)> OnAudio;
 	std::function<void(uint32_t Session, TSHostProtocol::ESessionState State, double Position, double Duration, const std::string& Message)> OnState;

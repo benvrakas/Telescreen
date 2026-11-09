@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.2
+
+- The browser window has a toolbar: Back, Forward, Reload, Home and an address box. Alt+Left / Alt+Right, the mouse's
+  side buttons and F5 work too (the side buttons used to click in the page).
+- Browser tabs: + (or Ctrl+T) opens a tab, x (or Ctrl+W) closes one, Ctrl+Tab switches. Links and pop-ups that open
+  a new window open a tab instead. The screen shows, streams and plays the sound of the tab you're on; other tabs are
+  muted.
+- The first link you add after starting the game gets its title again. It used to be added as "without a title
+  (Telescreen's player isn't running on this PC)" while the player was still starting.
+- `/ts list` only says a video is streamed by someone while a player actually watches that stream.
+- Client-side only: 1.0.2 and 1.0.1 can play together (a 1.0.1 server accepts 1.0.2 players, and the other way round).
+
 ## 1.0.1
 
 - Streams adapt to the viewers' connections: the world host watches each relayed player's lag and packet loss and

@@ -39,13 +39,14 @@ a send that fails closes the connection, because a partly sent message would cor
 | Shutdown | mod → host | (empty) |
 | OpenBrowser | mod → host | u32 session, str url, u32 width, u32 height, u8 keep logins, str profile name |
 | BrowserInput | mod → host | u32 session, u8 kind, then by kind: MouseMove: i32 x, i32 y, u32 modifiers; MouseButton: i32 x, i32 y, u8 button (0 left, 1 middle, 2 right), u8 up, u8 click count, u32 modifiers; Wheel: i32 x, i32 y, i32 dx, i32 dy, u32 modifiers; Key: u8 type, i32 Windows key code, i32 native key code, u16 character, u32 modifiers; Text: str; MouseLeave: none; Focus: u8 focused; PointerDelta: i32 dx, i32 dy (raw mouse movement while the page holds the pointer lock) |
-| BrowserCommand | mod → host | u32 session, u8 command, then Navigate: str url; Resize: u32 width, u32 height |
+| BrowserCommand | mod → host | u32 session, u8 command, then Navigate: str url; Resize: u32 width, u32 height; NewTab: str url; CloseTab, SelectTab: u32 tab id. Navigate, Back, Forward, Reload, Stop and input act on the shown tab |
 | OpenLoopback | mod → host | u32 session, u32 source session, u32 fps, u32 kbps, str preferred encoder (M3 test: the source's frames through the stream encoder and decoder) |
 | OpenStreamSender | mod → host | u32 session, u32 source session, u32 fps, u32 kbps, u8 allow software encoding, str preferred encoder (empty, a family `av1`/`hevc`/`h264`/`software`, or an FFmpeg encoder name), u32 max height (0: the source size; taller frames are scaled down keeping their shape) |
 | OpenStreamReceiver | mod → host | u32 session |
 | StreamPacket | both | u32 session, u8 kind (0 video, 1 audio), u8 flags (1 keyframe), u32 pts ms, u32 codec (AVCodecID), then the packet bytes to the end of the payload. Host → mod from senders, mod → host for receivers |
 | StreamControl | mod → host | u32 session, u8 command (0 keyframe, 1 bitrate kbps, 2 reset: drop video until the next keyframe), u32 value |
 | BrowserState | host → mod | u32 session, str url, str title, u8 loading, u8 can go back, u8 can go forward, u8 cursor type (cef_cursor_type_t), u8 pointer locked |
+| BrowserTabs | host → mod | u32 session, u32 shown tab id, u32 count, then per tab in order: u32 id, str title, str url, u8 loading. Sent when a tab opens, closes or is shown, and when one's title, address or loading state changes. BrowserState always describes the shown tab |
 | OpenWindow | mod → host | u32 session, u32 window handle low, u32 window handle high, u8 include cursor, u8 capture sound, u32 max width, u32 max height |
 | ListWindows | mod → host | u32 request |
 | WindowList | host → mod | u32 request, u32 count, then per window: u32 handle low, u32 handle high, u32 process id, str title, str exe name |
@@ -64,7 +65,8 @@ BrowserCommand 6 (SelectSubtitles, media sessions) carries u32 track id (0: none
 
 Protocol version 3 added the three window messages. Version 5 added the stream sender's max height, version 6 OpenVnc's wanted size,
 version 7 subtitles (OpenMedia's language, SubtitleTracks, SubtitleCues, SelectSubtitles), version 8 direct links,
-version 9 VeNCrypt (OpenVnc's user, pin and requirement, RemoteSecurity).
+version 9 VeNCrypt (OpenVnc's user, pin and requirement, RemoteSecurity), version 10 browser tabs (NewTab, CloseTab,
+SelectTab, BrowserTabs).
 
 Window sessions take BrowserInput (mouse, wheel, key, text; positions in the session's frame pixels) and post it to
 the window; their sound goes only to the frame and audio taps (the stream sender), not to a SessionAudio ring,
@@ -81,6 +83,13 @@ don't check.
 
 Browser sessions use the same SessionVideo / SessionAudio / SessionState messages; their audio is live (no clock
 or sync target), and the browser's coordinates are the pixels of its video frames.
+
+A browser session's tabs are separate CEF browsers sharing one request context (cookies and logins). Only the shown
+tab paints into the session's video mapping, is heard and gets input; the others are hidden (`WasHidden`) and muted
+(`SetAudioMuted`), as a shared screen shows and plays one page. Showing a tab republishes its last frame at once and
+asks CEF for a fresh one. Links and scripts that open a new window or tab (`target=_blank`, `window.open`, a middle
+click) open a tab instead, shown unless the page asked for a background tab; past 12 tabs they load in the current
+tab. The last tab can't be closed: the mod closes the session instead.
 
 ## Video: triple buffer in shared memory
 
