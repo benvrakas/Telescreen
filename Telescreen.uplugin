@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.0.3",
-	"SemVersion": "1.0.3",
+	"VersionName": "1.0.4",
+	"SemVersion": "1.0.4",
 	"RemoteVersionRange": ">=1.0.1",
 	"GameVersion": ">=513885",
 	"FriendlyName": "Telescreen",
