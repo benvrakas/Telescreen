@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+- Screen sound plays through the game's audio engine again (rooms, reverb, walls, the Boom Box volume slider). Since
+  the game update of 4 November 2026 it played through Unreal; Telescreen now finds the game's Boom Box sounds where
+  the game keeps them now.
+- Client-side only: 1.0.4 plays with 1.0.1 to 1.0.3 servers and players.
+
 ## 1.0.3
 
 - A new or idle screen shows its card again (TELESCREEN, its name, "Interact to add a video"). The card was drawn

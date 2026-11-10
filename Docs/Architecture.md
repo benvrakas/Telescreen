@@ -394,7 +394,7 @@ nothing from AkAudio), at the screen's centre, with its attenuation scaled by th
 Hearing range setting) through `SetAttenuationScalingFactor`. Rooms, reverb, occlusion and the game's volume sliders
 (the Boom Box mix, which the bank comes from) apply.
 
-- `TSWwiseScreens::EnsureReady` builds the bank from the first `Play_Boombox_*.bnk` with one event whose Play action
+- `TSWwiseScreens::EnsureReady` builds the bank from the first Boom Box song bank with one event whose Play action
   targets a sound: that sound's source becomes Audio Input (plugin `0x00C80002`, with its plugin settings object and
   the 4-byte parameter size), every object gets a `TS_Screen_<old id>` id, the bank `TS_Screen_Bank`, the source
   `TS_Screen_Input`. Then it registers the built-in Audio Input plugin (another mod may already have) and loads it.
@@ -412,16 +412,14 @@ Hearing range setting) through `SetAttenuationScalingFactor`. Rooms, reverb, occ
 - If Wwise ends the sound itself it is posted again; two quick ends in a row switch that sound to the Unreal path
   (`UAudioComponent` + `UTSStreamingSoundWave`), which is also used when the setting is off or Wwise isn't reachable.
 
-**Broken since the game update of 2026-11-04 (open).** The game no longer ships loose `.bnk` files: the
-`FactoryGame-Windows.pak` listing has no `WwiseAudio` entries at all, and each bank now sits as bulk data inside its
-event asset in the IoStore container (e.g. `FactoryGame/Content/WwiseAudio/Events/Interface/BoomBox/
-Play_Boombox_UI_Forward.uasset`, 66 KB; `UnrealPak <utoc> -List`). The Wwise integration's `FWwisePackagedFile`
-(`PackagingStrategy` `EWwisePackagingStrategy::BulkData`, `SharedBulkDataArray`) holds it. `EnsureReady` searches
-`Content/WwiseAudio/Event` on disk, finds 0 banks and logs "Wwise screens: unavailable; screens play through Unreal
-(0 Boom Box song bank(s) found)", so every screen uses the Unreal path. BoomBoxPlus's Wwise music fails the same way.
-Fix idea, untested: load a Boom Box song event (`UAkAudioEvent`) by path, find its sound bank's `FWwisePackagedFile`
-through reflection, and copy the bank bytes out of its bulk data (`FByteBulkData::GetCopy`), without importing
-anything from the Wwise modules. Needs checking in the game, and should change both mods together.
+**Where the song banks are (fixed in 1.0.4).** Since the game update of 2026-11-04 the game ships no loose `.bnk`
+files: each bank is bulk data inside its event asset in the IoStore container (e.g. `/Game/WwiseAudio/Events/
+Equipment/BoomBox/Goat/Play_Boombox_GSFTS_Goatshire`), and 1.0.3 logged "Wwise screens: unavailable ... (0 Boom Box
+song bank(s) found)". `Private/Audio/SFModWwiseGameBanks.h` (identical in BoomBoxPlus) lists the song events through
+the asset registry, reads each package's data (its `.uexp`, or its IoStore package chunk through `FIoDispatcher`),
+cuts the bank (`BKHD` ... `HIRC` ...) out of it, and falls back to the old loose files. It never loads the event or
+calls into Wwise. Details, and why not `UAkAudioEvent` + `FByteBulkData::GetCopy`: BoomBoxPlus `Docs/WwiseMusic.md`,
+"Where the song banks are".
 
 ## Viewer control and markers (M6)
 

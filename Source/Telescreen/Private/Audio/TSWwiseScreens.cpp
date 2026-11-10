@@ -1,11 +1,9 @@
 #include "Audio/TSWwiseScreens.h"
 #include "Audio/SFModWwiseAudioInput.h"
+#include "Audio/SFModWwiseGameBanks.h"
 #include "Audio/TSWwise.h"
 #include "Components/SceneComponent.h"
 #include "Features/IModularFeatures.h"
-#include "HAL/FileManager.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 #include "Screen/TSSharedBuffers.h"
 #include "Telescreen.h"
 #if PLATFORM_WINDOWS
@@ -323,27 +321,19 @@ bool TSWwiseScreens::EnsureReady()
 		UE_LOG(LogTelescreen, Log, TEXT("Wwise screens: unavailable; screens play through Unreal"));
 		return false;
 	}
-	TArray<FString> Files;
-	IFileManager::Get().FindFilesRecursive(Files, *(FPaths::ProjectContentDir() / TEXT("WwiseAudio") / TEXT("Event")), TEXT("Play_Boombox_*.bnk"), true, false);
-	Files.Sort();
-	for (const FString& File : Files)
+	const SFModWwiseGameBanks::FSearch Search = SFModWwiseGameBanks::ForEachSongBank([](const FString& Name, const TArray<uint8>& Song)
 	{
-		const FString Name = FPaths::GetBaseFilename(File);
-		if (Name.Contains(TEXT("_UI_")) || Name.Contains(TEXT("Animation")))
-		{
-			continue;
-		}
-		TArray<uint8> Song;
 		TArray<uint8> Bank;
-		if (!FFileHelper::LoadFileToArray(Song, *File) || !BuildScreenBank(Song, Bank, ScreenEventId))
+		if (!BuildScreenBank(Song, Bank, ScreenEventId))
 		{
-			continue;
+			return false;
 		}
 		TSWwise::PrepareBank(Bank, TEXT("Wwise screens"));
 		UE_LOG(LogTelescreen, Log, TEXT("Wwise screens: built from the game's '%s'"), *Name);
+		// A bank Wwise refuses stops the search: every song bank builds the same way.
 		if (!TSWwise::LoadBank(Bank, TEXT("Wwise screens")))
 		{
-			break;
+			return true;
 		}
 		if (!bScreenSourceRegistered)
 		{
@@ -351,10 +341,11 @@ bool TSWwiseScreens::EnsureReady()
 			bScreenSourceRegistered = true;
 		}
 		bScreensReady = TSWwise::SetAudioInputCallbacks(&DispatchScreenAudioInput, &DispatchScreenAudioFormat);
-		break;
-	}
-	UE_LOG(LogTelescreen, Log, TEXT("Wwise screens: %s (%d Boom Box song bank(s) found)"),
-		bScreensReady ? TEXT("ready; screens play through the game's audio engine") : TEXT("unavailable; screens play through Unreal"), Files.Num());
+		return true;
+	});
+	UE_LOG(LogTelescreen, Log, TEXT("Wwise screens: %s (Boom Box song banks read: %d from event assets, %d event asset(s) unreadable, %d bank file(s))"),
+		bScreensReady ? TEXT("ready; screens play through the game's audio engine") : TEXT("unavailable; screens play through Unreal"),
+		Search.EventAssets, Search.UnreadableEventAssets, Search.BankFiles);
 	return bScreensReady;
 }
 
