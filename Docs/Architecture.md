@@ -63,8 +63,7 @@ Two halves: replicated state that the server owns, and per-client playback that 
   and show their status until they're close again (the server clock keeps them in sync on return).
 - Privacy: a video another player added loads automatically only if its site is in the player's allowed list (or
   their setting says otherwise); the panel offers "Load it anyway".
-- When there's no picture, the screen shows a status card drawn into a canvas render target (screen name, title,
-  Loading / Buffering / errors). It is a small Slate widget (`UTSScreenPlayer::RenderStatus`) drawn into a
+- When there's no picture, the screen shows a status card (screen name, title, Loading / Buffering / errors). It is a small Slate widget (`UTSScreenPlayer::RenderStatus`) drawn into a
   `UTextureRenderTarget2D` by `FWidgetRenderer`, which brings new glyphs into Slate's font atlas before it renders.
   Up to 1.0.3 it was canvas text (`FCanvasTextItem` with a Slate font) in a `UCanvasRenderTarget2D`, and in game
   the card showed only its background: not even redrawing it on the following frames (1.0.3) brought the text. It
@@ -274,9 +273,11 @@ Per player: where they show (`SubtitleMode`: off, on the screen, on the HUD, bot
 - Tracks go to the mod (`SubtitleTracks`); the player picks one in the preferred language (people-made first, then
   automatic; three-letter codes from files are matched too) when subtitles are on, or the panel's track buttons pick
   one (`SelectSubtitles`). Cues arrive sorted (`SubtitleCues`, replace or add; added cues are de-duplicated).
-- **On the screen:** while a line is showing, the screen's texture is a canvas render target that draws the video
-  texture and the line(s) over it (engine large font, outlined, about a sixteenth of the picture's height per line),
-  redrawn with every composed frame and whenever the line changes; otherwise the video texture itself.
+- **On the screen:** while a line is showing, the screen's texture is a render target that `FWidgetRenderer` draws
+  the video texture and the line(s) into (`RenderSubtitled`: an `SImage` of the video with outlined `STextBlock`s,
+  about a sixteenth of the picture's height per line), redrawn with every composed frame and whenever the line
+  changes; otherwise the video texture itself. Up to 1.0.3 this was canvas text, which never showed in game (see
+  the status card above).
 - **On the HUD:** `UTSSubtitleOverlay`, bottom centre, for the screen shown on the HUD or else the nearest screen
   within the play distance that has a line (`UTSClientSubsystem`, 10 times a second).
 

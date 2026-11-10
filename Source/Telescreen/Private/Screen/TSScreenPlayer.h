@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Styling/SlateBrush.h"
 #include "Host/TSHostSubsystem.h"
 #include "Screen/TSRemoteConnections.h"
 #include "Screen/TSSharedBuffers.h"
@@ -242,7 +243,11 @@ private:
 
 	// The picture with the current subtitle drawn over it, used as the screen's texture while a line shows on screen.
 	UPROPERTY(Transient)
-	TObjectPtr<UCanvasRenderTarget2D> SubtitleTarget;
+	TObjectPtr<UTextureRenderTarget2D> SubtitleTarget;
+	// Renders the picture with subtitles; released with BeginCleanup.
+	class FWidgetRenderer* SubtitleRenderer = nullptr;
+	// The video texture, as the brush the subtitle picture draws it with.
+	FSlateBrush SubtitleVideoBrush;
 	bool bScreenShowsSubtitles = false;
 	// Frames left to draw the status card again after it changed.
 	int32 StatusRedraws = 0;
@@ -283,8 +288,8 @@ private:
 	void ClearSubtitles();
 	void UpdateSubtitleText();
 	void ApplyScreenTexture();
-	UFUNCTION()
-	void DrawSubtitled(UCanvas* Canvas, int32 Width, int32 Height);
+	// Draws the video frame with the subtitle lines into SubtitleTarget as a Slate widget.
+	void RenderSubtitled();
 	FText StatusLine1, StatusLine2;
 
 	TSHostProtocol::ESessionState HostState = TSHostProtocol::ESessionState::Resolving;

@@ -18,6 +18,8 @@
 #include "Widgets/Layout/SScaleBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/SOverlay.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
@@ -82,33 +84,6 @@ namespace
 		// Slate sizes are points at 96 DPI: 0.75 pt per pixel.
 		FSlateFontInfo Font = FCoreStyle::GetDefaultFontStyle(bBold ? TEXT("Bold") : TEXT("Regular"), FMath::Clamp(FMath::RoundToInt(PixelHeight * 0.75f), 6, 160));
 		return Font;
-	}
-
-	FVector2D MeasureScreenText(const FString& Text, const FSlateFontInfo& Font)
-	{
-		if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetRenderer())
-		{
-			return FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(Text, Font);
-		}
-		return FVector2D(Text.Len() * Font.Size * 0.8, Font.Size * 1.4);
-	}
-
-	// Draws Text centred on CenterX at Top, shrunk to fit MaxWidth, with an outline when Outline > 0. Returns its height.
-	float DrawScreenText(UCanvas* Canvas, const FString& Text, float CenterX, float Top, float PixelHeight, bool bBold, const FLinearColor& Color, float MaxWidth,
-		int32 Outline)
-	{
-		FSlateFontInfo Font = ScreenFont(bBold, PixelHeight);
-		Font.OutlineSettings.OutlineSize = Outline;
-		Font.OutlineSettings.OutlineColor = FLinearColor(0.f, 0.f, 0.f, 0.9f);
-		FVector2D Size = MeasureScreenText(Text, Font);
-		if (Size.X > MaxWidth && Size.X > 0.0)
-		{
-			Font.Size = FMath::Max(6.f, float(Font.Size * MaxWidth / Size.X));
-			Size = MeasureScreenText(Text, Font);
-		}
-		FCanvasTextItem Item(FVector2D(CenterX - Size.X * 0.5, Top), FText::FromString(Text), Font, Color);
-		Canvas->DrawItem(Item);
-		return float(Size.Y);
 	}
 
 	FString ItemKey(int32 Index, const FTSMediaItem& Item)
@@ -279,6 +254,11 @@ void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		BeginCleanup(StatusRenderer);
 		StatusRenderer = nullptr;
+	}
+	if (SubtitleRenderer)
+	{
+		BeginCleanup(SubtitleRenderer);
+		SubtitleRenderer = nullptr;
 	}
 	CloseSession();
 	GPlayers.RemoveAll([this](const TWeakObjectPtr<UTSScreenPlayer>& P) { return !P.IsValid() || P.Get() == this; });
@@ -2634,16 +2614,19 @@ void UTSScreenPlayer::ApplyScreenTexture()
 	const int32 Width = VideoTexture->GetSizeX(), Height = VideoTexture->GetSizeY();
 	if (!SubtitleTarget || SubtitleTarget->SizeX != Width || SubtitleTarget->SizeY != Height)
 	{
-		SubtitleTarget = UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(this, UCanvasRenderTarget2D::StaticClass(), Width, Height);
+		if (!SubtitleRenderer && FSlateApplication::IsInitialized())
+		{
+			SubtitleRenderer = new FWidgetRenderer(true, true);
+		}
+		SubtitleTarget = SubtitleRenderer ? FWidgetRenderer::CreateTargetFor(FVector2D(Width, Height), TF_Bilinear, true) : nullptr;
 		if (!SubtitleTarget)
 		{
 			return;
 		}
 		SubtitleTarget->ClearColor = FLinearColor::Black;
-		SubtitleTarget->OnCanvasRenderTargetUpdate.AddDynamic(this, &UTSScreenPlayer::DrawSubtitled);
 		bScreenShowsSubtitles = false;
 	}
-	SubtitleTarget->UpdateResource();
+	RenderSubtitled();
 	if (!bScreenShowsSubtitles)
 	{
 		bScreenShowsSubtitles = true;
@@ -2651,28 +2634,57 @@ void UTSScreenPlayer::ApplyScreenTexture()
 	}
 }
 
-void UTSScreenPlayer::DrawSubtitled(UCanvas* Canvas, int32 Width, int32 Height)
+void UTSScreenPlayer::RenderSubtitled()
 {
-	if (!Canvas || !VideoTexture)
+	if (!SubtitleRenderer || !SubtitleTarget || !VideoTexture)
 	{
 		return;
 	}
-	Canvas->K2_DrawTexture(VideoTexture, FVector2D::ZeroVector, FVector2D(Width, Height), FVector2D::ZeroVector, FVector2D::UnitVector, FLinearColor::White,
-		BLEND_Opaque);
-	if (SubtitleText.IsEmpty())
-	{
-		return;
-	}
+	const float Width = float(SubtitleTarget->SizeX);
+	const float Height = float(SubtitleTarget->SizeY);
+	SubtitleVideoBrush.SetResourceObject(VideoTexture);
+	SubtitleVideoBrush.ImageSize = FVector2D(Width, Height);
+	SubtitleVideoBrush.DrawAs = ESlateBrushDrawType::Image;
 	TArray<FString> Lines;
 	SubtitleText.ParseIntoArray(Lines, TEXT("\n"));
-	// About a sixteenth of the picture's height per line, as TV subtitles, from the bottom up.
+	// About a sixteenth of the picture's height per line, as TV subtitles, outlined, near the bottom.
 	const float LineHeight = Height / 16.f;
-	float Top = Height * 0.95f - Lines.Num() * LineHeight * 1.15f;
+	FSlateFontInfo Font = ScreenFont(true, LineHeight);
+	Font.OutlineSettings.OutlineSize = FMath::Max(2, int32(LineHeight / 14.f));
+	Font.OutlineSettings.OutlineColor = FLinearColor(0.f, 0.f, 0.f, 0.9f);
+	TSharedRef<SVerticalBox> Text = SNew(SVerticalBox);
 	for (const FString& Line : Lines)
 	{
-		DrawScreenText(Canvas, Line, Width * 0.5f, Top, LineHeight, true, FLinearColor::White, Width * 0.94f, FMath::Max(2, int32(LineHeight / 14.f)));
-		Top += LineHeight * 1.15f;
+		Text->AddSlot().AutoHeight().HAlign(HAlign_Center)
+		[
+			SNew(SBox)
+			.MaxDesiredWidth(Width * 0.94f)
+			[
+				SNew(SScaleBox)
+				.Stretch(EStretch::ScaleToFitX)
+				.StretchDirection(EStretchDirection::DownOnly)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(Line))
+					.Font(Font)
+					.ColorAndOpacity(FSlateColor(FLinearColor::White))
+				]
+			]
+		];
 	}
+	TSharedRef<SWidget> Picture = SNew(SOverlay)
+		+ SOverlay::Slot()
+		[
+			SNew(SImage).Image(&SubtitleVideoBrush)
+		]
+		+ SOverlay::Slot()
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Bottom)
+		.Padding(FMargin(0.f, 0.f, 0.f, Height * 0.05f))
+		[
+			Text
+		];
+	SubtitleRenderer->DrawWidget(SubtitleTarget, Picture, FVector2D(Width, Height), 0.f);
 }
 
 void UTSScreenPlayer::RenderStatus()
