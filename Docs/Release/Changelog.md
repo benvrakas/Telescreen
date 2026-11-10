@@ -5,6 +5,11 @@
 - Screen sound plays through the game's audio engine again (rooms, reverb, walls, the Boom Box volume slider). Since
   the game update of 4 November 2026 it played through Unreal; Telescreen now finds the game's Boom Box sounds where
   the game keeps them now.
+- The screen's card (TELESCREEN, its name, what it's doing) really shows now: 1.0.3's redraw didn't help, because
+  text drawn the way the card drew it never appeared in the game. It's drawn by Slate now, like the game's own UI.
+- Subtitles on the screen show again, for the same reason.
+- The browser window's address box shows the page's address (it showed its hint instead), and clicking it selects
+  the whole address.
 - Client-side only: 1.0.4 plays with 1.0.1 to 1.0.3 servers and players.
 
 ## 1.0.3
