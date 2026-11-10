@@ -23,7 +23,7 @@
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
-namespace
+namespace TSPlexImpl
 {
 	constexpr float ApiTimeout = 15.f;
 	// A connection that doesn't answer in this long is skipped for the next one.
@@ -70,6 +70,39 @@ namespace
 	{
 		static FState Instance;
 		return Instance;
+	}
+
+	// Quiet field readers: FJsonObject's getters log a warning for every field that's absent.
+	FString Str(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
+	{
+		FString Value;
+		if (Object.IsValid() && !Object->TryGetStringField(Name, Value))
+		{
+			double Number = 0.0;
+			if (Object->TryGetNumberField(Name, Number))
+			{
+				Value = FString::Printf(TEXT("%lld"), int64(Number));
+			}
+		}
+		return Value;
+	}
+
+	double Num(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
+	{
+		double Value = 0.0;
+		return Object.IsValid() && Object->TryGetNumberField(Name, Value) ? Value : 0.0;
+	}
+
+	bool Flag(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
+	{
+		bool Value = false;
+		return Object.IsValid() && Object->TryGetBoolField(Name, Value) && Value;
+	}
+
+	TSharedPtr<FJsonObject> Obj(const TSharedPtr<FJsonValue>& Value)
+	{
+		const TSharedPtr<FJsonObject>* Object = nullptr;
+		return Value.IsValid() && Value->TryGetObject(Object) && Object ? *Object : nullptr;
 	}
 
 	FString SettingsPath()
@@ -215,39 +248,6 @@ namespace
 		return Root;
 	}
 
-	// Quiet field readers: FJsonObject's getters log a warning for every field that's absent.
-	FString Str(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
-	{
-		FString Value;
-		if (Object.IsValid() && !Object->TryGetStringField(Name, Value))
-		{
-			double Number = 0.0;
-			if (Object->TryGetNumberField(Name, Number))
-			{
-				Value = FString::Printf(TEXT("%lld"), int64(Number));
-			}
-		}
-		return Value;
-	}
-
-	double Num(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
-	{
-		double Value = 0.0;
-		return Object.IsValid() && Object->TryGetNumberField(Name, Value) ? Value : 0.0;
-	}
-
-	bool Flag(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
-	{
-		bool Value = false;
-		return Object.IsValid() && Object->TryGetBoolField(Name, Value) && Value;
-	}
-
-	TSharedPtr<FJsonObject> Obj(const TSharedPtr<FJsonValue>& Value)
-	{
-		const TSharedPtr<FJsonObject>* Object = nullptr;
-		return Value.IsValid() && Value->TryGetObject(Object) && Object ? *Object : nullptr;
-	}
-
 	FString CodeProblem(int32 Code)
 	{
 		return Code == 0 ? FString(TEXT("no answer")) : Code == 401 ? FString(TEXT("not allowed (sign in again)")) : FString::Printf(TEXT("error %d"), Code);
@@ -358,17 +358,21 @@ namespace
 	}
 }
 
-bool TSPlex::IsPlexUrl(const FString& Url)
+namespace TSPlex
+{
+using namespace TSPlexImpl;
+
+bool IsPlexUrl(const FString& Url)
 {
 	return Url.StartsWith(TEXT("plex://"), ESearchCase::IgnoreCase);
 }
 
-FString TSPlex::MakeUrl(const FString& MachineId, const FString& RatingKey)
+FString MakeUrl(const FString& MachineId, const FString& RatingKey)
 {
 	return FString::Printf(TEXT("plex://%s/%s"), *MachineId, *RatingKey);
 }
 
-bool TSPlex::ParseUrl(const FString& Url, FString& OutMachineId, FString& OutRatingKey)
+bool ParseUrl(const FString& Url, FString& OutMachineId, FString& OutRatingKey)
 {
 	if (!IsPlexUrl(Url))
 	{
@@ -377,22 +381,22 @@ bool TSPlex::ParseUrl(const FString& Url, FString& OutMachineId, FString& OutRat
 	return Url.Mid(7).Split(TEXT("/"), &OutMachineId, &OutRatingKey) && !OutMachineId.IsEmpty() && !OutRatingKey.IsEmpty() && OutRatingKey.IsNumeric();
 }
 
-bool TSPlex::IsSignedIn()
+bool IsSignedIn()
 {
 	return !Loaded().AccountToken.IsEmpty();
 }
 
-FString TSPlex::GetUserName()
+FString GetUserName()
 {
 	return Loaded().UserName;
 }
 
-bool TSPlex::IsSigningIn()
+bool IsSigningIn()
 {
 	return State().bSigningIn;
 }
 
-void TSPlex::CancelSignIn()
+void CancelSignIn()
 {
 	FState& S = State();
 	if (S.PinTicker.IsValid())
@@ -404,7 +408,7 @@ void TSPlex::CancelSignIn()
 	++S.SignInId;
 }
 
-void TSPlex::SignIn(TFunction<void(const FString& Code)> OnCode, TFunction<void(bool bOk, const FString& Error)> OnDone)
+void SignIn(TFunction<void(const FString& Code)> OnCode, TFunction<void(bool bOk, const FString& Error)> OnDone)
 {
 	CancelSignIn();
 	FState& S = Loaded();
@@ -482,7 +486,7 @@ void TSPlex::SignIn(TFunction<void(const FString& Code)> OnCode, TFunction<void(
 	});
 }
 
-void TSPlex::SignOut()
+void SignOut()
 {
 	CancelSignIn();
 	FState& S = Loaded();
@@ -497,7 +501,7 @@ void TSPlex::SignOut()
 	Bump();
 }
 
-void TSPlex::ListServers(bool bRefresh, TFunction<void(bool bOk, const TArray<FServer>& Servers, const FString& Error)> OnDone)
+void ListServers(bool bRefresh, TFunction<void(bool bOk, const TArray<FServer>& Servers, const FString& Error)> OnDone)
 {
 	FState& S = Loaded();
 	if (S.AccountToken.IsEmpty())
@@ -569,17 +573,17 @@ void TSPlex::ListServers(bool bRefresh, TFunction<void(bool bOk, const TArray<FS
 	});
 }
 
-const TSPlex::FServer* TSPlex::FindServer(const FString& MachineId)
+const FServer* FindServer(const FString& MachineId)
 {
 	return Loaded().Servers.FindByPredicate([&MachineId](const FServer& Server) { return Server.MachineId == MachineId; });
 }
 
-FString TSPlex::GetLastServer()
+FString GetLastServer()
 {
 	return Loaded().LastServer;
 }
 
-void TSPlex::SetLastServer(const FString& MachineId)
+void SetLastServer(const FString& MachineId)
 {
 	FState& S = Loaded();
 	if (S.LastServer != MachineId)
@@ -589,7 +593,7 @@ void TSPlex::SetLastServer(const FString& MachineId)
 	}
 }
 
-void TSPlex::Browse(const FServer& Server, const FString& Path, TFunction<void(bool bOk, const TArray<FEntry>& Entries, const FString& Error)> OnDone)
+void Browse(const FServer& Server, const FString& Path, TFunction<void(bool bOk, const TArray<FEntry>& Entries, const FString& Error)> OnDone)
 {
 	FindBase(Server, [Server, Path, OnDone = MoveTemp(OnDone)](const FString& Base)
 	{
@@ -652,7 +656,7 @@ void TSPlex::Browse(const FServer& Server, const FString& Path, TFunction<void(b
 	});
 }
 
-void TSPlex::Search(const FServer& Server, const FString& Query, TFunction<void(bool bOk, const TArray<FEntry>& Entries, const FString& Error)> OnDone)
+void Search(const FServer& Server, const FString& Query, TFunction<void(bool bOk, const TArray<FEntry>& Entries, const FString& Error)> OnDone)
 {
 	FindBase(Server, [Server, Query, OnDone = MoveTemp(OnDone)](const FString& Base)
 	{
@@ -697,7 +701,7 @@ void TSPlex::Search(const FServer& Server, const FString& Query, TFunction<void(
 	});
 }
 
-void TSPlex::MakeShare(const FServer& Server, TFunction<void(bool bOk, const FTSPlexShare& Share, const FString& Error)> OnDone)
+void MakeShare(const FServer& Server, TFunction<void(bool bOk, const FTSPlexShare& Share, const FString& Error)> OnDone)
 {
 	FTSPlexShare Share;
 	Share.MachineId = Server.MachineId;
@@ -742,7 +746,7 @@ void TSPlex::MakeShare(const FServer& Server, TFunction<void(bool bOk, const FTS
 	});
 }
 
-void TSPlex::EnsureShared(ATSBuildableScreen* Screen, const FString& MachineId)
+void EnsureShared(ATSBuildableScreen* Screen, const FString& MachineId)
 {
 	FState& S = Loaded();
 	if (!Screen || S.AccountToken.IsEmpty())
@@ -777,7 +781,7 @@ void TSPlex::EnsureShared(ATSBuildableScreen* Screen, const FString& MachineId)
 	});
 }
 
-TSPlex::EResolve TSPlex::Resolve(const ATSBuildableScreen* Screen, const FString& Url, FString& OutPlayUrl, FString& OutProblem)
+EResolve Resolve(const ATSBuildableScreen* Screen, const FString& Url, FString& OutPlayUrl, FString& OutProblem)
 {
 	FString MachineId, RatingKey;
 	if (!Screen || !ParseUrl(Url, MachineId, RatingKey))
@@ -863,7 +867,8 @@ TSPlex::EResolve TSPlex::Resolve(const ATSBuildableScreen* Screen, const FString
 	return EResolve::Searching;
 }
 
-uint32 TSPlex::GetGeneration()
+uint32 GetGeneration()
 {
 	return State().Generation;
+}
 }
