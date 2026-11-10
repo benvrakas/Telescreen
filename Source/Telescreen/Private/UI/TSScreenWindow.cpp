@@ -327,7 +327,8 @@ void UTSScreenWindow::SetInteractive(bool bInInteractive)
 		}
 	}
 	const FString Key = UTSConfig::GetString(this, UTSConfig::FocusKeyKey, TEXT("F8"));
-	Hint->SetText(FText::Format(LOCTEXT("WindowHint", "Using the screen: {0} to go back to the game (hold Esc also works)"), FText::FromString(Key)));
+	HintBase = FText::Format(LOCTEXT("WindowHint", "Using the screen: {0} to go back to the game (hold Esc also works)"), FText::FromString(Key));
+	Hint->SetText(HintBase);
 	Hint->SetVisibility(bInteractive ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	Place();
 }
@@ -453,7 +454,20 @@ void UTSScreenWindow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		TitleText = Shown->IsCurtainOn() ? FText::Format(LOCTEXT("WindowCurtain", "{0}: blanked for everyone"), TitleText)
 										 : FText::Format(LOCTEXT("WindowViewers", "{0}: {1} watching"), TitleText, FText::AsNumber(Shown->GetViewerCount()));
 	}
-	Title->SetText(bInteractive && !Shown->IsLocallyControlled() ? FText::GetEmpty() : TitleText);
+	// With the browser toolbar the caption goes in the hint line, off the page.
+	if (bToolbarShown)
+	{
+		Title->SetText(FText::GetEmpty());
+		const FText HintText = FText::Format(LOCTEXT("WindowHintTitle", "{0}      {1}"), HintBase, TitleText);
+		if (!HintText.EqualTo(Hint->GetText()))
+		{
+			Hint->SetText(HintText);
+		}
+	}
+	else
+	{
+		Title->SetText(bInteractive && !Shown->IsLocallyControlled() ? FText::GetEmpty() : TitleText);
+	}
 	if (bInteractive && EscapeDownAt > 0.0 && FPlatformTime::Seconds() - EscapeDownAt > EscapeHoldSeconds)
 	{
 		EscapeDownAt = 0.0;
@@ -493,6 +507,7 @@ void UTSScreenWindow::UpdateToolbar(UTSScreenPlayer* Player)
 		Toolbar->SetVisibility(bShow ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		ShownAddress.Reset();
 		ShownTabsKey.Reset();
+		Hint->SetText(HintBase);
 		UE_LOG(LogTelescreen, Log, TEXT("%s: browser toolbar %s"), *GetNameSafe(Screen.Get()), bShow ? TEXT("shown") : TEXT("hidden"));
 	}
 	if (!Own)

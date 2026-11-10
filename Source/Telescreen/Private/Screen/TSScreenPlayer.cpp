@@ -64,6 +64,8 @@ namespace
 	constexpr double RankInterval = 1.0;
 	constexpr double AudioInterval = 0.5;
 	constexpr int32 StatusWidth = 2048;
+	// Frames the status card is drawn again after a change.
+	constexpr int32 StatusRedrawFrames = 3;
 
 	// Text on a screen texture in the UI font, rasterised at its pixel size (a scaled bitmap font looks soft).
 	FSlateFontInfo ScreenFont(bool bBold, float PixelHeight)
@@ -404,6 +406,7 @@ void UTSScreenPlayer::Reconcile()
 		BlockedReason = FText::GetEmpty();
 		CloseSession();
 		SetStatus(Screen->GetDisplayName(), LOCTEXT("Idle", "Interact to add a video"));
+		bIdleStatus = true;
 		return;
 	}
 	const FString Key = ItemKey(State.CurrentIndex, *Item);
@@ -1763,6 +1766,15 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 	{
 		return;
 	}
+	if (StatusRedraws > 0)
+	{
+		// Glyphs first drawn into the status card reach the font atlas on Slate's next frame; draw it again then.
+		--StatusRedraws;
+		if (!bShowingVideo && StatusTarget)
+		{
+			StatusTarget->UpdateResource();
+		}
+	}
 	const double Now = FPlatformTime::Seconds();
 	if (SessionKey == TEXT("loopback") && (!LoopbackSource.IsValid() || !LoopbackSource->HasBrowser()))
 	{
@@ -2398,6 +2410,7 @@ void UTSScreenPlayer::OnHostLost()
 void UTSScreenPlayer::SetStatus(const FText& Line1, const FText& Line2)
 {
 	const bool bChanged = !Line1.EqualTo(StatusLine1) || !Line2.EqualTo(StatusLine2);
+	bIdleStatus = false;
 	StatusLine1 = Line1;
 	StatusLine2 = Line2;
 	if (bChanged && !bShowingVideo)
@@ -2414,6 +2427,7 @@ void UTSScreenPlayer::ShowStatus()
 		return;
 	}
 	StatusTarget->UpdateResource();
+	StatusRedraws = StatusRedrawFrames;
 	bScreenShowsSubtitles = false;
 	Screen->SetScreenTexture(StatusTarget);
 }

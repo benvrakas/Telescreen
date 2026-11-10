@@ -64,7 +64,9 @@ Two halves: replicated state that the server owns, and per-client playback that 
 - Privacy: a video another player added loads automatically only if its site is in the player's allowed list (or
   their setting says otherwise); the panel offers "Load it anyway".
 - When there's no picture, the screen shows a status card drawn into a canvas render target (screen name, title,
-  Loading / Buffering / errors).
+  Loading / Buffering / errors). Its text goes through Slate's runtime font cache, whose atlas gets new glyphs only
+  on Slate's next frame, so a card drawn once after a change showed just its background. Each change draws it again
+  on the next three frames (`StatusRedrawFrames`).
 
 ### UI
 
@@ -409,6 +411,17 @@ Hearing range setting) through `SetAttenuationScalingFactor`. Rooms, reverb, occ
   through a friend who heard a Boom Box 500 m away.
 - If Wwise ends the sound itself it is posted again; two quick ends in a row switch that sound to the Unreal path
   (`UAudioComponent` + `UTSStreamingSoundWave`), which is also used when the setting is off or Wwise isn't reachable.
+
+**Broken since the game update of 2026-11-04 (open).** The game no longer ships loose `.bnk` files: the
+`FactoryGame-Windows.pak` listing has no `WwiseAudio` entries at all, and each bank now sits as bulk data inside its
+event asset in the IoStore container (e.g. `FactoryGame/Content/WwiseAudio/Events/Interface/BoomBox/
+Play_Boombox_UI_Forward.uasset`, 66 KB; `UnrealPak <utoc> -List`). The Wwise integration's `FWwisePackagedFile`
+(`PackagingStrategy` `EWwisePackagingStrategy::BulkData`, `SharedBulkDataArray`) holds it. `EnsureReady` searches
+`Content/WwiseAudio/Event` on disk, finds 0 banks and logs "Wwise screens: unavailable; screens play through Unreal
+(0 Boom Box song bank(s) found)", so every screen uses the Unreal path. BoomBoxPlus's Wwise music fails the same way.
+Fix idea, untested: load a Boom Box song event (`UAkAudioEvent`) by path, find its sound bank's `FWwisePackagedFile`
+through reflection, and copy the bank bytes out of its bulk data (`FByteBulkData::GetCopy`), without importing
+anything from the Wwise modules. Needs checking in the game, and should change both mods together.
 
 ## Viewer control and markers (M6)
 

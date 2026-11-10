@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3
+
+- A new or idle screen shows its card again (TELESCREEN, its name, "Interact to add a video"). The card was drawn
+  once, before its letters were ready, so it showed only its background.
+- The browser window's caption ("... watching") sits in the hint line above the toolbar instead of over the page.
+- The screen panel no longer says "Interact to add a video" while you're in it.
+- Known issue: since the game update of 2026-11-04, screen sound plays through Unreal instead of the game's Wwise
+  (the game's Boom Box banks moved into its asset containers). It still plays, from the screen.
+- Client-side only: 1.0.3 plays with 1.0.1 and 1.0.2 servers and players.
+
 ## 1.0.2
 
 - The browser window has a toolbar: Back, Forward, Reload, Home and an address box. Alt+Left / Alt+Right, the mouse's

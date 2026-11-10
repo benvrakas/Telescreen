@@ -155,6 +155,8 @@ private:
 	FString ShownTabsKey;
 	bool bToolbarShown = false;
 	FString ShownAddress;
+	// The interactive hint without the caption added while the toolbar shows.
+	FText HintBase;
 
 	FVector2D PlacedSize = FVector2D::ZeroVector;
 	FVector2D PlacedAnchor = FVector2D(-1.f, -1.f);

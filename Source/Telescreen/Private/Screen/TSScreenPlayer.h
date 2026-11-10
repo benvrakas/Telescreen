@@ -76,7 +76,8 @@ public:
 	FTSOnBrowserStateChanged OnSubtitlesChanged;
 
 	// What this client shows instead of the video right now, or empty while the video plays.
-	FText GetLocalStatus() const { return bShowingVideo ? FText::GetEmpty() : StatusLine2; }
+	// Empty while the video plays, and for the idle card's "interact" hint (the panel is already open).
+	FText GetLocalStatus() const { return bShowingVideo || bIdleStatus ? FText::GetEmpty() : StatusLine2; }
 
 	// Looks for the current video on this PC again (after the videos folder changed).
 	void RefreshMedia()
@@ -240,6 +241,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasRenderTarget2D> SubtitleTarget;
 	bool bScreenShowsSubtitles = false;
+	// Frames left to draw the status card again after it changed.
+	int32 StatusRedraws = 0;
+	// The status card shows the idle hint (nothing queued).
+	bool bIdleStatus = false;
 	TArray<FTSSubtitleTrack> SubtitleTracks;
 	uint32 SelectedSubtitleTrack = 0;
 	TArray<FTSSubtitleCue> SubtitleCues;
