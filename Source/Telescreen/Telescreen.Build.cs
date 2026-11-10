@@ -65,6 +65,7 @@ public class Telescreen : ModuleRules
 			"Projects",
 			"ApplicationCore",
 			"AudioExtensions",
+			"HTTP",
 		});
 
 		// Headers only, for the types of the game's sound engine; its functions are reached through their exports.

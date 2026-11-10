@@ -203,6 +203,32 @@ struct TELESCREEN_API FTSMediaItem
 	FString GetDisplayTitle() const { return Title.IsEmpty() ? Url : Title; }
 };
 
+// A Plex server a player shared on a screen, so every player can stream its videos (plex:// queue entries) from it
+// themselves. Replicated, never saved: the token is a temporary one for that server only (Docs/Architecture.md, Plex).
+USTRUCT()
+struct TELESCREEN_API FTSPlexShare
+{
+	GENERATED_BODY()
+
+	// The server's clientIdentifier.
+	UPROPERTY()
+	FString MachineId;
+
+	UPROPERTY()
+	FString ServerName;
+
+	// Base URLs to reach the server, best first.
+	UPROPERTY()
+	TArray<FString> Connections;
+
+	UPROPERTY()
+	FString Token;
+
+	// Name of the player who shared it.
+	UPROPERTY()
+	FString SharedBy;
+};
+
 // A screen's synced media playback, replicated from the server (see Docs/Architecture.md, Synced media).
 USTRUCT(BlueprintType)
 struct TELESCREEN_API FTSMediaState

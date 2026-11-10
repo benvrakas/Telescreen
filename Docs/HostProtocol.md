@@ -28,7 +28,7 @@ a send that fails closes the connection, because a partly sent message would cor
 |---|---|---|
 | Hello | mod → host | u32 version |
 | HelloAck | host → mod | u32 version, str host version, u32 host pid |
-| OpenMedia | mod → host | u32 session, str url, u8 is local file, f64 start seconds, u8 paused, u32 max width, u32 max height, str subtitle language |
+| OpenMedia | mod → host | u32 session, str url, u8 is local file, f64 start seconds, u8 paused, u32 max width, u32 max height, str subtitle language, u8 direct (a media file URL opened as it is, without yt-dlp, and logged without its query: Plex) |
 | SyncTarget | mod → host | u32 session, f64 media seconds (where playback should be now), u8 paused |
 | CloseSession | mod → host | u32 session |
 | Probe | mod → host | u32 request, str url |
@@ -66,7 +66,7 @@ BrowserCommand 6 (SelectSubtitles, media sessions) carries u32 track id (0: none
 Protocol version 3 added the three window messages. Version 5 added the stream sender's max height, version 6 OpenVnc's wanted size,
 version 7 subtitles (OpenMedia's language, SubtitleTracks, SubtitleCues, SelectSubtitles), version 8 direct links,
 version 9 VeNCrypt (OpenVnc's user, pin and requirement, RemoteSecurity), version 10 browser tabs (NewTab, CloseTab,
-SelectTab, BrowserTabs).
+SelectTab, BrowserTabs), version 11 OpenMedia's direct flag.
 
 Window sessions take BrowserInput (mouse, wheel, key, text; positions in the session's frame pixels) and post it to
 the window; their sound goes only to the frame and audio taps (the stream sender), not to a SessionAudio ring,

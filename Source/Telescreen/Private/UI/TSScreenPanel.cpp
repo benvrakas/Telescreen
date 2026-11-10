@@ -26,6 +26,8 @@
 #include "Screen/TSScreenPlayer.h"
 #include "Components/EditableTextBox.h"
 #include "Telescreen.h"
+#include "HAL/PlatformProcess.h"
+#include "Plex/TSPlex.h"
 #include "TSConfig.h"
 #include "TSRemoteCallObject.h"
 #include "UI/FGGameUI.h"
@@ -399,7 +401,7 @@ void UTSScreenPanel::BuildTree()
 	RightSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
 	const FText TabNames[] = {LOCTEXT("TabVideos", "Videos"), LOCTEXT("TabBrowser", "Browser"), LOCTEXT("TabWindow", "Share a window"),
-		LOCTEXT("TabRemote", "Remote desktop")};
+		LOCTEXT("TabRemote", "Remote desktop"), LOCTEXT("TabPlex", "Plex")};
 	UHorizontalBox* Tabs = MakeHBox();
 	for (int32 I = 0; I < UE_ARRAY_COUNT(TabNames); ++I)
 	{
@@ -563,6 +565,46 @@ void UTSScreenPanel::BuildTree()
 		AddRow(Page, Heading(LOCTEXT("RemoteSavedHeader", "Saved connections (this PC only)")), 10.f);
 		RemoteListBox = MakeVBox();
 		AddRow(Page, RemoteListBox, 4.f);
+		Pages->AddChild(Page);
+	}
+
+	// Plex.
+	{
+		UVerticalBox* Page = MakeVBox();
+		AddRow(Page, Heading(LOCTEXT("PlexHeader", "Plex")), 0.f);
+		PlexNote = MakeText(FText::GetEmpty(), 13, Muted);
+		AddRow(Page, PlexNote, 4.f);
+		UHorizontalBox* AccountRow = MakeHBox();
+		PlexSignInButton = MakeButton(LOCTEXT("PlexSignIn", "Sign in to Plex"), ETSPanelAction::PlexSignIn, INDEX_NONE, true);
+		AddToHBox(AccountRow, PlexSignInButton);
+		PlexLinkButton = MakeButton(LOCTEXT("PlexOpenLink", "Open plex.tv/link"), ETSPanelAction::PlexOpenLink);
+		AddToHBox(AccountRow, PlexLinkButton);
+		PlexSignOutButton = MakeButton(LOCTEXT("PlexSignOut", "Sign out"), ETSPanelAction::PlexSignOut);
+		AddToHBox(AccountRow, PlexSignOutButton);
+		AddRow(Page, AccountRow, 8.f);
+		UVerticalBox* Browser = MakeVBox();
+		AddRow(Browser, TSVanillaUI::MakeDivider(WidgetTree), 12.f);
+		UHorizontalBox* ServersHeader = MakeHBox();
+		AddToHBox(ServersHeader, Heading(LOCTEXT("PlexServersHeader", "Servers")), true);
+		AddToHBox(ServersHeader, MakeButton(LOCTEXT("PlexRefresh", "Refresh"), ETSPanelAction::PlexRefresh));
+		AddRow(Browser, ServersHeader, 10.f);
+		PlexServersBox = MakeVBox();
+		AddRow(Browser, PlexServersBox, 4.f);
+		AddRow(Browser, TSVanillaUI::MakeDivider(WidgetTree), 12.f);
+		UHorizontalBox* SearchRow = MakeHBox();
+		PlexSearchBox = MakeInput(LOCTEXT("PlexSearchHint", "Search movies and shows on this server"), ETSPanelAction::PlexSearch);
+		AddToHBox(SearchRow, PlexSearchBox, true);
+		AddToHBox(SearchRow, MakeButton(LOCTEXT("PlexSearchButton", "Search"), ETSPanelAction::PlexSearch));
+		AddRow(Browser, SearchRow, 10.f);
+		UHorizontalBox* PathRow = MakeHBox();
+		AddToHBox(PathRow, MakeButton(LOCTEXT("PlexUp", "Back"), ETSPanelAction::PlexUp));
+		PlexPathText = MakeText(FText::GetEmpty(), 13, Muted);
+		AddToHBox(PathRow, PlexPathText, true);
+		AddRow(Browser, PathRow, 6.f);
+		PlexListBox = MakeVBox();
+		AddRow(Browser, PlexListBox, 4.f);
+		PlexBrowser = Browser;
+		AddRow(Page, Browser, 0.f);
 		Pages->AddChild(Page);
 	}
 
@@ -740,6 +782,15 @@ void UTSScreenPanel::SelectTab(ETab Tab)
 		bRemoteListLoaded = true;
 		SavedRemotes = TSRemoteConnections::LoadSaved();
 		ShowSavedRemotes();
+	}
+	if (Tab == ETab::Plex && !bPlexLoaded)
+	{
+		bPlexLoaded = true;
+		RefreshPlex();
+		if (TSPlex::IsSignedIn())
+		{
+			LoadPlexServers(false);
+		}
 	}
 	RefreshSharing();
 }
@@ -1456,6 +1507,254 @@ void UTSScreenPanel::AddLink(bool bPlayNow)
 	});
 }
 
+const TSPlex::FServer* UTSScreenPanel::GetPlexServer() const
+{
+	return PlexServers.FindByPredicate([this](const TSPlex::FServer& Server) { return Server.MachineId == PlexServerId; });
+}
+
+void UTSScreenPanel::RefreshPlex()
+{
+	if (!PlexNote)
+	{
+		return;
+	}
+	const bool bSignedIn = TSPlex::IsSignedIn();
+	const bool bSigningIn = TSPlex::IsSigningIn();
+	FText Note;
+	if (!PlexError.IsEmpty())
+	{
+		Note = FText::FromString(PlexError);
+	}
+	else if (bSignedIn)
+	{
+		Note = FText::Format(LOCTEXT("PlexSignedIn", "Signed in to Plex as {0}. Pick a server, then a movie or an episode. Everyone near the screen "
+			"streams it from that server themselves: adding one shares a temporary token for that server (not your Plex account) with the "
+			"players in this world."), FText::FromString(TSPlex::GetUserName()));
+	}
+	else if (bSigningIn && !PlexCode.IsEmpty())
+	{
+		Note = FText::Format(LOCTEXT("PlexCode", "Go to plex.tv/link (button below, or on your phone) and enter the code {0}. Waiting for you to "
+			"confirm..."), FText::FromString(PlexCode));
+	}
+	else if (bSigningIn)
+	{
+		Note = LOCTEXT("PlexGettingCode", "Getting a code from plex.tv...");
+	}
+	else
+	{
+		Note = LOCTEXT("PlexSignedOut", "Sign in with your Plex account to play its movies and shows here. Everyone near the screen streams them "
+			"from your Plex server themselves; your PC shares a temporary token for that server (never your Plex account) with the players in "
+			"this world.");
+	}
+	PlexNote->SetText(Note);
+	PlexNote->SetColorAndOpacity(FSlateColor(PlexError.IsEmpty() ? Muted : ErrorColor));
+	Show(PlexSignInButton, !bSignedIn && !bSigningIn);
+	Show(PlexLinkButton, bSigningIn);
+	Show(PlexSignOutButton, bSignedIn || bSigningIn);
+	Show(PlexBrowser, bSignedIn);
+	RebuildPlexServers();
+	RebuildPlexList();
+}
+
+void UTSScreenPanel::LoadPlexServers(bool bRefresh)
+{
+	bPlexBusy = true;
+	PlexError.Reset();
+	RebuildPlexList();
+	TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+	TSPlex::ListServers(bRefresh, [WeakThis](bool bOk, const TArray<TSPlex::FServer>& Servers, const FString& Error)
+	{
+		UTSScreenPanel* Panel = WeakThis.Get();
+		if (!Panel)
+		{
+			return;
+		}
+		Panel->bPlexBusy = false;
+		Panel->PlexServers = Servers;
+		Panel->PlexError = bOk ? FString() : Error;
+		if (!Panel->GetPlexServer())
+		{
+			const FString Last = TSPlex::GetLastServer();
+			const TSPlex::FServer* Pick = Servers.FindByPredicate([&Last](const TSPlex::FServer& Server) { return Server.MachineId == Last; });
+			Panel->PlexServerId = Pick ? Pick->MachineId : Servers.Num() == 1 ? Servers[0].MachineId : FString();
+			Panel->PlexPath.Reset();
+		}
+		Panel->RefreshPlex();
+		if (const TSPlex::FServer* Server = Panel->GetPlexServer(); Server && Panel->PlexPath.Num() == 0)
+		{
+			Panel->BrowsePlex(FString(), Server->Name, true);
+		}
+	});
+}
+
+void UTSScreenPanel::BrowsePlex(const FString& Key, const FString& Title, bool bPush)
+{
+	const TSPlex::FServer* Server = GetPlexServer();
+	if (!Server)
+	{
+		return;
+	}
+	if (bPush)
+	{
+		PlexPath.Emplace(Key, Title);
+	}
+	if (Key.StartsWith(TEXT("search:")))
+	{
+		TSVanillaUI::SetInputText(PlexSearchBox, FText::FromString(Key.Mid(7)));
+		SearchPlex();
+		return;
+	}
+	bPlexBusy = true;
+	PlexEntries.Reset();
+	RebuildPlexList();
+	TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+	TSPlex::Browse(*Server, Key, [WeakThis](bool bOk, const TArray<TSPlex::FEntry>& Entries, const FString& Error)
+	{
+		if (WeakThis.IsValid())
+		{
+			WeakThis->ShowPlexEntries(bOk, Entries, Error);
+		}
+	});
+}
+
+void UTSScreenPanel::SearchPlex()
+{
+	const TSPlex::FServer* Server = GetPlexServer();
+	const FString Query = TSVanillaUI::GetInputText(PlexSearchBox).ToString().TrimStartAndEnd();
+	if (!Server || Query.IsEmpty())
+	{
+		return;
+	}
+	const FString Key = TEXT("search:") + Query;
+	if (PlexPath.Num() > 0 && PlexPath.Last().Key.StartsWith(TEXT("search:")))
+	{
+		PlexPath.Pop();
+	}
+	PlexPath.Emplace(Key, FString::Printf(TEXT("Search: %s"), *Query));
+	bPlexBusy = true;
+	PlexEntries.Reset();
+	RebuildPlexList();
+	TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+	TSPlex::Search(*Server, Query, [WeakThis](bool bOk, const TArray<TSPlex::FEntry>& Entries, const FString& Error)
+	{
+		if (WeakThis.IsValid())
+		{
+			WeakThis->ShowPlexEntries(bOk, Entries, Error);
+		}
+	});
+}
+
+void UTSScreenPanel::ShowPlexEntries(bool bOk, const TArray<TSPlex::FEntry>& Entries, const FString& Error)
+{
+	bPlexBusy = false;
+	PlexEntries = Entries;
+	PlexError = bOk ? FString() : Error;
+	RefreshPlex();
+}
+
+void UTSScreenPanel::RebuildPlexServers()
+{
+	if (!PlexServersBox)
+	{
+		return;
+	}
+	PlexServersBox->ClearChildren();
+	if (PlexServers.Num() == 0)
+	{
+		PlexServersBox->AddChildToVerticalBox(MakeText(bPlexBusy ? LOCTEXT("PlexLoadingServers", "Loading your servers...")
+			: LOCTEXT("PlexNoServers", "No Plex servers on this account."), 13, Muted));
+		return;
+	}
+	for (int32 I = 0; I < PlexServers.Num(); ++I)
+	{
+		const TSPlex::FServer& Server = PlexServers[I];
+		PlexServersBox->AddChildToVerticalBox(MakeListButton(FText::FromString(Server.Name), Server.bOwned ? LOCTEXT("PlexOwned", "Your server")
+			: LOCTEXT("PlexSharedWithYou", "Shared with you"), Server.MachineId == PlexServerId, ETSPanelAction::PlexServer, I))->SetPadding(FMargin(0.f, 2.f));
+	}
+}
+
+void UTSScreenPanel::RebuildPlexList()
+{
+	if (!PlexListBox)
+	{
+		return;
+	}
+	PlexListBox->ClearChildren();
+	TArray<FString> Titles;
+	for (const TPair<FString, FString>& Level : PlexPath)
+	{
+		Titles.Add(Level.Value);
+	}
+	PlexPathText->SetText(FText::FromString(FString::Join(Titles, TEXT("  >  "))));
+	if (!GetPlexServer())
+	{
+		PlexListBox->AddChildToVerticalBox(MakeText(LOCTEXT("PlexPickServer", "Pick a server above."), 13, Muted));
+		return;
+	}
+	if (bPlexBusy)
+	{
+		PlexListBox->AddChildToVerticalBox(MakeText(LOCTEXT("PlexLoading", "Loading..."), 13, Muted));
+		return;
+	}
+	if (PlexEntries.Num() == 0)
+	{
+		PlexListBox->AddChildToVerticalBox(MakeText(LOCTEXT("PlexEmpty", "Nothing here."), 13, Muted));
+		return;
+	}
+	for (int32 I = 0; I < PlexEntries.Num(); ++I)
+	{
+		const TSPlex::FEntry& Entry = PlexEntries[I];
+		if (!Entry.IsPlayable())
+		{
+			PlexListBox->AddChildToVerticalBox(MakeListButton(FText::FromString(Entry.Title), FText::FromString(Entry.Details), false,
+				ETSPanelAction::PlexOpen, I))->SetPadding(FMargin(0.f, 2.f));
+			continue;
+		}
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		UHorizontalBoxSlot* ItemSlot = Row->AddChildToHorizontalBox(MakeListButton(FText::FromString(Entry.Title),
+			FText::Format(LOCTEXT("PlexPlayRow", "{0}   Click to play now"), FText::FromString(Entry.Details)), false, ETSPanelAction::PlexPlayNow, I));
+		ItemSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		ItemSlot->SetVerticalAlignment(VAlign_Center);
+		Row->AddChildToHorizontalBox(MakeButton(LOCTEXT("PlexAddRow", "Add to queue"), ETSPanelAction::PlexAdd, I))->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+		PlexListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.f, 2.f));
+	}
+}
+
+void UTSScreenPanel::AddPlexEntry(int32 Index, bool bPlayNow)
+{
+	const TSPlex::FServer* Server = GetPlexServer();
+	if (!Server || !PlexEntries.IsValidIndex(Index) || !PlexEntries[Index].IsPlayable())
+	{
+		return;
+	}
+	const TSPlex::FEntry Entry = PlexEntries[Index];
+	const FString MachineId = Server->MachineId;
+	SetNotice(FText::Format(LOCTEXT("PlexAdding", "Sharing {0} and adding \"{1}\"..."), FText::FromString(Server->Name), FText::FromString(Entry.QueueTitle)));
+	TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+	TSPlex::MakeShare(*Server, [WeakThis, Entry, MachineId, bPlayNow](bool bOk, const FTSPlexShare& Share, const FString& Error)
+	{
+		UTSScreenPanel* Panel = WeakThis.Get();
+		ATSBuildableScreen* Screen = Panel ? Panel->GetScreen() : nullptr;
+		UTSRemoteCallObject* RCO = Panel ? UTSRemoteCallObject::GetLocal(Panel) : nullptr;
+		if (!Panel || !Screen || !RCO)
+		{
+			return;
+		}
+		if (!bOk)
+		{
+			Panel->SetNotice(FText::Format(LOCTEXT("PlexShareFailed", "Couldn't share the Plex server: {0}"), FText::FromString(Error)), true);
+			return;
+		}
+		RCO->Server_SharePlex(Screen, Share);
+		FTSMediaItem Item;
+		Item.Url = TSPlex::MakeUrl(MachineId, Entry.RatingKey);
+		Item.Title = Entry.QueueTitle;
+		Item.Duration = Entry.Duration;
+		RCO->Server_Enqueue(Screen, Item, bPlayNow);
+		Panel->SetNotice(FText::Format(LOCTEXT("PlexAdded", "Added \"{0}\" from Plex."), FText::FromString(Entry.QueueTitle)));
+	});
+}
+
 void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 {
 	ATSBuildableScreen* Screen = GetScreen();
@@ -1569,6 +1868,80 @@ void UTSScreenPanel::HandleAction(ETSPanelAction Action, int32 Index)
 	case ETSPanelAction::OpenWindow:
 		Close();
 		UTSScreenWindow::OpenInteractive(Screen);
+		return;
+	case ETSPanelAction::PlexSignIn:
+	{
+		PlexError.Reset();
+		PlexCode.Reset();
+		TWeakObjectPtr<UTSScreenPanel> WeakThis(this);
+		TSPlex::SignIn([WeakThis](const FString& Code)
+		{
+			if (WeakThis.IsValid())
+			{
+				WeakThis->PlexCode = Code;
+				WeakThis->RefreshPlex();
+			}
+		}, [WeakThis](bool bOk, const FString& Error)
+		{
+			if (!WeakThis.IsValid())
+			{
+				return;
+			}
+			WeakThis->PlexCode.Reset();
+			WeakThis->PlexError = bOk ? FString() : Error;
+			WeakThis->RefreshPlex();
+			if (bOk)
+			{
+				WeakThis->LoadPlexServers(true);
+			}
+		});
+		RefreshPlex();
+		return;
+	}
+	case ETSPanelAction::PlexOpenLink:
+		FPlatformProcess::LaunchURL(TEXT("https://plex.tv/link"), nullptr, nullptr);
+		return;
+	case ETSPanelAction::PlexSignOut:
+		TSPlex::SignOut();
+		PlexServers.Reset();
+		PlexEntries.Reset();
+		PlexPath.Reset();
+		PlexServerId.Reset();
+		PlexError.Reset();
+		RefreshPlex();
+		return;
+	case ETSPanelAction::PlexRefresh:
+		LoadPlexServers(true);
+		return;
+	case ETSPanelAction::PlexServer:
+		if (PlexServers.IsValidIndex(Index))
+		{
+			PlexServerId = PlexServers[Index].MachineId;
+			TSPlex::SetLastServer(PlexServerId);
+			PlexPath.Reset();
+			RebuildPlexServers();
+			BrowsePlex(FString(), PlexServers[Index].Name, true);
+		}
+		return;
+	case ETSPanelAction::PlexOpen:
+		if (PlexEntries.IsValidIndex(Index) && !PlexEntries[Index].IsPlayable())
+		{
+			BrowsePlex(PlexEntries[Index].Key, PlexEntries[Index].Title, true);
+		}
+		return;
+	case ETSPanelAction::PlexUp:
+		if (PlexPath.Num() > 1)
+		{
+			PlexPath.Pop();
+			BrowsePlex(PlexPath.Last().Key, PlexPath.Last().Value, false);
+		}
+		return;
+	case ETSPanelAction::PlexSearch:
+		SearchPlex();
+		return;
+	case ETSPanelAction::PlexPlayNow:
+	case ETSPanelAction::PlexAdd:
+		AddPlexEntry(Index, Action == ETSPanelAction::PlexPlayNow);
 		return;
 	default:
 		break;

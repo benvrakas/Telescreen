@@ -18,6 +18,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_Enqueue(ATSBuildableScreen* Screen, const FTSMediaItem& Item, bool bPlayNow);
 
+	// Shares a Plex server on Screen so every player can play its plex:// entries (Docs/Architecture.md, Plex).
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SharePlex(ATSBuildableScreen* Screen, const FTSPlexShare& Share);
+
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_MediaCommand(ATSBuildableScreen* Screen, ETSMediaCommand Command, int32 Index, double Seconds);
 

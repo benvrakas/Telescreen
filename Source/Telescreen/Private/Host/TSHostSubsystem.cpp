@@ -892,8 +892,14 @@ uint32 UTSHostSubsystem::OpenMedia(const FTSOpenMediaParams& Params, ITSHostSess
 	PutU32(Payload, Params.MaxWidth);
 	PutU32(Payload, Params.MaxHeight);
 	PutStr(Payload, Params.SubtitleLanguage);
+	PutU8(Payload, Params.bDirect ? 1 : 0);
 	Send(EMsg::OpenMedia, Payload);
-	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u opens %s at %.2f s (%s, max %ux%u)"), Session, *Params.Url, Params.StartSeconds,
+	FString Logged = Params.Url;
+	if (Params.bDirect)
+	{
+		Logged.Split(TEXT("?"), &Logged, nullptr);
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("Host: session %u opens %s at %.2f s (%s, max %ux%u)"), Session, *Logged, Params.StartSeconds,
 		Params.bPaused ? TEXT("paused") : TEXT("playing"), Params.MaxWidth, Params.MaxHeight);
 	return Session;
 }

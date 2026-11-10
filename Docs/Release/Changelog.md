@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- **Plex tab**: sign in with your Plex account (a code at plex.tv/link), pick a server, browse its movies and shows or
+  search them, and play or queue them on the screen. Every player near the screen streams the video from the Plex
+  server themselves, in sync, like YouTube links. Adding one shares a temporary token for that server (not your Plex
+  account) with the players in the world, so only use it with players you'd share your Plex library with.
+- Server and players need 1.1.0 (the Plex share is new world data).
+
 ## 1.0.4
 
 - Screen sound plays through the game's audio engine again (rooms, reverb, walls, the Boom Box volume slider). Since

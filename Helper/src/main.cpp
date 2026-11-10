@@ -342,6 +342,7 @@ namespace
 				Params.MaxWidth = std::max(16u, R.U32());
 				Params.MaxHeight = std::max(16u, R.U32());
 				Params.SubtitleLanguage = R.Str();
+				Params.IsDirect = R.U8() != 0;
 				if (!R.Ok) break;
 				std::lock_guard<std::mutex> Lock(SessionsMutex);
 				auto Existing = Sessions.find(Params.SessionId);

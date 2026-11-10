@@ -20,6 +20,8 @@ player. If you play it with friends, please tell me how it went, with your logs 
 - **Subtitles** on the screen, on your HUD, both or off (your choice, on your PC): a site's subtitles and YouTube's
   automatic captions, text and Blu-ray/DVD picture tracks inside video files, or a .srt / .vtt file next to a video.
   Pick the track (and language) in the Videos tab; your preferred language is picked first.
+- **Plex**: sign in, browse or search your Plex server's movies and shows, and play them on a screen; every player
+  streams them from your server themselves, in sync.
 - **Shared built-in browser**: use it in a window with mouse and keyboard, with tabs, Back / Forward and an address bar
   (web games that lock the mouse work).
   Everyone near the screen sees and hears it, streamed through the game's own connection (no ports to open), or

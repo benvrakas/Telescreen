@@ -93,6 +93,18 @@ Off by default; both the sharer and the viewer must turn them on, and the world 
   hours at most and removes the mapping when the helper exits. Only packets of links the mod added are answered.
 - **Outside services:** STUN (stun.l.google.com, stun.cloudflare.com) sees the PC's public address.
 
+## Plex (1.1)
+
+- The account token from the Plex sign-in stays on the PC that signed in (`Saved/Telescreen/Plex.json`, encrypted with
+  DPAPI for the Windows user). Telescreen never sees the Plex password (plex.tv/link).
+- Adding a Plex video shares that server on the screen with a temporary token that only works on that server
+  (`/security/token?type=delegation`), plus the server's addresses. Every player in range of the screen receives
+  them, so any of them can browse and stream that server's libraries until the token expires (about two days or a
+  server restart). That is the access model the user chose: only share with players you'd give your Plex library to,
+  and sign out (Plex tab) or restart the Plex server to end it early.
+- The token travels in the replicated screen state and in each player's request URLs to the Plex server; it isn't
+  saved with the world and isn't logged (the mod and the helper log Plex URLs without their query).
+
 ## Not done yet
 
 CEF's process sandbox; anonymous TLS for VNC (TigerVNC's TLSVnc; Windows' TLS has no anonymous ciphers).

@@ -7,7 +7,7 @@
 
 namespace TSHostProtocol
 {
-	constexpr uint32_t Version = 10;
+	constexpr uint32_t Version = 11;
 
 	enum class EMsg : uint16_t
 	{

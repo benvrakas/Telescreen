@@ -31,6 +31,11 @@ world host, except live streams when direct connections are on (below; off by de
   screen receive the picture and sound through the game and don't connect to those pages. Logins and cookies are
   forgotten when the browser closes unless "Keep browser logins" is on (then kept in
   `%LOCALAPPDATA%\FactoryGame\Saved\Telescreen\Browser`). Extensions are disabled.
+- **Plex** (Plex tab): signing in talks to plex.tv (a link code you confirm at plex.tv/link; your Plex account token
+  is kept on your PC, encrypted for your Windows user). Browsing and playing talk to your Plex server. When you add a
+  Plex video, your PC shares a temporary token for that server (not your account) and the server's addresses with
+  the players in the world, and each of their PCs streams the video from that server. Videos other players added
+  from Plex load on your PC from their Plex server.
 - **VNC servers** (Remote desktop tab): only the address you enter, from your PC, while your screen shows it.
   Encrypted with TLS when the server offers VeNCrypt with a certificate; plain VNC isn't encrypted, so use that on
   your own network. Saved connections are stored locally in

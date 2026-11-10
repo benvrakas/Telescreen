@@ -5,6 +5,7 @@
 #include "Screen/TSRemoteConnections.h"
 #include "TSTypes.h"
 #include "UI/FGInteractWidget.h"
+#include "Plex/TSPlex.h"
 #include "TSScreenPanel.generated.h"
 
 class ATSBuildableScreen;
@@ -69,6 +70,16 @@ enum class ETSPanelAction : uint8
 	SubtitleTrack,
 	ChangeVideosFolder,
 	OpenVideosFolder,
+	PlexSignIn,
+	PlexOpenLink,
+	PlexSignOut,
+	PlexRefresh,
+	PlexServer,
+	PlexOpen,
+	PlexPlayNow,
+	PlexAdd,
+	PlexUp,
+	PlexSearch,
 };
 
 // Routes one button's click to its panel with the button's action and index (queue row, window row or tab).
@@ -146,6 +157,7 @@ private:
 		Browser,
 		Window,
 		RemoteDesktop,
+		Plex,
 		Screen,
 	};
 
@@ -173,6 +185,18 @@ private:
 	void RequestWindowList();
 	void ShowWindowList();
 	void AskConfirm(EConfirm Kind, int32 Index);
+
+	// Plex page (Docs/Architecture.md, Plex).
+	void RefreshPlex();
+	void LoadPlexServers(bool bRefresh);
+	// Shows the entries at Key ("" for the server's libraries); bPush adds it to the Back path.
+	void BrowsePlex(const FString& Key, const FString& Title, bool bPush);
+	void SearchPlex();
+	void ShowPlexEntries(bool bOk, const TArray<TSPlex::FEntry>& Entries, const FString& Error);
+	void RebuildPlexServers();
+	void RebuildPlexList();
+	void AddPlexEntry(int32 Index, bool bPlayNow);
+	const TSPlex::FServer* GetPlexServer() const;
 	void RunConfirmed(EConfirm Kind, int32 Index);
 
 	UTSPanelAction* MakeHandler(ETSPanelAction Action, int32 Index);
@@ -244,6 +268,35 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UWidgetSwitcher> Pages;
 	ETab CurrentTab = ETab::Videos;
+
+	// Plex page.
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> PlexNote;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> PlexSignInButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> PlexLinkButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> PlexSignOutButton;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> PlexBrowser;
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> PlexServersBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> PlexSearchBox;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> PlexPathText;
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> PlexListBox;
+	bool bPlexLoaded = false;
+	bool bPlexBusy = false;
+	FString PlexCode;
+	FString PlexError;
+	TArray<TSPlex::FServer> PlexServers;
+	FString PlexServerId;
+	TArray<TSPlex::FEntry> PlexEntries;
+	// Where Back goes: each level's key ("" for the libraries) and title.
+	TArray<TPair<FString, FString>> PlexPath;
 
 	// Videos page.
 	UPROPERTY(Transient)

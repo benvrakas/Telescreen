@@ -77,6 +77,7 @@ void ATSBuildableScreen::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamer);
 	DOREPLIFETIME(ATSBuildableScreen, mRelayedViewerCount);
 	DOREPLIFETIME(ATSBuildableScreen, mMediaStreamerName);
+	DOREPLIFETIME(ATSBuildableScreen, mPlexShares);
 }
 
 void ATSBuildableScreen::ConfigureBillboardLayout(const FVector& MeshLocation, float MeshScale, const FVector& PlaneLocation,
@@ -313,6 +314,43 @@ double ATSBuildableScreen::GetServerTime() const
 	}
 	const AGameStateBase* GameState = World->GetGameState();
 	return GameState ? GameState->GetServerWorldTimeSeconds() : World->GetTimeSeconds();
+}
+
+void ATSBuildableScreen::OnRep_PlexShares()
+{
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %d Plex share(s)"), *GetName(), mPlexShares.Num());
+	OnScreenChanged.Broadcast();
+}
+
+const FTSPlexShare* ATSBuildableScreen::FindPlexShare(const FString& MachineId) const
+{
+	return mPlexShares.FindByPredicate([&MachineId](const FTSPlexShare& Share) { return Share.MachineId == MachineId; });
+}
+
+void ATSBuildableScreen::Server_SetPlexShare(const FTSPlexShare& Share)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	const int32 Existing = mPlexShares.IndexOfByPredicate([&Share](const FTSPlexShare& Each) { return Each.MachineId == Share.MachineId; });
+	if (Existing != INDEX_NONE)
+	{
+		mPlexShares[Existing] = Share;
+	}
+	else
+	{
+		// A few servers per screen; the oldest share goes first.
+		if (mPlexShares.Num() >= 4)
+		{
+			mPlexShares.RemoveAt(0);
+		}
+		mPlexShares.Add(Share);
+	}
+	UE_LOG(LogTelescreen, Log, TEXT("%s: %s shared Plex server %s (%d address(es))"), *GetName(), *Share.SharedBy, *Share.ServerName, Share.Connections.Num());
+	FlushNetDormancy();
+	ForceNetUpdate();
+	OnScreenChanged.Broadcast();
 }
 
 void ATSBuildableScreen::OnRep_MediaState()

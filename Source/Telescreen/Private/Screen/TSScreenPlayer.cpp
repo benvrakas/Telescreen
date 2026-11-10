@@ -40,6 +40,7 @@
 #include "Net/TSNetRate.h"
 #include "TSRemoteCallObject.h"
 #include "Screen/TSLocalVideos.h"
+#include "Plex/TSPlex.h"
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <windows.h>
@@ -320,7 +321,8 @@ bool UTSScreenPlayer::ShouldLoad(const FTSMediaItem& Item, FText& OutReason) con
 		OutReason = LOCTEXT("BlockedNever", "Not loaded on this PC: your privacy setting only loads videos you add.");
 		return false;
 	default:
-		if (bLocalFile || UTSConfig::IsAllowedSite(this, Item.Url))
+		// Plex entries come from a server a player in this world shared.
+		if (bLocalFile || TSPlex::IsPlexUrl(Item.Url) || UTSConfig::IsAllowedSite(this, Item.Url))
 		{
 			return true;
 		}
@@ -445,6 +447,36 @@ void UTSScreenPlayer::Reconcile()
 			break;
 		}
 	}
+	bool bDirect = false;
+	if (!bCantPlay && TSPlex::IsPlexUrl(Item->Url))
+	{
+		FString Problem;
+		PlexGeneration = TSPlex::GetGeneration();
+		switch (TSPlex::Resolve(Screen, Item->Url, PlayPath, Problem))
+		{
+		case TSPlex::EResolve::Searching:
+			WantedKey = Key;
+			CloseSession();
+			SetStatus(Title, LOCTEXT("PlexLooking", "Looking it up on the Plex server..."));
+			return;
+		case TSPlex::EResolve::Missing:
+		{
+			FString MachineId, RatingKey;
+			if (TSPlex::ParseUrl(Item->Url, MachineId, RatingKey))
+			{
+				// A player signed in to that server shares it (again), e.g. after a reload or when the token ran out.
+				TSPlex::EnsureShared(Screen, MachineId);
+			}
+			FailedMessage = Problem;
+			bCantPlay = true;
+			break;
+		}
+		default:
+			PlexGeneration = 0;
+			bDirect = true;
+			break;
+		}
+	}
 	if (bCantPlay)
 	{
 		ReportMedia(Key, Item->Url, false);
@@ -459,11 +491,11 @@ void UTSScreenPlayer::Reconcile()
 	CloseSession();
 	FTSMediaItem ToPlay = *Item;
 	ToPlay.Url = PlayPath;
-	if (PlayPath != Item->Url)
+	if (PlayPath != Item->Url && !bDirect)
 	{
 		UE_LOG(LogTelescreen, Log, TEXT("%s: playing %s from the videos folder: %s"), *Screen->GetName(), *FPaths::GetCleanFilename(Item->Url), *PlayPath);
 	}
-	OpenSession(ToPlay);
+	OpenSession(ToPlay, bDirect);
 }
 
 void UTSScreenPlayer::ReportMedia(const FString& Key, const FString& Url, bool bHave)
@@ -513,7 +545,7 @@ void UTSScreenPlayer::ReconcileMediaStream(ATSBuildableScreen* Screen, const FTS
 	OpenReceiverSession(GetControllerTitle());
 }
 
-void UTSScreenPlayer::OpenSession(const FTSMediaItem& Item)
+void UTSScreenPlayer::OpenSession(const FTSMediaItem& Item, bool bDirect)
 {
 	ATSBuildableScreen* Screen = GetScreen();
 	UTSHostSubsystem* Host = UTSHostSubsystem::Get(this);
@@ -531,6 +563,7 @@ void UTSScreenPlayer::OpenSession(const FTSMediaItem& Item)
 	Params.MaxHeight = uint32(FMath::Clamp(UTSConfig::GetInt(this, UTSConfig::MaxVideoHeightKey, 720), 144, 2160));
 	Params.MaxWidth = Params.MaxHeight * 16 / 9;
 	Params.SubtitleLanguage = UTSConfig::GetString(this, UTSConfig::SubtitleLanguageKey, TEXT("en")).TrimStartAndEnd().ToLower();
+	Params.bDirect = bDirect;
 	Session = Host->OpenMedia(Params, this);
 	if (Session == 0)
 	{
@@ -1762,6 +1795,12 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 	if (!Screen)
 	{
 		return;
+	}
+	if (PlexGeneration != 0 && PlexGeneration != TSPlex::GetGeneration())
+	{
+		// A Plex lookup finished (or a share arrived): try the current entry again.
+		PlexGeneration = 0;
+		Reconcile();
 	}
 	if (StatusRedraws > 0)
 	{

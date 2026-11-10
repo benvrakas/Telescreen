@@ -120,7 +120,8 @@ void FMediaSession::SendState(ESessionState State, double Position, const std::s
 
 void FMediaSession::Run()
 {
-	LOG_INFO("session %u: opening %s (start %.2f, %s)", Params.SessionId, Params.Url.c_str(), Params.StartSeconds,
+	const std::string Logged = Params.IsDirect ? Params.Url.substr(0, Params.Url.find('?')) : Params.Url;
+	LOG_INFO("session %u: opening %s%s (start %.2f, %s)", Params.SessionId, Logged.c_str(), Params.IsDirect ? " directly" : "", Params.StartSeconds,
 		Params.Paused ? "paused" : "playing");
 	SendState(ESessionState::Resolving, Params.StartSeconds);
 	std::string Error;
@@ -143,6 +144,10 @@ bool FMediaSession::Open(std::string& Error)
 		Urls.push_back(Params.Url);
 		const size_t Slash = Params.Url.find_last_of("/\\");
 		Title = Slash == std::string::npos ? Params.Url : Params.Url.substr(Slash + 1);
+	}
+	else if (Params.IsDirect)
+	{
+		Urls.push_back(Params.Url);
 	}
 	else
 	{

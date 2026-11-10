@@ -122,6 +122,11 @@ public:
 	// Who sends this screen's live stream now: the controller of a browser, window or desktop, or the media streamer.
 	APlayerState* GetStreamSender() const;
 
+	// Plex servers shared on this screen (Docs/Architecture.md, Plex); plex:// queue entries play from them.
+	const FTSPlexShare* FindPlexShare(const FString& MachineId) const;
+	// Server only: adds Share, or replaces the share of the same server.
+	void Server_SetPlexShare(const FTSPlexShare& Share);
+
 	FTSOnDirectSignal OnDirectRequest;
 	FTSOnDirectSignal OnDirectAnswer;
 
@@ -223,6 +228,9 @@ protected:
 	UFUNCTION()
 	void OnRep_Control();
 
+	UFUNCTION()
+	void OnRep_PlexShares();
+
 	void CheckController();
 
 	// Marks the media state changed on the server and schedules the move to the next item.
@@ -297,6 +305,10 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Control)
 	FString mMediaStreamerName;
+
+	// Not saved: the tokens are temporary, and the sharer shares again when a player needs it.
+	UPROPERTY(ReplicatedUsing = OnRep_PlexShares)
+	TArray<FTSPlexShare> mPlexShares;
 
 	// Server: what each player reported for the current item (mMediaReportsUrl).
 	struct FMediaReport

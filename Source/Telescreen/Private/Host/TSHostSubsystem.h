@@ -122,6 +122,8 @@ struct FTSOpenMediaParams
 	uint32 MaxHeight = 720;
 	// Which automatic captions are offered (e.g. "en").
 	FString SubtitleLanguage;
+	// Url is a media file to open as it is, not a page for yt-dlp; it may hold a token (Plex), so it isn't logged whole.
+	bool bDirect = false;
 };
 
 // Runs TelescreenHost.exe for this game client and routes its messages (see Docs/HostProtocol.md). Not on dedicated servers.

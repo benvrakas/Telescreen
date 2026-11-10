@@ -180,7 +180,8 @@ private:
 	ATSBuildableScreen* GetScreen() const;
 	void OnScreenChanged();
 	void Reconcile();
-	void OpenSession(const struct FTSMediaItem& Item);
+	// bDirect: Item.Url is a media file URL to open as it is (a resolved Plex entry).
+	void OpenSession(const struct FTSMediaItem& Item, bool bDirect = false);
 	void OpenBrowserSession();
 	void OpenWindowSession();
 	void OpenRemoteSession();
@@ -210,6 +211,8 @@ private:
 	bool bReportedHave = false;
 	FString FailedKey;
 	FString FailedMessage;
+	// The TSPlex generation when the current Plex entry was looked up (0: none pending); a change looks again.
+	uint32 PlexGeneration = 0;
 	void ReportMedia(const FString& Key, const FString& Url, bool bHave);
 	void ReconcileMediaStream(ATSBuildableScreen* Screen, const FTSMediaItem& Item, const FString& Key);
 

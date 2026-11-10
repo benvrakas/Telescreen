@@ -424,6 +424,45 @@ cuts the bank (`BKHD` ... `HIRC` ...) out of it, and falls back to the old loose
 calls into Wwise. Details, and why not `UAkAudioEvent` + `FByteBulkData::GetCopy`: BoomBoxPlus `Docs/WwiseMusic.md`,
 "Where the song banks are".
 
+## Plex (1.1)
+
+The Plex tab adds movies and episodes from a Plex Media Server to a screen's queue. Like YouTube links, every player
+near the screen fetches the video from the server themselves and plays it in sync; nothing is relayed through the
+world host. The user chose this access model (2026-11-10): one player (normally the world host) signs in, and their
+PC shares access to their server with the players in the world.
+
+- **Sign-in** (`TSPlex::SignIn`, client only): a link code from `POST https://plex.tv/api/v2/pins`, which the player
+  enters at plex.tv/link; the PC polls `GET /api/v2/pins/<id>` every 2 s (up to 10 minutes) until it has the account
+  token. The token is kept in `Saved/Telescreen/Plex.json`, encrypted with DPAPI for the Windows user, next to a
+  random client id (`X-Plex-Client-Identifier`). No password ever passes through Telescreen.
+- **Servers**: `GET https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1`, entries that provide `server`,
+  with their `connections`. For browsing on this PC: local addresses first, then remote ones, then Plex's relay; the
+  first that answers `/identity` within 4 s is kept for the session.
+- **Browsing**: `/library/sections` (movie and show libraries only), a library's `/library/sections/<key>/all`, a
+  show's or season's `.../children`, and `/hubs/search?query=`. JSON (`Accept: application/json`); at most 500
+  entries per level.
+- **Queue entries** are `plex://<server clientIdentifier>/<ratingKey>`, with the title and length from Plex. They hold
+  no token and no address, so they can be saved with the world. `Server_Enqueue` accepts the scheme; the world's
+  allowed-sites rule doesn't apply to it (the server belongs to a player in the world), and the privacy setting loads
+  Plex entries like files.
+- **Sharing** (`TSPlex::MakeShare`, `Server_SharePlex`): adding an entry first shares the server on the screen: its
+  addresses (remote first, then local, then the relay, for players elsewhere) and a temporary token from the server's
+  `GET /security/token?type=delegation&scope=all`, which only works on that server and expires by itself (about two
+  days, or when the server restarts). For a server shared *with* the signed-in account, its server access token is
+  used instead (that one also only works on that server). The account token never leaves the PC. The share is a
+  replicated property of the screen (`mPlexShares`, at most 4 servers), not saved: after a reload, or when a player's
+  lookup fails, the signed-in player's PC shares again by itself (`TSPlex::EnsureShared`, at most every 30 s).
+- **Playing** (`TSPlex::Resolve`, each PC): the screen's share for that server; `GET <address>/library/metadata/
+  <ratingKey>` on each address in turn (6 s each) until one answers; the first media part's key gives the file URL
+  `<address><part key>?X-Plex-Token=<token>`. It opens with OpenMedia's direct flag: FFmpeg reads it as it is (direct
+  play, range requests for seeking and sync), no yt-dlp, and neither the mod nor the helper log the query. A failed
+  lookup is tried again after a minute; while it fails, the player watches it streamed from a player who plays it
+  (Local videos and streaming synced media).
+- **Versions**: the share is a new replicated property and RPC, so 1.1.0 needs the server and every player on 1.1
+  (`RemoteVersionRange` `>=1.1.0`).
+- Not done yet: Plex's own transcoding (for slow connections or formats FFmpeg can't play), Plex subtitles, and
+  watched-state or resume sync with Plex.
+
 ## Viewer control and markers (M6)
 
 Grants, the server relay and the input filter: Security.md. Input path: a granted viewer's screen window sends its

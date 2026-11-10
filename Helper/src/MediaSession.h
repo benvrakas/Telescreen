@@ -32,6 +32,8 @@ struct FOpenParams
 	uint32_t MaxHeight = 720;
 	// Preferred subtitle language (e.g. "en"): which automatic captions are offered.
 	std::string SubtitleLanguage;
+	// A media file URL to open as it is (Plex): no yt-dlp, and logged without its query (it holds a token).
+	bool IsDirect = false;
 };
 
 // Plays one media URL or file into a session's shared video and audio buffers, following the mod's sync target.

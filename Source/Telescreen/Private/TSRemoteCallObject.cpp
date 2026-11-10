@@ -147,6 +147,29 @@ bool UTSRemoteCallObject::Server_Enqueue_Validate(ATSBuildableScreen* Screen, co
 	return FMath::IsFinite(Item.Duration);
 }
 
+bool UTSRemoteCallObject::Server_SharePlex_Validate(ATSBuildableScreen* Screen, const FTSPlexShare& Share)
+{
+	return true;
+}
+
+void UTSRemoteCallObject::Server_SharePlex_Implementation(ATSBuildableScreen* Screen, const FTSPlexShare& Share)
+{
+	if (!Screen || !MayEdit(Screen))
+	{
+		return;
+	}
+	if (Share.MachineId.IsEmpty() || Share.MachineId.Len() > 100 || Share.Token.IsEmpty() || Share.Token.Len() > 1000 || Share.ServerName.Len() > 200 ||
+		Share.Connections.Num() == 0 || Share.Connections.Num() > 16 ||
+		Share.Connections.ContainsByPredicate([](const FString& Uri) { return Uri.Len() > 300 || !(Uri.StartsWith(TEXT("http://")) || Uri.StartsWith(TEXT("https://"))); }))
+	{
+		Client_Notice(TEXT("That Plex share isn't valid."));
+		return;
+	}
+	FTSPlexShare Accepted = Share;
+	Accepted.SharedBy = GetRequesterName();
+	Screen->Server_SetPlexShare(Accepted);
+}
+
 void UTSRemoteCallObject::Server_Enqueue_Implementation(ATSBuildableScreen* Screen, const FTSMediaItem& Item, bool bPlayNow)
 {
 	const FString Requester = GetRequesterName();
@@ -166,9 +189,11 @@ void UTSRemoteCallObject::Server_Enqueue_Implementation(ATSBuildableScreen* Scre
 		return;
 	}
 	const bool bWebLink = Url.StartsWith(TEXT("http://")) || Url.StartsWith(TEXT("https://"));
-	if (Url.Contains(TEXT("://")) && !bWebLink)
+	// plex://<server>/<item>: played from the Plex server shared on the screen (no token in the entry).
+	const bool bPlex = Url.StartsWith(TEXT("plex://")) && !Url.Contains(TEXT("?")) && !Url.Contains(TEXT("@"));
+	if (Url.Contains(TEXT("://")) && !bWebLink && !bPlex)
 	{
-		Client_Notice(TEXT("Only http(s) links and file paths can be played."));
+		Client_Notice(TEXT("Only http(s) links, Plex videos and file paths can be played."));
 		return;
 	}
 	if (bWebLink && !UTSConfig::GetBool(Screen, UTSConfig::AllowAnySiteKey, false) && !UTSConfig::IsAllowedSite(Screen, Url))
