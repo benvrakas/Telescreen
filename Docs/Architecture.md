@@ -64,9 +64,11 @@ Two halves: replicated state that the server owns, and per-client playback that 
 - Privacy: a video another player added loads automatically only if its site is in the player's allowed list (or
   their setting says otherwise); the panel offers "Load it anyway".
 - When there's no picture, the screen shows a status card drawn into a canvas render target (screen name, title,
-  Loading / Buffering / errors). Its text goes through Slate's runtime font cache, whose atlas gets new glyphs only
-  on Slate's next frame, so a card drawn once after a change showed just its background. Each change draws it again
-  on the next three frames (`StatusRedrawFrames`).
+  Loading / Buffering / errors). It is a small Slate widget (`UTSScreenPlayer::RenderStatus`) drawn into a
+  `UTextureRenderTarget2D` by `FWidgetRenderer`, which brings new glyphs into Slate's font atlas before it renders.
+  Up to 1.0.3 it was canvas text (`FCanvasTextItem` with a Slate font) in a `UCanvasRenderTarget2D`, and in game
+  the card showed only its background: not even redrawing it on the following frames (1.0.3) brought the text. It
+  is still drawn again on the three frames after a change (`StatusRedrawFrames`).
 
 ### UI
 

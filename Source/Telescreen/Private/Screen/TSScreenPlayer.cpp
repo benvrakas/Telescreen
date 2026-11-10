@@ -10,6 +10,14 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Styling/CoreStyle.h"
 #include "Engine/CanvasRenderTarget2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "RenderDeferredCleanup.h"
+#include "Slate/WidgetRenderer.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScaleBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
@@ -66,6 +74,7 @@ namespace
 	constexpr int32 StatusWidth = 2048;
 	// Frames the status card is drawn again after a change.
 	constexpr int32 StatusRedrawFrames = 3;
+	const FLinearColor StatusBackground(0.01f, 0.012f, 0.02f, 1.f);
 
 	// Text on a screen texture in the UI font, rasterised at its pixel size (a scaled bitmap font looks soft).
 	FSlateFontInfo ScreenFont(bool bBold, float PixelHeight)
@@ -245,12 +254,15 @@ void UTSScreenPlayer::BeginPlay()
 
 	const FVector2D Size = Screen->GetScreenWorldSize();
 	const double Aspect = Size.Y > 1.0 ? Size.X / Size.Y : 2.0;
-	StatusTarget = UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(this, UCanvasRenderTarget2D::StaticClass(), StatusWidth,
-		FMath::Clamp(int32(StatusWidth / Aspect), 64, 2048));
-	if (StatusTarget)
+	if (FSlateApplication::IsInitialized() && !IsRunningDedicatedServer())
 	{
-		StatusTarget->ClearColor = FLinearColor(0.01f, 0.012f, 0.02f, 1.f);
-		StatusTarget->OnCanvasRenderTargetUpdate.AddDynamic(this, &UTSScreenPlayer::DrawStatus);
+		// Slate draws the card: it brings new glyphs into the font atlas before it renders, which a canvas doesn't.
+		StatusRenderer = new FWidgetRenderer(true, true);
+		StatusTarget = FWidgetRenderer::CreateTargetFor(FVector2D(StatusWidth, FMath::Clamp(int32(StatusWidth / Aspect), 64, 2048)), TF_Bilinear, true);
+		if (StatusTarget)
+		{
+			StatusTarget->ClearColor = StatusBackground;
+		}
 	}
 	RankActivity();
 	Reconcile();
@@ -262,6 +274,11 @@ void UTSScreenPlayer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		bPinned = false;
 		UTSScreenWindow::Close();
+	}
+	if (StatusRenderer)
+	{
+		BeginCleanup(StatusRenderer);
+		StatusRenderer = nullptr;
 	}
 	CloseSession();
 	GPlayers.RemoveAll([this](const TWeakObjectPtr<UTSScreenPlayer>& P) { return !P.IsValid() || P.Get() == this; });
@@ -1770,9 +1787,9 @@ void UTSScreenPlayer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 	{
 		// Glyphs first drawn into the status card reach the font atlas on Slate's next frame; draw it again then.
 		--StatusRedraws;
-		if (!bShowingVideo && StatusTarget)
+		if (!bShowingVideo)
 		{
-			StatusTarget->UpdateResource();
+			RenderStatus();
 		}
 	}
 	const double Now = FPlatformTime::Seconds();
@@ -2426,7 +2443,7 @@ void UTSScreenPlayer::ShowStatus()
 	{
 		return;
 	}
-	StatusTarget->UpdateResource();
+	RenderStatus();
 	StatusRedraws = StatusRedrawFrames;
 	bScreenShowsSubtitles = false;
 	Screen->SetScreenTexture(StatusTarget);
@@ -2658,22 +2675,47 @@ void UTSScreenPlayer::DrawSubtitled(UCanvas* Canvas, int32 Width, int32 Height)
 	}
 }
 
-void UTSScreenPlayer::DrawStatus(UCanvas* Canvas, int32 Width, int32 Height)
+void UTSScreenPlayer::RenderStatus()
 {
-	if (!Canvas)
+	if (!StatusRenderer || !StatusTarget)
 	{
 		return;
 	}
-	auto DrawCentered = [&](const FString& Text, float CenterY, float PixelHeight, bool bBold, const FLinearColor& Color)
+	const float Width = float(StatusTarget->SizeX);
+	const float Height = float(StatusTarget->SizeY);
+	// One centred line, shrunk to the card's width when it's longer.
+	auto Line = [Width](const FText& Text, float PixelHeight, bool bBold, const FLinearColor& Color) -> TSharedRef<SWidget>
 	{
-		if (!Text.IsEmpty())
-		{
-			DrawScreenText(Canvas, Text, Width * 0.5f, CenterY - PixelHeight * 0.6f, PixelHeight, bBold, Color, Width * 0.92f, 0);
-		}
+		return SNew(SBox)
+			.WidthOverride(Width * 0.92f)
+			.HAlign(HAlign_Center)
+			[
+				SNew(SScaleBox)
+				.Stretch(EStretch::ScaleToFitX)
+				.StretchDirection(EStretchDirection::DownOnly)
+				[
+					SNew(STextBlock)
+					.Text(Text)
+					.Font(ScreenFont(bBold, PixelHeight))
+					.ColorAndOpacity(FSlateColor(Color))
+				]
+			];
 	};
-	DrawCentered(TEXT("TELESCREEN"), Height * 0.18f, Height * 0.055f, true, FLinearColor(0.95f, 0.55f, 0.1f));
-	DrawCentered(StatusLine1.ToString(), Height * 0.45f, Height * 0.11f, true, FLinearColor::White);
-	DrawCentered(StatusLine2.ToString(), Height * 0.68f, Height * 0.065f, false, FLinearColor(0.7f, 0.75f, 0.8f));
+	TSharedRef<SWidget> Card = SNew(SBorder)
+		.BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")))
+		.BorderBackgroundColor(FSlateColor(StatusBackground))
+		.Padding(0.f)
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().FillHeight(0.13f)[SNullWidget::NullWidget]
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[Line(FText::FromString(TEXT("TELESCREEN")), Height * 0.055f, true, FLinearColor(0.95f, 0.55f, 0.1f))]
+			+ SVerticalBox::Slot().FillHeight(0.14f)[SNullWidget::NullWidget]
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[Line(StatusLine1, Height * 0.11f, true, FLinearColor::White)]
+			+ SVerticalBox::Slot().FillHeight(0.06f)[SNullWidget::NullWidget]
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[Line(StatusLine2, Height * 0.065f, false, FLinearColor(0.7f, 0.75f, 0.8f))]
+			+ SVerticalBox::Slot().FillHeight(0.3f)[SNullWidget::NullWidget]
+		];
+	StatusRenderer->DrawWidget(StatusTarget, Card, FVector2D(Width, Height), 0.f);
 }
 
 #undef LOCTEXT_NAMESPACE

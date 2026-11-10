@@ -13,6 +13,7 @@ class UAudioComponent;
 class USceneComponent;
 class UCanvas;
 class UCanvasRenderTarget2D;
+class UTextureRenderTarget2D;
 class UTexture2D;
 class UTexture;
 class UTSStreamingSoundWave;
@@ -194,8 +195,8 @@ private:
 
 	void SetStatus(const FText& Line1, const FText& Line2);
 	void ShowStatus();
-	UFUNCTION()
-	void DrawStatus(UCanvas* Canvas, int32 Width, int32 Height);
+	// Draws the status card (TELESCREEN, StatusLine1, StatusLine2) into StatusTarget as a Slate widget.
+	void RenderStatus();
 
 	uint32 Session = 0;
 	FString SessionKey;
@@ -235,7 +236,9 @@ private:
 	TObjectPtr<UTSStreamingSoundWave> Wave;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UCanvasRenderTarget2D> StatusTarget;
+	TObjectPtr<UTextureRenderTarget2D> StatusTarget;
+	// Renders the status card widget; released with BeginCleanup.
+	class FWidgetRenderer* StatusRenderer = nullptr;
 
 	// The picture with the current subtitle drawn over it, used as the screen's texture while a line shows on screen.
 	UPROPERTY(Transient)
