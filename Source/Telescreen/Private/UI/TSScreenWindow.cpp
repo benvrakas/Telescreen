@@ -242,6 +242,7 @@ void UTSScreenWindow::BuildTree()
 	AddToBar(TSVanillaUI::MakeButton(WidgetTree, LOCTEXT("WindowHome", "Home"), this, GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleHome)), false);
 	AddressBox = TSVanillaUI::MakeInputBox(WidgetTree, LOCTEXT("WindowAddressHint", "Web address or search"), this,
 		GET_FUNCTION_NAME_CHECKED(UTSScreenWindow, HandleAddressCommitted));
+	TSVanillaUI::SetInputSelectAllOnFocus(AddressBox, true);
 	AddToBar(AddressBox, true);
 	// The tab strip sits above the navigation bar; both show and hide together.
 	UVerticalBox* ToolbarBox = WidgetTree->ConstructWidget<UVerticalBox>();

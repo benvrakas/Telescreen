@@ -375,6 +375,20 @@ void TSVanillaUI::SetInputText(UWidget* InputBox, const FText& Text)
 	else if (UEditableText* Inner = InnerEditable(InputBox))
 	{
 		Inner->SetText(Text);
+		// The vanilla box shows its hint until its text changes; SetText alone doesn't tell it.
+		Inner->OnTextChanged.Broadcast(Text);
+	}
+}
+
+void TSVanillaUI::SetInputSelectAllOnFocus(UWidget* InputBox, bool bSelectAll)
+{
+	if (UEditableTextBox* Plain = Cast<UEditableTextBox>(InputBox))
+	{
+		Plain->SetSelectAllTextWhenFocused(bSelectAll);
+	}
+	else if (UEditableText* Inner = InnerEditable(InputBox))
+	{
+		Inner->SetSelectAllTextWhenFocused(bSelectAll);
 	}
 }
 

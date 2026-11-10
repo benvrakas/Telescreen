@@ -41,6 +41,8 @@ namespace TSVanillaUI
 	FText GetInputText(UWidget* InputBox);
 	void SetInputText(UWidget* InputBox, const FText& Text);
 	bool InputHasFocus(UWidget* InputBox);
+	// Selects the whole text when the box gets focus (an address bar).
+	void SetInputSelectAllOnFocus(UWidget* InputBox, bool bSelectAll);
 	// Shows dots instead of the typed text.
 	void SetInputPassword(UWidget* InputBox, bool bPassword);
 
