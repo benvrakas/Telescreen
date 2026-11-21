@@ -16,7 +16,7 @@ version.
 | Logo | `Docs/Images/icon-1080.png` (1080x1080) |
 | Source URL | `https://github.com/benvrakas/Telescreen` (public since 2026-10-22) |
 | Tags | `multiplayer`, `decoration`, `api` (it fetches from video sites) |
-| Compatibility | Stable: works (built against CL 513885). Experimental: unknown until tested |
+| Compatibility | Stable: works (built against CL 520140). Experimental: unknown until tested |
 
 ## 2. Upload the version
 

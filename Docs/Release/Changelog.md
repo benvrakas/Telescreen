@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- **For game 1.2.5.1** (the update of 18 November 2026): built against its new game files. Needs SML 3.12.1, which
+  also fixes the crash when joining a multiplayer game on 1.2.5.1.
+
 ## 1.1.0
 
 - **Plex tab**: sign in with your Plex account (a code at plex.tv/link), pick a server, browse its movies and shows or
